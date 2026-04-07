@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var calendarService: CalendarService
     @ObservedObject var meetingMonitor: MeetingMonitor
+    var overlayCoordinator: OverlayCoordinator
     @Environment(\.dismiss) private var dismiss
 
     private var upcomingEvents: [MeetingEvent] {
@@ -16,7 +17,25 @@ struct MenuBarView: View {
             } else if upcomingEvents.isEmpty {
                 noEventsSection
             } else {
+                meetingLoadSection
+                Divider().padding(.vertical, 4)
                 eventListSection
+            }
+
+            // "Done with meeting" button when a meeting is in progress
+            if meetingMonitor.currentMeetingInProgress != nil {
+                Divider().padding(.vertical, 6)
+                Button {
+                    meetingMonitor.markMeetingDone()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Done with meeting")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
             }
 
             Divider()
@@ -24,6 +43,39 @@ struct MenuBarView: View {
 
             PreferencesButton {
                 dismiss()
+            }
+
+            Divider()
+                .padding(.vertical, 6)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Preview")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Button {
+                    meetingMonitor.testOverlay()
+                } label: {
+                    Label("Meeting Overlay", systemImage: "rectangle.inset.filled")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    overlayCoordinator.previewChecklist()
+                } label: {
+                    Label("Pre-Meeting Checklist", systemImage: "checklist")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    overlayCoordinator.previewContextPanel()
+                } label: {
+                    Label("Context Panel", systemImage: "info.circle")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
             }
 
             Divider()
@@ -39,6 +91,42 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 280)
+    }
+
+    // MARK: - Meeting Load Section (5.1)
+
+    private var meetingLoadSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text("\(calendarService.totalMeetingCount) meetings today")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("(\(String(format: "%.1f", calendarService.totalMeetingHours))h)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack(spacing: 4) {
+                if calendarService.backToBackCount > 0 {
+                    Text("\(calendarService.backToBackCount) back-to-back")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+                if let breakTime = calendarService.formattedNextBreak {
+                    if calendarService.backToBackCount > 0 {
+                        Text("·")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Text("Next break: \(breakTime)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
     }
 
     // MARK: - Sections

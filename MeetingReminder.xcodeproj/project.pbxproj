@@ -17,6 +17,17 @@
 		A1000008 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000008 /* OverlayView.swift */; };
 		A1000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000009 /* SettingsView.swift */; };
 		A100000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000A /* Assets.xcassets */; };
+		A100000B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000E /* OnboardingView.swift */; };
+		A100000C /* AlertTier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000F /* AlertTier.swift */; };
+		A100000D /* ChecklistItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000010 /* ChecklistItem.swift */; };
+		A100000E /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000011 /* NotificationService.swift */; };
+		A100000F /* ScreenDimmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000012 /* ScreenDimmer.swift */; };
+		A1000010 /* NotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000013 /* NotionService.swift */; };
+		A1000011 /* ContextPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000014 /* ContextPanelView.swift */; };
+		A1000012 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000015 /* ChecklistView.swift */; };
+		A1000013 /* BreakOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000016 /* BreakOverlayView.swift */; };
+		A1000014 /* FloatingPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000017 /* FloatingPromptView.swift */; };
+		A1000015 /* PostMeetingNudgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000018 /* PostMeetingNudgeView.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
 		T2000003 /* OverlayBackgroundTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000003 /* OverlayBackgroundTests.swift */; };
@@ -47,6 +58,17 @@
 		B100000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B100000C /* MeetingReminder.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeetingReminder.entitlements; sourceTree = "<group>"; };
 		B100000D /* MeetingReminder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetingReminder.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B100000E /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		B100000F /* AlertTier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertTier.swift; sourceTree = "<group>"; };
+		B1000010 /* ChecklistItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistItem.swift; sourceTree = "<group>"; };
+		B1000011 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		B1000012 /* ScreenDimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenDimmer.swift; sourceTree = "<group>"; };
+		B1000013 /* NotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionService.swift; sourceTree = "<group>"; };
+		B1000014 /* ContextPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelView.swift; sourceTree = "<group>"; };
+		B1000015 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
+		B1000016 /* BreakOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreakOverlayView.swift; sourceTree = "<group>"; };
+		B1000017 /* FloatingPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPromptView.swift; sourceTree = "<group>"; };
+		B1000018 /* PostMeetingNudgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostMeetingNudgeView.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
 		T1000003 /* OverlayBackgroundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayBackgroundTests.swift; sourceTree = "<group>"; };
@@ -99,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				B1000002 /* MeetingEvent.swift */,
+				B1000010 /* ChecklistItem.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -109,6 +132,10 @@
 				B1000003 /* CalendarService.swift */,
 				B1000004 /* MeetingMonitor.swift */,
 				B1000005 /* VideoLinkDetector.swift */,
+				B100000F /* AlertTier.swift */,
+				B1000011 /* NotificationService.swift */,
+				B1000012 /* ScreenDimmer.swift */,
+				B1000013 /* NotionService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -120,6 +147,12 @@
 				B1000007 /* OverlayWindow.swift */,
 				B1000008 /* OverlayView.swift */,
 				B1000009 /* SettingsView.swift */,
+				B100000E /* OnboardingView.swift */,
+				B1000014 /* ContextPanelView.swift */,
+				B1000015 /* ChecklistView.swift */,
+				B1000016 /* BreakOverlayView.swift */,
+				B1000017 /* FloatingPromptView.swift */,
+				B1000018 /* PostMeetingNudgeView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -243,6 +276,17 @@
 				A1000007 /* OverlayWindow.swift in Sources */,
 				A1000008 /* OverlayView.swift in Sources */,
 				A1000009 /* SettingsView.swift in Sources */,
+				A100000B /* OnboardingView.swift in Sources */,
+				A100000C /* AlertTier.swift in Sources */,
+				A100000D /* ChecklistItem.swift in Sources */,
+				A100000E /* NotificationService.swift in Sources */,
+				A100000F /* ScreenDimmer.swift in Sources */,
+				A1000010 /* NotionService.swift in Sources */,
+				A1000011 /* ContextPanelView.swift in Sources */,
+				A1000012 /* ChecklistView.swift in Sources */,
+				A1000013 /* BreakOverlayView.swift in Sources */,
+				A1000014 /* FloatingPromptView.swift in Sources */,
+				A1000015 /* PostMeetingNudgeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

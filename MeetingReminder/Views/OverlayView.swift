@@ -3,7 +3,7 @@ import SwiftUI
 struct OverlayView: View {
     let event: MeetingEvent
     let onDismiss: () -> Void
-    let onSnooze: () -> Void
+    let onSnooze: (Int) -> Void  // seconds
     let onJoin: () -> Void
 
     @AppStorage("overlayBackground") private var overlayBackground: String = "dark"
@@ -47,10 +47,18 @@ struct OverlayView: View {
                     .foregroundColor(.white.opacity(0.5))
                     .padding(.top, -8)
 
+                // Attendees preview
+                if let attendees = event.attendees, !attendees.isEmpty {
+                    Text(attendees.prefix(4).joined(separator: ", ") +
+                         (attendees.count > 4 ? " +\(attendees.count - 4) more" : ""))
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+
                 Spacer()
 
                 // Action buttons
-                HStack(spacing: 20) {
+                HStack(spacing: 16) {
                     if event.videoLink != nil {
                         Button(action: onJoin) {
                             HStack(spacing: 8) {
@@ -68,14 +76,30 @@ struct OverlayView: View {
                         .keyboardShortcut(.return, modifiers: [])
                     }
 
-                    Button(action: onSnooze) {
-                        HStack(spacing: 8) {
+                    // Micro-snooze (30 seconds)
+                    Button { onSnooze(30) } label: {
+                        HStack(spacing: 6) {
                             Image(systemName: "clock.arrow.circlepath")
-                            Text("Snooze 1 min")
+                            Text("30s")
                         }
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                        .background(Color.white.opacity(0.2))
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+
+                    // Standard snooze (1 min)
+                    Button { onSnooze(60) } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock.arrow.circlepath")
+                            Text("1 min")
+                        }
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
                         .padding(.vertical, 14)
                         .background(Color.white.opacity(0.2))
                         .cornerRadius(12)
@@ -87,9 +111,9 @@ struct OverlayView: View {
                             Image(systemName: "xmark")
                             Text("Dismiss")
                         }
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 18)
                         .padding(.vertical, 14)
                         .background(Color.white.opacity(0.2))
                         .cornerRadius(12)

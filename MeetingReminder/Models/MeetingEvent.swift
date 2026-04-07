@@ -10,9 +10,16 @@ struct MeetingEvent: Identifiable, Equatable {
     let calendarColor: String
     let videoLink: URL?
     let isAllDay: Bool
+    let attendees: [String]?
+    let notes: String?
+    let location: String?
 
     var timeUntilStart: TimeInterval {
         startDate.timeIntervalSinceNow
+    }
+
+    var timeUntilEnd: TimeInterval {
+        endDate.timeIntervalSinceNow
     }
 
     var minutesUntilStart: Int {
@@ -28,10 +35,24 @@ struct MeetingEvent: Identifiable, Equatable {
         return now >= startDate && now < endDate
     }
 
+    var hasEnded: Bool {
+        Date() >= endDate
+    }
+
+    var durationMinutes: Int {
+        Int(endDate.timeIntervalSince(startDate) / 60)
+    }
+
     var formattedStartTime: String {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: startDate)
+    }
+
+    var formattedEndTime: String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: endDate)
     }
 
     var formattedTimeUntil: String {
@@ -53,6 +74,24 @@ struct MeetingEvent: Identifiable, Equatable {
         }
     }
 
+    /// Short format for menu bar: "12m", "1h 5m"
+    var shortTimeUntil: String {
+        let totalMinutes = minutesUntilStart
+        if totalMinutes <= 0 {
+            return "now"
+        } else if totalMinutes < 60 {
+            return "\(totalMinutes)m"
+        } else {
+            let hours = totalMinutes / 60
+            let minutes = totalMinutes % 60
+            if minutes == 0 {
+                return "\(hours)h"
+            } else {
+                return "\(hours)h \(minutes)m"
+            }
+        }
+    }
+
     static func == (lhs: MeetingEvent, rhs: MeetingEvent) -> Bool {
         lhs.id == rhs.id
     }
@@ -69,11 +108,24 @@ struct MeetingEvent: Identifiable, Equatable {
         self.calendarColor = ""
         self.videoLink = videoLink
         self.isAllDay = ekEvent.isAllDay
+        self.notes = ekEvent.notes
+        self.location = ekEvent.location
+
+        // Extract attendee names
+        if let ekAttendees = ekEvent.attendees {
+            self.attendees = ekAttendees.compactMap { attendee in
+                attendee.name ?? attendee.url.absoluteString
+                    .replacingOccurrences(of: "mailto:", with: "")
+            }
+        } else {
+            self.attendees = nil
+        }
     }
 
     init(id: String, title: String, startDate: Date, endDate: Date,
          calendar: String, calendarColor: String = "",
-         videoLink: URL? = nil, isAllDay: Bool = false) {
+         videoLink: URL? = nil, isAllDay: Bool = false,
+         attendees: [String]? = nil, notes: String? = nil, location: String? = nil) {
         self.id = id
         self.title = title
         self.startDate = startDate
@@ -82,5 +134,8 @@ struct MeetingEvent: Identifiable, Equatable {
         self.calendarColor = calendarColor
         self.videoLink = videoLink
         self.isAllDay = isAllDay
+        self.attendees = attendees
+        self.notes = notes
+        self.location = location
     }
 }

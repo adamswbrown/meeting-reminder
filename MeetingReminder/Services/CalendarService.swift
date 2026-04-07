@@ -100,6 +100,71 @@ final class CalendarService: ObservableObject {
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
+    // MARK: - Meeting Statistics
+
+    /// Total number of meetings today
+    var totalMeetingCount: Int {
+        events.count
+    }
+
+    /// Total meeting hours today
+    var totalMeetingHours: Double {
+        let totalMinutes = events.reduce(0) { $0 + $1.durationMinutes }
+        return Double(totalMinutes) / 60.0
+    }
+
+    /// Number of back-to-back meeting blocks (< 5 min gap)
+    var backToBackCount: Int {
+        guard events.count > 1 else { return 0 }
+        var count = 0
+        for i in 0..<(events.count - 1) {
+            let gap = events[i + 1].startDate.timeIntervalSince(events[i].endDate)
+            if gap < 300 { // < 5 minutes
+                count += 1
+            }
+        }
+        return count
+    }
+
+    /// Next break (gap > 15 min between meetings)
+    var nextBreakTime: Date? {
+        let now = Date()
+        for i in 0..<events.count {
+            let event = events[i]
+            // Skip events that have already ended
+            guard event.endDate > now else { continue }
+
+            if i + 1 < events.count {
+                let gap = events[i + 1].startDate.timeIntervalSince(event.endDate)
+                if gap >= 900 { // >= 15 min gap
+                    return event.endDate
+                }
+            } else {
+                // Last meeting of the day — break starts when it ends
+                return event.endDate
+            }
+        }
+        return nil
+    }
+
+    var formattedNextBreak: String? {
+        guard let breakTime = nextBreakTime else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: breakTime)
+    }
+
+    /// Check if the next meeting after the given event is back-to-back (< 5 min gap)
+    func nextBackToBackEvent(after event: MeetingEvent) -> MeetingEvent? {
+        guard let index = events.firstIndex(where: { $0.id == event.id }),
+              index + 1 < events.count else { return nil }
+        let next = events[index + 1]
+        let gap = next.startDate.timeIntervalSince(event.endDate)
+        return gap < 300 ? next : nil
+    }
+
+    // MARK: - Private
+
     private func updateAuthorizationStatus() {
         if #available(macOS 14.0, *) {
             authorizationStatus = EKEventStore.authorizationStatus(for: .event)
