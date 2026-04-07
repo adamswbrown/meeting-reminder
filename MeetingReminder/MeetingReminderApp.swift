@@ -97,6 +97,25 @@ final class OverlayCoordinator: ObservableObject {
 
     init(monitor: MeetingMonitor) {
         self.monitor = monitor
+
+        // Ensure all panels are closed when the app terminates
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.closeAllPanels()
+            }
+        }
+    }
+
+    private func closeAllPanels() {
+        windowController.close()
+        breakWindowController.close()
+        checklistController.close()
+        contextPanelController.close()
+        postMeetingController.close()
     }
 
     // MARK: - Preview Methods
