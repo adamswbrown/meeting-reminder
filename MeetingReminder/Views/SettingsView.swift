@@ -19,12 +19,15 @@ struct SettingsView: View {
     @ObservedObject var minutesService: MinutesService
     @ObservedObject var liveTranscriptService: LiveTranscriptService
     @ObservedObject var obsidianService: ObsidianService
+    @ObservedObject var notionService: NotionService
 
     @State private var launchAtLogin = false
     @State private var enabledCalendarIDs: Set<String> = []
     @State private var checklistItems: [ChecklistItem] = []
     @State private var newChecklistText: String = ""
     @State private var availableScreens: [NSScreen] = []
+    @State private var notionTokenDraft: String = ""
+    @State private var notionDatabaseDraft: String = ""
 
     var body: some View {
         TabView {
@@ -46,11 +49,11 @@ struct SettingsView: View {
             calendarsTab
                 .tabItem { Label("Calendars", systemImage: "calendar") }
 
-            minutesTab
-                .tabItem { Label("Minutes", systemImage: "waveform") }
+            notionTab
+                .tabItem { Label("Notion", systemImage: "square.and.pencil") }
 
-            obsidianTab
-                .tabItem { Label("Obsidian", systemImage: "doc.text.magnifyingglass") }
+            integrationsTab
+                .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
         }
         .frame(width: 560, height: 480)
         .onAppear {
@@ -343,9 +346,68 @@ struct SettingsView: View {
         .padding()
     }
 
-    // MARK: - Minutes Tab
+    // MARK: - Integrations Tab
+    //
+    // Meeting Reminder's default recording/summarisation story is Notion —
+    // see the dedicated Notion tab. Minutes and Obsidian are alternative
+    // integrations hidden behind feature flags, off by default, because they
+    // require a third-party CLI / desktop app and have rougher edges.
 
-    private var minutesTab: some View {
+    private var integrationsTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                integrationCard(
+                    title: "Minutes",
+                    subtitle: "Local-first transcription via the `minutes` CLI. Auto-records meetings, parses action items, shows a live transcript pane.",
+                    isEnabled: $minutesService.integrationEnabled,
+                    expanded: minutesContent
+                )
+
+                integrationCard(
+                    title: "Obsidian",
+                    subtitle: "Opens meeting notes in the Obsidian desktop app after a meeting ends. Requires the Minutes integration to produce notes.",
+                    isEnabled: $obsidianService.integrationEnabled,
+                    expanded: obsidianContent
+                )
+            }
+            .padding()
+        }
+    }
+
+    @ViewBuilder
+    private func integrationCard<Content: View>(
+        title: String,
+        subtitle: String,
+        isEnabled: Binding<Bool>,
+        @ViewBuilder expanded: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: isEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+
+            if isEnabled.wrappedValue {
+                Divider()
+                expanded()
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(10)
+    }
+
+    // MARK: - Minutes sub-content (shown inside integrationsTab when enabled)
+
+    @ViewBuilder
+    private func minutesContent() -> some View {
         Form {
             Section("Status") {
                 HStack {
@@ -491,15 +553,16 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .frame(minHeight: 520)
         .task {
             await minutesService.detectInstall()
         }
     }
 
-    // MARK: - Obsidian Tab
+    // MARK: - Obsidian sub-content (shown inside integrationsTab when enabled)
 
-    private var obsidianTab: some View {
+    @ViewBuilder
+    private func obsidianContent() -> some View {
         Form {
             Section("Status") {
                 HStack {
@@ -599,9 +662,110 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .frame(minHeight: 520)
         .onAppear {
             obsidianService.detect()
+        }
+    }
+
+    // MARK: - Notion Tab
+
+    private var notionTab: some View {
+        Form {
+            Section("Connection") {
+                HStack {
+                    if notionService.isTesting {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                        Text("Testing…")
+                            .foregroundColor(.secondary)
+                    } else if notionService.isConnected {
+                        Label("Connected", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        if let name = notionService.databaseName {
+                            Text("— \(name)")
+                                .foregroundColor(.secondary)
+                                .font(.callout)
+                        }
+                    } else if notionService.lastError != nil {
+                        Label("Failed", systemImage: "xmark.octagon.fill")
+                            .foregroundColor(.red)
+                    } else if notionService.isConfigured {
+                        Label("Not tested", systemImage: "questionmark.circle.fill")
+                            .foregroundColor(.orange)
+                    } else {
+                        Label("Not configured", systemImage: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+
+                Toggle("Enable Notion integration", isOn: $notionService.isEnabled)
+
+                Text("When enabled, Meeting Reminder creates a new page in your Notion database the moment you join a meeting, then opens it in the Notion desktop app. Notion's own AI Meeting Notes block handles recording and summarisation.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Credentials") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Internal integration token")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    SecureField("secret_…", text: $notionTokenDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Create one at notion.so/my-integrations and share your target database with it.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Database ID")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("32-character UUID from the database URL", text: $notionDatabaseDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Required schema: Title (title), Start (date), End (date), Attendees Name (rich text, optional).")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Save & Test") {
+                        saveAndTestNotion()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(notionService.isTesting)
+
+                    Spacer()
+
+                    Button("Clear") {
+                        notionService.clearAPIToken()
+                        notionService.databaseID = ""
+                        notionTokenDraft = ""
+                        notionDatabaseDraft = ""
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+
+            if let error = notionService.lastError {
+                Section("Last error") {
+                    Text(error)
+                        .font(.caption.monospaced())
+                        .foregroundColor(.orange)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            notionDatabaseDraft = notionService.databaseID
+            // Don't pre-populate the token field — it's in Keychain and we want
+            // to keep it opaque. Empty field = "leave existing token alone".
         }
     }
 
@@ -713,6 +877,27 @@ struct SettingsView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+
+    /// Save the Notion token + database ID drafts (if present), then immediately
+    /// test the connection. This is the single-button UX: the user enters fields
+    /// and clicks once.
+    private func saveAndTestNotion() {
+        let trimmedToken = notionTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDB = notionDatabaseDraft
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
+
+        if !trimmedDB.isEmpty {
+            notionService.databaseID = trimmedDB
+        }
+        if !trimmedToken.isEmpty {
+            // setAPIToken calls testConnection internally — don't double-fire.
+            notionService.setAPIToken(trimmedToken)
+            notionTokenDraft = ""  // clear the secure field after saving
+        } else {
+            Task { await notionService.testConnection() }
+        }
     }
 
     private func chooseMinutesBinary() {

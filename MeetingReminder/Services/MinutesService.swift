@@ -74,6 +74,12 @@ final class MinutesService: ObservableObject {
 
     // MARK: - User-tunable Preferences
 
+    /// Master feature flag — when false, the entire Minutes integration is
+    /// dormant: no recording, no prep brief, no live transcript, no post-meeting
+    /// nudge driven by Minutes output. Defaults to false; user opts in from
+    /// Settings → Minutes. Meeting Reminder's primary recording story is
+    /// delegated to Notion.
+    @AppStorage("minutesIntegrationEnabled") var integrationEnabled: Bool = false
     @AppStorage("autoRecordWithMinutes") var autoRecord: Bool = true
     @AppStorage("minutesPrepEnabled") var prepEnabled: Bool = true
 

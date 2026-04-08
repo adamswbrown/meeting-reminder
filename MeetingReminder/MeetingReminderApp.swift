@@ -9,6 +9,7 @@ struct MeetingReminderApp: App {
     @StateObject private var minutesService: MinutesService
     @StateObject private var liveTranscriptService: LiveTranscriptService
     @StateObject private var obsidianService = ObsidianService()
+    @StateObject private var notionService = NotionService()
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -21,11 +22,13 @@ struct MeetingReminderApp: App {
         let minutes = MinutesService()
         let live = LiveTranscriptService()
         let obsidian = ObsidianService()
+        let notion = NotionService()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             minutesService: minutes,
             liveTranscriptService: live,
-            obsidianService: obsidian
+            obsidianService: obsidian,
+            notionService: notion
         )
         _calendarService = StateObject(wrappedValue: calendar)
         _meetingMonitor = StateObject(wrappedValue: monitor)
@@ -33,6 +36,7 @@ struct MeetingReminderApp: App {
         _minutesService = StateObject(wrappedValue: minutes)
         _liveTranscriptService = StateObject(wrappedValue: live)
         _obsidianService = StateObject(wrappedValue: obsidian)
+        _notionService = StateObject(wrappedValue: notion)
     }
 
     var body: some Scene {
@@ -66,7 +70,8 @@ struct MeetingReminderApp: App {
                 calendarService: calendarService,
                 minutesService: minutesService,
                 liveTranscriptService: liveTranscriptService,
-                obsidianService: obsidianService
+                obsidianService: obsidianService,
+                notionService: notionService
             )
         }
     }
@@ -108,6 +113,7 @@ final class OverlayCoordinator: ObservableObject {
     private let minutesService: MinutesService
     private let liveTranscriptService: LiveTranscriptService
     let obsidianService: ObsidianService
+    private let notionService: NotionService
     private let windowController = OverlayWindowController()
     private let breakWindowController = BreakOverlayWindowController()
     private let checklistController = ChecklistWindowController()
@@ -121,16 +127,22 @@ final class OverlayCoordinator: ObservableObject {
         monitor: MeetingMonitor,
         minutesService: MinutesService,
         liveTranscriptService: LiveTranscriptService,
-        obsidianService: ObsidianService
+        obsidianService: ObsidianService,
+        notionService: NotionService
     ) {
         self.monitor = monitor
         self.minutesService = minutesService
         self.liveTranscriptService = liveTranscriptService
         self.obsidianService = obsidianService
+        self.notionService = notionService
         self.liveTranscriptController = LiveTranscriptWindowController(service: liveTranscriptService)
 
-        // Detect minutes CLI installation in the background.
-        Task { await minutesService.detectInstall() }
+        // Detect minutes CLI installation in the background, but only if the
+        // user has opted into the Minutes integration — otherwise there's no
+        // reason to probe the CLI at all.
+        if minutesService.integrationEnabled {
+            Task { await minutesService.detectInstall() }
+        }
 
         // Ensure all panels are closed when the app terminates
         NotificationCenter.default.addObserver(
@@ -330,30 +342,58 @@ final class OverlayCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Recording lifecycle: when a meeting transitions in-progress, start
-        // `minutes record` (if auto-record is enabled), show the context panel
-        // with the AI prep brief, and open the live transcript pane.
+        // Recording lifecycle: when a meeting transitions in-progress, fire
+        // each opt-in integration independently.
+        //
+        //  - Notion (primary): create a page in the configured database and
+        //    open it in the desktop app. Notion's AI Meeting Notes block
+        //    handles recording + summarisation from there.
+        //  - Minutes (feature-flagged, off by default): start `minutes record`,
+        //    show the AI prep brief in the context panel, open the live
+        //    transcript pane. Only runs when `minutesService.integrationEnabled`.
+        //  - Context panel: still shown for every meeting regardless of
+        //    integrations — attendees + notes + location are useful on their own.
         monitor.$currentMeetingInProgress
             .receive(on: RunLoop.main)
             .removeDuplicates(by: { $0?.id == $1?.id })
             .compactMap { $0 }
             .sink { [weak self] event in
                 guard let self else { return }
-                if self.minutesService.autoRecord && self.minutesService.isInstalled {
+
+                // Notion: create page + open in desktop app (fire-and-forget).
+                if self.notionService.isActive {
+                    Task { @MainActor in
+                        if let pageURL = await self.notionService.createMeetingPage(for: event) {
+                            NotionService.openInNotionApp(pageURL)
+                        }
+                    }
+                }
+
+                // Minutes: only if the user has explicitly opted in.
+                let minutesEnabled = self.minutesService.integrationEnabled
+                if minutesEnabled,
+                   self.minutesService.autoRecord,
+                   self.minutesService.isInstalled {
                     // Pause Core Audio silence detection — `minutes record` will hold
                     // the mic and the silence debounce can never fire while it's running.
                     self.monitor.externalRecordingActive = true
                     Task { await self.minutesService.startRecording(for: event) }
                 }
+
                 // Show context panel with prep brief alongside the meeting.
+                // Pass `nil` for minutesService when the integration is disabled
+                // so the panel doesn't try to load a prep brief.
                 self.contextPanelController.show(
                     event: event,
-                    minutesService: self.minutesService
+                    minutesService: minutesEnabled ? self.minutesService : nil
                 ) { [weak self] in
                     self?.contextPanelController.close()
                 }
-                // Open live transcript pane (if enabled in Settings).
-                if self.liveTranscriptService.liveTranscriptEnabled && self.minutesService.isInstalled {
+
+                // Live transcript pane: only if Minutes is enabled and healthy.
+                if minutesEnabled,
+                   self.liveTranscriptService.liveTranscriptEnabled,
+                   self.minutesService.isInstalled {
                     // Small delay so the recording sidecar has time to create the JSONL file.
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -405,13 +445,25 @@ final class OverlayCoordinator: ObservableObject {
             .sink { [weak self] (previous, current) in
                 guard let self else { return }
                 if let ended = previous, current == nil {
-                    // Stop recording immediately and close the context + live transcript panels.
-                    self.monitor.externalRecordingActive = false
-                    Task { await self.minutesService.stopRecording() }
+                    // Always close the panels we opened for the meeting.
                     self.contextPanelController.close()
                     self.liveTranscriptController.close()
 
-                    // Fetch parsed meeting (with polling) and show the nudge.
+                    let minutesEnabled = self.minutesService.integrationEnabled
+                    let obsidianEnabled = self.obsidianService.integrationEnabled
+
+                    // Stop Minutes recording only if it was actually running.
+                    if minutesEnabled {
+                        self.monitor.externalRecordingActive = false
+                        Task { await self.minutesService.stopRecording() }
+                    }
+
+                    // Post-meeting nudge is a Minutes-specific feature (it shows
+                    // parsed action items + decisions from the transcript). When
+                    // Minutes is off, Notion's own AI Meeting Notes handles capture
+                    // so we skip the nudge entirely.
+                    guard minutesEnabled else { return }
+
                     let title = ended.title
                     let slug = self.minutesService.slug(for: ended)
                     Task { @MainActor in
@@ -422,15 +474,16 @@ final class OverlayCoordinator: ObservableObject {
                             onDismiss: { [weak self] in
                                 self?.postMeetingController.close()
                             },
-                            onOpenInObsidian: self.obsidianService.isInstalled
+                            onOpenInObsidian: (obsidianEnabled && self.obsidianService.isInstalled)
                                 ? { [weak self] parsed in
                                     self?.obsidianService.openMeetingNote(at: parsed.transcriptPath)
                                 }
                                 : nil
                         )
 
-                        // Auto-open the meeting note in Obsidian (mirrors Notion flow).
+                        // Auto-open the meeting note in Obsidian.
                         if let meeting,
+                           obsidianEnabled,
                            self.obsidianService.autoOpenEnabled,
                            self.obsidianService.isInstalled {
                             self.obsidianService.openMeetingNote(at: meeting.transcriptPath)

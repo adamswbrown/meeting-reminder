@@ -37,6 +37,11 @@ final class ObsidianService: ObservableObject {
 
     // MARK: - User preferences
 
+    /// Master feature flag — when false the entire Obsidian integration is
+    /// dormant (no auto-open, no post-meeting button, no dashboard hooks).
+    /// Defaults to false; user opts in from Settings → Obsidian.
+    @AppStorage("obsidianIntegrationEnabled") var integrationEnabled: Bool = false
+
     /// When true, the app will automatically open the meeting note in Obsidian
     /// after a meeting ends (mirrors the Notion auto-open behaviour).
     @AppStorage("obsidianAutoOpenEnabled") var autoOpenEnabled: Bool = true

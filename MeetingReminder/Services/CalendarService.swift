@@ -56,6 +56,14 @@ final class CalendarService: ObservableObject {
     }
 
     func fetchEvents() {
+        // Ask EventKit to pull any pending remote changes before we query the
+        // store. For Google / Exchange / iCloud calendars, a deletion on the
+        // server won't be visible to `events(matching:)` until the local store
+        // syncs — and that doesn't happen on its own just because we asked.
+        // Without this, a cancelled meeting can linger in the menu bar for
+        // minutes until the next autonomous sync.
+        eventStore.refreshSourcesIfNecessary()
+
         let now = Date()
         let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
 

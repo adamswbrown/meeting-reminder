@@ -164,7 +164,7 @@ Notion is the primary meeting notes platform. Integration should cover:
 Triggered when the meeting reminder fires:
 - Creates a new page in the configured database
 - Populates: title, date/time, attendees, agenda, video link
-- Opens the page in the browser
+- Opens the page in the Notion desktop app
 - Stores the page ID so post-meeting features can reference it
 
 ### 6.3 Post-Meeting Action Item Pull

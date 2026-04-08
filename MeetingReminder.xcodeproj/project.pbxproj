@@ -34,6 +34,7 @@
 		A1000015 /* PostMeetingNudgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000018 /* PostMeetingNudgeView.swift */; };
 		A1000016 /* DisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000019 /* DisplayPreferences.swift */; };
 		A1000030 /* ObsidianService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000030 /* ObsidianService.swift */; };
+		A1000031 /* NotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000031 /* NotionService.swift */; };
 		A1000017 /* MinimalAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001A /* MinimalAlertView.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
@@ -82,6 +83,7 @@
 		B1000018 /* PostMeetingNudgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostMeetingNudgeView.swift; sourceTree = "<group>"; };
 		B1000019 /* DisplayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayPreferences.swift; sourceTree = "<group>"; };
 		B1000030 /* ObsidianService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianService.swift; sourceTree = "<group>"; };
+		B1000031 /* NotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionService.swift; sourceTree = "<group>"; };
 		B100001A /* MinimalAlertView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalAlertView.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
@@ -155,6 +157,7 @@
 				B1000021 /* KeychainHelper.swift */,
 				B1000022 /* LiveTranscriptService.swift */,
 				B1000030 /* ObsidianService.swift */,
+				B1000031 /* NotionService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -315,6 +318,7 @@
 				A1000016 /* DisplayPreferences.swift in Sources */,
 				A1000017 /* MinimalAlertView.swift in Sources */,
 				A1000030 /* ObsidianService.swift in Sources */,
+				A1000031 /* NotionService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

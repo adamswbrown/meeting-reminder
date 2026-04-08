@@ -60,6 +60,10 @@ final class MeetingMonitor: ObservableObject {
 
     private var workspaceObserver: Any?
 
+    // MARK: - Combine
+
+    private var cancellables = Set<AnyCancellable>()
+
     // MARK: - Settings
 
     var reminderMinutes: Int {
@@ -131,6 +135,19 @@ final class MeetingMonitor: ObservableObject {
 
         // Video app lifecycle monitoring
         startVideoAppMonitoring()
+
+        // React immediately when the calendar changes — a cancelled meeting
+        // needs to vanish from the menu bar label the moment EventKit notices,
+        // not on the next 10-second tick. Without this subscription the menu
+        // bar can keep showing a meeting that's already been removed from the
+        // user's calendar.
+        calendarService.$events
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateMenuBar()
+                self?.checkUpcomingMeetings()
+            }
+            .store(in: &cancellables)
 
         checkUpcomingMeetings()
         updateMenuBar()
@@ -307,6 +324,20 @@ final class MeetingMonitor: ObservableObject {
 
     private func updateMenuBar() {
         let now = Date()
+
+        // If a meeting we were tracking has been cancelled out of the calendar
+        // entirely, drop it from the overlay state so the UI doesn't reference a
+        // ghost. `currentMeetingInProgress` is intentionally NOT cleared here —
+        // ad-hoc meetings have synthetic IDs that aren't in calendarService.events,
+        // and a calendar-driven in-progress meeting getting cancelled mid-call is
+        // rare enough that we'd rather keep recording than rip the session out.
+        let liveIDs = Set(calendarService.events.map { $0.id })
+        if let active = activeOverlayEvent, !liveIDs.contains(active.id) {
+            activeOverlayEvent = nil
+            shouldShowOverlay = false
+            shouldShowMinimalAlert = false
+        }
+
         let upcoming = calendarService.events.filter { $0.startDate > now }
         let inProgress = calendarService.events.first(where: { $0.isInProgress })
 
