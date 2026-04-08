@@ -87,6 +87,29 @@ final class NotificationService {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// Post a failure banner when an integration (Notion, Minutes, Obsidian)
+    /// silently fails mid-meeting. Surfaces errors that would otherwise only
+    /// land in a `lastError` property the user never sees.
+    func postIntegrationFailure(integration: String, detail: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(integration) didn't fire"
+        // Trim long Notion API error bodies so the notification stays legible.
+        content.body = String(detail.prefix(300))
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "integration-failure-\(integration)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                print("Failed to post integration failure notification: \(error)")
+            }
+        }
+    }
+
     func removeNotifications(for eventID: String) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [

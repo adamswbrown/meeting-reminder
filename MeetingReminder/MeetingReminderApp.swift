@@ -361,10 +361,18 @@ final class OverlayCoordinator: ObservableObject {
                 guard let self else { return }
 
                 // Notion: create page + open in desktop app (fire-and-forget).
+                // On failure, surface the error as a banner so the user isn't
+                // left wondering why nothing happened.
                 if self.notionService.isActive {
                     Task { @MainActor in
                         if let pageURL = await self.notionService.createMeetingPage(for: event) {
                             NotionService.openInNotionApp(pageURL)
+                        } else {
+                            let detail = self.notionService.lastError ?? "Unknown error"
+                            NotificationService.shared.postIntegrationFailure(
+                                integration: "Notion",
+                                detail: detail
+                            )
                         }
                     }
                 }

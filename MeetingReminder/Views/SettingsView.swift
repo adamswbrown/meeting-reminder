@@ -701,9 +701,7 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                Toggle("Enable Notion integration", isOn: $notionService.isEnabled)
-
-                Text("When enabled, Meeting Reminder creates a new page in your Notion database the moment you join a meeting, then opens it in the Notion desktop app. Notion's own AI Meeting Notes block handles recording and summarisation.")
+                Text("Meeting Reminder creates a new page in your Notion database the moment you join a meeting, then opens it in the Notion desktop app. Notion's own AI Meeting Notes block handles recording and summarisation. The integration is active whenever both credentials below are set — there is no separate on/off toggle.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

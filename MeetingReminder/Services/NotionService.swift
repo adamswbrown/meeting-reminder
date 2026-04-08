@@ -15,9 +15,6 @@ final class NotionService: ObservableObject {
     @Published var databaseName: String?
     @Published var lastError: String?
     @Published var isTesting = false
-    @Published var isEnabled: Bool {
-        didSet { UserDefaults.standard.set(isEnabled, forKey: "notionIntegrationEnabled") }
-    }
 
     // MARK: - Persistence
 
@@ -36,19 +33,16 @@ final class NotionService: ObservableObject {
     }
 
     /// True when the user has entered both a token and a database ID.
+    /// This is also the "active" check — if you've configured it, it's on.
+    /// There is no separate enable toggle: credentials alone = active.
     var isConfigured: Bool {
         apiToken != nil && !databaseID.isEmpty
     }
 
-    /// True when the integration is enabled *and* configured — this is what
-    /// the meeting pipeline should check.
-    var isActive: Bool {
-        isEnabled && isConfigured
-    }
+    /// Kept as an alias so existing call sites don't churn. Same as `isConfigured`.
+    var isActive: Bool { isConfigured }
 
-    init() {
-        self.isEnabled = UserDefaults.standard.bool(forKey: "notionIntegrationEnabled")
-    }
+    init() {}
 
     // MARK: - Token management
 
@@ -126,7 +120,11 @@ final class NotionService: ObservableObject {
     ///   - End (date)
     ///   - Attendees Name (rich_text)  — optional
     func createMeetingPage(for event: MeetingEvent) async -> URL? {
-        guard let token = apiToken, !databaseID.isEmpty else { return nil }
+        guard let token = apiToken, !databaseID.isEmpty else {
+            lastError = "Notion not configured — missing API token or database ID."
+            return nil
+        }
+        lastError = nil
 
         let iso = ISO8601DateFormatter()
         let startISO = iso.string(from: event.startDate)
@@ -197,12 +195,13 @@ final class NotionService: ObservableObject {
 
             let (data, response) = try await URLSession.shared.data(for: request)
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                if let httpResponse = response as? HTTPURLResponse {
-                    let detail = String(data: data, encoding: .utf8) ?? ""
-                    lastError = "HTTP \(httpResponse.statusCode)\(detail.isEmpty ? "" : " — \(detail)")"
-                }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                lastError = "Invalid response from Notion"
+                return nil
+            }
+            guard httpResponse.statusCode == 200 else {
+                let detail = String(data: data, encoding: .utf8) ?? ""
+                lastError = "Notion HTTP \(httpResponse.statusCode)\(detail.isEmpty ? "" : " — \(detail)")"
                 return nil
             }
 
@@ -210,6 +209,7 @@ final class NotionService: ObservableObject {
                let pageURL = json["url"] as? String {
                 return URL(string: pageURL)
             }
+            lastError = "Notion returned 200 but no page URL in response body"
         } catch {
             lastError = error.localizedDescription
         }
