@@ -1,10 +1,15 @@
 import SwiftUI
 
 /// A floating, semi-transparent panel showing meeting context (title, attendees, agenda, links).
-/// Can be repositioned by the user and stays on screen during meetings.
+/// Optionally streams in an AI prep brief from `minutes` (past meetings, person profiles).
+/// Stays on screen during the meeting; user can dismiss with the close button.
 struct ContextPanelView: View {
     let event: MeetingEvent
+    let minutesService: MinutesService?
     let onClose: () -> Void
+
+    @State private var prepBrief: String?
+    @State private var isLoadingPrep = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -78,6 +83,12 @@ struct ContextPanelView: View {
                 }
             }
 
+            // AI Prep Brief (from `minutes person` + `minutes research`)
+            if isLoadingPrep || prepBrief != nil {
+                Divider()
+                prepBriefSection
+            }
+
             // Video link
             if let url = event.videoLink {
                 Divider()
@@ -87,18 +98,80 @@ struct ContextPanelView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "video.fill")
                         Text("Join \(VideoLinkDetector.serviceName(for: url))")
+                            .fontWeight(.semibold)
                     }
-                    .font(.callout.weight(.medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundColor(.white)
+                    .background(Color.accentColor)
+                    .cornerRadius(8)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.plain)
             }
         }
         .padding(16)
-        .frame(width: 300)
-        .background(.ultraThinMaterial)
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+        .frame(width: 320)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(NSColor.windowBackgroundColor).opacity(0.96))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+        .onAppear {
+            loadPrepBriefIfEnabled()
+        }
+    }
+
+    @ViewBuilder
+    private var prepBriefSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "brain")
+                    .foregroundColor(.purple)
+                Text("Prep brief")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.primary)
+                if isLoadingPrep {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if let brief = prepBrief {
+                ScrollView {
+                    Text(brief)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 140)
+                .padding(8)
+                .background(Color.primary.opacity(0.05))
+                .cornerRadius(6)
+            } else if isLoadingPrep {
+                Text("Reading past meetings…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .italic()
+            }
+        }
+    }
+
+    private func loadPrepBriefIfEnabled() {
+        guard let service = minutesService, service.prepEnabled, service.isInstalled else { return }
+        guard prepBrief == nil, !isLoadingPrep else { return }
+        isLoadingPrep = true
+        Task {
+            let brief = await service.generatePrepBrief(for: event)
+            await MainActor.run {
+                self.prepBrief = brief
+                self.isLoadingPrep = false
+            }
+        }
     }
 
     private var formattedEndTime: String {
@@ -113,13 +186,13 @@ struct ContextPanelView: View {
 final class ContextPanelWindowController {
     private var panel: NSPanel?
 
-    func show(event: MeetingEvent, onClose: @escaping () -> Void) {
+    func show(event: MeetingEvent, minutesService: MinutesService?, onClose: @escaping () -> Void) {
         close()
 
         guard let screen = NSScreen.main else { return }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 460),
             styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow],
             backing: .buffered,
             defer: false
@@ -136,6 +209,7 @@ final class ContextPanelWindowController {
 
         let view = ContextPanelView(
             event: event,
+            minutesService: minutesService,
             onClose: { [weak self] in
                 self?.close()
                 onClose()
@@ -145,8 +219,8 @@ final class ContextPanelWindowController {
         panel.contentView = NSHostingView(rootView: view)
 
         // Position in top-right corner
-        let x = screen.visibleFrame.maxX - 320
-        let y = screen.visibleFrame.maxY - 420
+        let x = screen.visibleFrame.maxX - 340
+        let y = screen.visibleFrame.maxY - 480
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         panel.orderFrontRegardless()
 

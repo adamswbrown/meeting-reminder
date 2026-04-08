@@ -59,8 +59,11 @@ final class CalendarService: ObservableObject {
         let now = Date()
         let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
 
+        // Reach back 2 hours so the user can join meetings they're running late to —
+        // an in-progress or recently-started meeting must stay visible in the menu
+        // bar list even if it kicked off well before the app was opened.
         let predicate = eventStore.predicateForEvents(
-            withStart: now.addingTimeInterval(-300), // include events that just started
+            withStart: now.addingTimeInterval(-7200),
             end: endOfDay,
             calendars: nil
         )

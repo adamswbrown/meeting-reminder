@@ -9,6 +9,7 @@ final class MeetingMonitor: ObservableObject {
 
     @Published var activeOverlayEvent: MeetingEvent?
     @Published var shouldShowOverlay = false
+    @Published var shouldShowMinimalAlert = false
     @Published var shouldShowBreakOverlay = false
     @Published var breakNextEvent: MeetingEvent?
 
@@ -49,14 +50,15 @@ final class MeetingMonitor: ObservableObject {
     private var audioInactiveSince: Date?  // debounce: when audio first went idle
     private let audioDebounceSeconds: TimeInterval = 30  // require 30s of silence
 
+    /// When true, audio-based silence detection is paused. Set this when an external
+    /// recorder (e.g. `minutes record`) is holding the mic, since the mic will never
+    /// go silent and the silence-debounce can't fire. Manual end via `markMeetingDone`
+    /// (or the End Meeting button in the live transcript pane) is the end signal in this mode.
+    var externalRecordingActive: Bool = false
+
     // MARK: - Video App Monitoring
 
     private var workspaceObserver: Any?
-
-    // MARK: - Notion Integration
-
-    private var notionPageIDs: [String: String] = [:]  // eventID -> notionPageID
-    private var notionPageURLs: [String: URL] = [:]    // eventID -> notionPageURL
 
     // MARK: - Settings
 
@@ -84,6 +86,19 @@ final class MeetingMonitor: ObservableObject {
         let defaults = UserDefaults.standard
         return defaults.object(forKey: "breakEnforcementEnabled") == nil ||
                defaults.bool(forKey: "breakEnforcementEnabled")
+    }
+
+    /// When the user is in a call (mic active), use a minimal screen-share-safe alert
+    /// instead of the full-screen overlay
+    var inCallMinimalModeEnabled: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "inCallMinimalModeEnabled") == nil ||
+               defaults.bool(forKey: "inCallMinimalModeEnabled")
+    }
+
+    /// True if the microphone is currently active (heuristic for "user is in a call")
+    var isCurrentlyInCall: Bool {
+        isAudioInputActive()
     }
 
     // MARK: - Init
@@ -139,6 +154,7 @@ final class MeetingMonitor: ObservableObject {
 
     func dismiss() {
         shouldShowOverlay = false
+        shouldShowMinimalAlert = false
         activeOverlayEvent = nil
     }
 
@@ -161,11 +177,92 @@ final class MeetingMonitor: ObservableObject {
         dismiss()
     }
 
+    /// Join a meeting from the menu bar event list directly, without going through
+    /// the overlay. Handles the "I'm late to the meeting" case — set the calendar
+    /// event as currently in progress so the recording pipeline (Minutes, context
+    /// panel, live transcript, post-meeting nudge) all fire as if the user had
+    /// clicked Join on the overlay.
+    ///
+    /// Also marks the event as "shown" so the overlay doesn't fire afterwards
+    /// for this same event.
+    func joinMeetingFromCalendar(_ event: MeetingEvent) {
+        shownEventIDs.insert(event.id)
+        currentMeetingInProgress = event
+        audioWasActive = isAudioInputActive()
+        audioInactiveSince = nil
+        if let url = event.videoLink {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// User manually marks meeting as done (menu bar button)
     func markMeetingDone() {
         guard let event = currentMeetingInProgress else { return }
         audioInactiveSince = nil
         handleMeetingEnded(event)
+    }
+
+    /// Start an ad-hoc meeting (no calendar event). Creates a synthetic MeetingEvent
+    /// and sets it as `currentMeetingInProgress`, which triggers the OverlayCoordinator
+    /// subscription to start `minutes record` and show post-meeting nudges as normal.
+    /// `title` is optional — defaults to "Ad-hoc meeting · HH:mm".
+    @discardableResult
+    func startAdHocMeeting(title: String? = nil, durationMinutes: Int = 60) -> MeetingEvent {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? title!
+            : "Ad-hoc meeting · \(formatter.string(from: now))"
+
+        let event = MeetingEvent(
+            id: "adhoc-\(UUID().uuidString)",
+            title: resolvedTitle,
+            startDate: now,
+            endDate: now.addingTimeInterval(TimeInterval(durationMinutes * 60)),
+            calendar: "Ad-hoc",
+            videoLink: nil,
+            attendees: nil,
+            notes: nil,
+            location: nil
+        )
+
+        currentMeetingInProgress = event
+        audioWasActive = isAudioInputActive()
+        audioInactiveSince = nil
+        return event
+    }
+
+    /// Adopt an existing `minutes record` process into the app's state.
+    ///
+    /// When the app is launched while `minutes record` is already running
+    /// (e.g. the app was killed mid-meeting, or the recording was started
+    /// from the CLI directly), we have no `currentMeetingInProgress` set and
+    /// the UI shows "Start ad-hoc meeting" instead of "Recording / End".
+    /// This reconstructs a synthetic `MeetingEvent` from the known title so
+    /// the rest of the pipeline (context panel, post-meeting nudge, end
+    /// detection) can run normally. The audio debounce is suppressed because
+    /// the mic is being held by the external recorder — the user must end
+    /// the meeting manually.
+    @discardableResult
+    func reconnectToActiveRecording(title: String) -> MeetingEvent {
+        let now = Date()
+        let event = MeetingEvent(
+            id: "reconnect-\(UUID().uuidString)",
+            title: title,
+            startDate: now,
+            endDate: now.addingTimeInterval(3600),
+            calendar: "Reconnected",
+            videoLink: nil,
+            attendees: nil,
+            notes: nil,
+            location: nil
+        )
+
+        currentMeetingInProgress = event
+        externalRecordingActive = true  // suppress audio-silence auto-end
+        audioInactiveSince = nil
+        return event
     }
 
     func dismissBreak() {
@@ -190,15 +287,20 @@ final class MeetingMonitor: ObservableObject {
         playAlertSound()
     }
 
-    // MARK: - Notion Integration
-
-    func setNotionPage(eventID: String, pageID: String, pageURL: URL) {
-        notionPageIDs[eventID] = pageID
-        notionPageURLs[eventID] = pageURL
-    }
-
-    func notionPageURL(for eventID: String) -> URL? {
-        notionPageURLs[eventID]
+    func testMinimalAlert() {
+        let testEvent = MeetingEvent(
+            id: "test-minimal-\(UUID().uuidString)",
+            title: "Test Meeting — In-Call Mode Preview",
+            startDate: Date().addingTimeInterval(120),
+            endDate: Date().addingTimeInterval(3720),
+            calendar: "Test",
+            videoLink: URL(string: "https://meet.google.com/test"),
+            attendees: ["Alice", "Bob"],
+            notes: "Minimal alert preview",
+            location: nil
+        )
+        activeOverlayEvent = testEvent
+        shouldShowMinimalAlert = true
     }
 
     // MARK: - Menu Bar State
@@ -388,6 +490,14 @@ final class MeetingMonitor: ObservableObject {
             return
         }
 
+        // When an external recorder (e.g. `minutes record`) is holding the mic,
+        // the mic never goes silent and silence-debounce is meaningless.
+        // Manual end (button / `markMeetingDone`) is the end signal in this mode.
+        guard !externalRecordingActive else {
+            audioInactiveSince = nil
+            return
+        }
+
         let audioActive = isAudioInputActive()
 
         if audioActive {
@@ -485,9 +595,17 @@ final class MeetingMonitor: ObservableObject {
     private func triggerOverlay(for event: MeetingEvent) {
         shownEventIDs.insert(event.id)
         activeOverlayEvent = event
-        shouldShowOverlay = true
         floatingPromptController.close() // Close context-switch prompt
-        playAlertSound()
+
+        // If user is in a call (mic active), use the minimal screen-share-safe alert
+        // instead of the full-screen overlay
+        if inCallMinimalModeEnabled && isCurrentlyInCall {
+            shouldShowMinimalAlert = true
+            // No sound — don't disturb the call
+        } else {
+            shouldShowOverlay = true
+            playAlertSound()
+        }
     }
 
     private func playAlertSound() {

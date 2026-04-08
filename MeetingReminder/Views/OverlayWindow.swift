@@ -8,7 +8,7 @@ final class OverlayWindowController {
               onSnooze: @escaping (Int) -> Void, onJoin: @escaping () -> Void) {
         close()
 
-        for screen in NSScreen.screens {
+        for screen in DisplayPreferences.targetScreens() {
             let panel = NSPanel(
                 contentRect: screen.frame,
                 styleMask: [.borderless, .nonactivatingPanel],
@@ -69,7 +69,7 @@ final class BreakOverlayWindowController {
     func show(nextEvent: MeetingEvent, onSkip: @escaping () -> Void) {
         close()
 
-        for screen in NSScreen.screens {
+        for screen in DisplayPreferences.targetScreens() {
             let panel = NSPanel(
                 contentRect: screen.frame,
                 styleMask: [.borderless, .nonactivatingPanel],

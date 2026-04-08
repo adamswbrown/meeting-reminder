@@ -3,11 +3,17 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var calendarService: CalendarService
     @ObservedObject var meetingMonitor: MeetingMonitor
+    @ObservedObject var minutesService: MinutesService
     var overlayCoordinator: OverlayCoordinator
     @Environment(\.dismiss) private var dismiss
 
     private var upcomingEvents: [MeetingEvent] {
-        calendarService.events.filter { $0.timeUntilStart > -300 }
+        // Include: events that haven't started yet (any future time) OR events
+        // that are currently in progress (started but not yet ended). This lets
+        // the user see and join meetings they're running late to.
+        calendarService.events.filter { event in
+            event.timeUntilStart > 0 || event.isInProgress
+        }
     }
 
     var body: some View {
@@ -22,21 +28,8 @@ struct MenuBarView: View {
                 eventListSection
             }
 
-            // "Done with meeting" button when a meeting is in progress
-            if meetingMonitor.currentMeetingInProgress != nil {
-                Divider().padding(.vertical, 6)
-                Button {
-                    meetingMonitor.markMeetingDone()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("Done with meeting")
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-            }
+            // Recording / reconnect / ad-hoc section
+            recordingSection
 
             Divider()
                 .padding(.vertical, 6)
@@ -76,6 +69,22 @@ struct MenuBarView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
+
+                Button {
+                    meetingMonitor.testMinimalAlert()
+                } label: {
+                    Label("In-Call Minimal Alert", systemImage: "bell.slash")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    overlayCoordinator.previewLiveTranscript()
+                } label: {
+                    Label("Live Transcript", systemImage: "waveform")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
             }
 
             Divider()
@@ -91,6 +100,192 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 280)
+    }
+
+    // MARK: - Recording section
+
+    /// Shows one of three states:
+    ///   1. App has `currentMeetingInProgress` set → "Recording / End meeting"
+    ///   2. CLI is recording but app isn't tracking it → "Reconnect to active recording"
+    ///   3. Nothing going on → "Start ad-hoc meeting"
+    @ViewBuilder
+    private var recordingSection: some View {
+        Divider().padding(.vertical, 6)
+
+        if let current = meetingMonitor.currentMeetingInProgress {
+            inProgressView(current: current)
+        } else if case let .recording(title) = minutesService.status {
+            reconnectView(externalTitle: title)
+        } else if case let .processing(title, stage) = minutesService.status {
+            processingView(title: title, stage: stage)
+        } else {
+            idleView
+        }
+    }
+
+    @ViewBuilder
+    private func inProgressView(current: MeetingEvent) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "record.circle.fill")
+                    .foregroundColor(.red)
+                    .font(.system(size: 11))
+                Text("Recording")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            Text(current.title)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .padding(.bottom, 4)
+
+            Button {
+                meetingMonitor.markMeetingDone()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("End meeting")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func reconnectView(externalTitle: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                    .font(.system(size: 11))
+                Text("External recording detected")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            if let t = externalTitle {
+                Text(t)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+            } else {
+                Text("Untitled")
+                    .font(.system(size: 12))
+                    .italic()
+                    .foregroundColor(.secondary)
+            }
+            Text("Minutes is recording but this app didn't start it.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 4)
+
+            Button {
+                dismiss()
+                let title = externalTitle ?? "Reconnected recording"
+                meetingMonitor.reconnectToActiveRecording(title: title)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "link.circle.fill")
+                        .foregroundColor(.accentColor)
+                    Text("Reconnect to recording")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Task { await minutesService.stopRecording() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "stop.circle.fill")
+                        .foregroundColor(.red)
+                    Text("Stop external recording")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func processingView(title: String?, stage: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                Text("Processing")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            if let t = title {
+                Text(t)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+            }
+            if let s = stage {
+                Text(s)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var idleView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                dismiss()
+                meetingMonitor.startAdHocMeeting()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "record.circle")
+                        .foregroundColor(.red)
+                    Text("Start ad-hoc meeting")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                dismiss()
+                promptForAdHocTitle()
+            } label: {
+                Text("Start with title…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Ad-hoc title prompt
+
+    private func promptForAdHocTitle() {
+        let alert = NSAlert()
+        alert.messageText = "Start ad-hoc meeting"
+        alert.informativeText = "Give this meeting a title. Recording will start immediately."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Start Recording")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        textField.placeholderString = "e.g. Quick sync with Tim · \(formatter.string(from: Date()))"
+        alert.accessoryView = textField
+
+        // Make sure the alert is on top and active
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = textField
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let title = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            meetingMonitor.startAdHocMeeting(title: title.isEmpty ? nil : title)
+        }
     }
 
     // MARK: - Meeting Load Section (5.1)
@@ -200,16 +395,35 @@ struct MenuBarView: View {
 
             Spacer()
 
-            if let url = event.videoLink {
+            if event.videoLink != nil {
                 Button {
-                    NSWorkspace.shared.open(url)
+                    dismiss()
+                    meetingMonitor.joinMeetingFromCalendar(event)
                 } label: {
-                    Image(systemName: "video.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(.accentColor)
+                    if event.isInProgress {
+                        // Prominent styling for the "I'm late" case — the user
+                        // needs to clearly see they can join a live meeting
+                        HStack(spacing: 3) {
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 10))
+                            Text("Join")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(5)
+                    } else {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.accentColor)
+                    }
                 }
                 .buttonStyle(.borderless)
-                .help("Join \(VideoLinkDetector.serviceName(for: url))")
+                .help(event.isInProgress
+                      ? "Join \(VideoLinkDetector.serviceName(for: event.videoLink!)) (in progress) and start recording"
+                      : "Join \(VideoLinkDetector.serviceName(for: event.videoLink!))")
             }
         }
         .padding(.vertical, 2)

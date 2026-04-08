@@ -12,15 +12,19 @@ struct SettingsView: View {
     @AppStorage("screenDimmingEnabled") private var screenDimmingEnabled: Bool = false
     @AppStorage("breakEnforcementEnabled") private var breakEnforcementEnabled: Bool = true
     @AppStorage("contextSwitchPromptMinutes") private var contextSwitchPromptMinutes: Int = 3
+    @AppStorage("inCallMinimalModeEnabled") private var inCallMinimalModeEnabled: Bool = true
+    @AppStorage("overlayMonitorMode") private var overlayMonitorModeRaw: String = DisplayMode.all.rawValue
+    @AppStorage("overlayMonitorScreenName") private var overlayMonitorScreenName: String = ""
     @ObservedObject var calendarService: CalendarService
-    @ObservedObject var notionService: NotionService
+    @ObservedObject var minutesService: MinutesService
+    @ObservedObject var liveTranscriptService: LiveTranscriptService
+    @ObservedObject var obsidianService: ObsidianService
 
     @State private var launchAtLogin = false
     @State private var enabledCalendarIDs: Set<String> = []
-    @State private var notionTokenInput: String = ""
-    @State private var notionDatabaseInput: String = ""
     @State private var checklistItems: [ChecklistItem] = []
     @State private var newChecklistText: String = ""
+    @State private var availableScreens: [NSScreen] = []
 
     var body: some View {
         TabView {
@@ -29,6 +33,9 @@ struct SettingsView: View {
 
             alertsTab
                 .tabItem { Label("Alerts", systemImage: "bell.badge") }
+
+            displayTab
+                .tabItem { Label("Display", systemImage: "display") }
 
             appearanceTab
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
@@ -39,10 +46,13 @@ struct SettingsView: View {
             calendarsTab
                 .tabItem { Label("Calendars", systemImage: "calendar") }
 
-            notionTab
-                .tabItem { Label("Notion", systemImage: "doc.text") }
+            minutesTab
+                .tabItem { Label("Minutes", systemImage: "waveform") }
+
+            obsidianTab
+                .tabItem { Label("Obsidian", systemImage: "doc.text.magnifyingglass") }
         }
-        .frame(width: 520, height: 440)
+        .frame(width: 560, height: 480)
         .onAppear {
             loadSettings()
         }
@@ -153,6 +163,61 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    // MARK: - Display Tab
+
+    private var displayTab: some View {
+        Form {
+            Section("Show overlay on") {
+                Picker("Display:", selection: $overlayMonitorModeRaw) {
+                    ForEach(DisplayMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if overlayMonitorModeRaw == DisplayMode.specific.rawValue {
+                    Picker("Screen:", selection: $overlayMonitorScreenName) {
+                        if availableScreens.isEmpty {
+                            Text("No screens detected").tag("")
+                        } else {
+                            ForEach(availableScreens, id: \.localizedName) { screen in
+                                Text(screenLabel(screen)).tag(screen.localizedName)
+                            }
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button("Refresh Screen List") {
+                        availableScreens = NSScreen.screens
+                    }
+                    .controlSize(.small)
+                }
+
+                Text("Currently \(availableScreens.count) screen\(availableScreens.count == 1 ? "" : "s") connected")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("In-call mode") {
+                Toggle("Use minimal alert when on a call", isOn: $inCallMinimalModeEnabled)
+
+                Text("When the microphone is active (you're in a call or sharing your screen), the full-screen overlay is replaced with a small, screen-share-safe notification. Sound is also suppressed.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            availableScreens = NSScreen.screens
+        }
+    }
+
+    private func screenLabel(_ screen: NSScreen) -> String {
+        let size = screen.frame.size
+        return "\(screen.localizedName) (\(Int(size.width))×\(Int(size.height)))"
     }
 
     // MARK: - Appearance Tab
@@ -278,74 +343,389 @@ struct SettingsView: View {
         .padding()
     }
 
-    // MARK: - Notion Tab
+    // MARK: - Minutes Tab
 
-    private var notionTab: some View {
+    private var minutesTab: some View {
         Form {
-            Section("Connection") {
-                SecureField("API Token", text: $notionTokenInput)
-                    .onSubmit { notionService.setAPIToken(notionTokenInput) }
-                TextField("Database ID", text: $notionDatabaseInput)
-                    .onChange(of: notionDatabaseInput) { newValue in
-                        notionService.databaseID = newValue
+            Section("Status") {
+                HStack {
+                    if minutesService.isInstalled {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    } else {
+                        Label("Not found", systemImage: "xmark.circle.fill")
+                            .foregroundColor(.orange)
                     }
+                    Spacer()
+                    if let v = minutesService.version {
+                        Text("v\(v)")
+                            .foregroundColor(.secondary)
+                            .font(.callout.monospacedDigit())
+                    }
+                }
+
+                if let path = minutesService.binaryPath {
+                    HStack {
+                        Text("Binary:")
+                            .foregroundColor(.secondary)
+                        Text(path.path)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if !minutesService.isInstalled {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Install with Homebrew:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("brew tap silverstein/tap && brew install minutes")
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
 
                 HStack {
-                    Button("Test Connection") {
-                        if !notionTokenInput.isEmpty {
-                            notionService.setAPIToken(notionTokenInput)
-                        }
-                        Task { await notionService.testConnection() }
+                    Button("Choose binary…") {
+                        chooseMinutesBinary()
                     }
                     .controlSize(.small)
 
-                    Spacer()
-
-                    if notionService.isConnected {
-                        Label("Connected", systemImage: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.callout)
-                    } else if let error = notionService.lastError {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundColor(.orange)
-                            .font(.caption)
+                    Button("Detect") {
+                        Task { await minutesService.detectInstall() }
                     }
+                    .controlSize(.small)
+
+                    Button("Health check") {
+                        Task { _ = await minutesService.checkHealth() }
+                    }
+                    .controlSize(.small)
                 }
 
-                if let dbName = notionService.databaseName {
-                    HStack {
-                        Text("Database:")
-                            .foregroundColor(.secondary)
-                        Text(dbName)
-                            .fontWeight(.medium)
+                if let health = minutesService.lastHealthOutput, !health.isEmpty {
+                    ScrollView {
+                        Text(health)
+                            .font(.caption.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
                     }
-                    .font(.callout)
+                    .frame(maxHeight: 120)
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.08))
+                    .cornerRadius(6)
                 }
             }
 
+            // Live transcript config health check — Minutes silently disables the
+            // recording sidecar when [live_transcript].model is empty in config.toml.
+            // We surface that and offer a one-click fix.
+            if minutesService.isInstalled && !minutesService.liveTranscriptConfigured {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Live transcripts are disabled in your Minutes config")
+                                .font(.callout.weight(.semibold))
+                        }
+                        Text("`[live_transcript].model` is empty in `~/.config/minutes/config.toml`. The recording sidecar requires a whisper model name to write transcript chunks during recording. Without it, the live transcript pane will stay empty during meetings.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        let installed = minutesService.installedWhisperModels()
+                        if installed.isEmpty {
+                            Text("No whisper models found in `~/.minutes/models/`. Run `minutes setup --model base` to install one.")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        } else {
+                            HStack(spacing: 8) {
+                                Text("Installed models:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                ForEach(installed, id: \.self) { model in
+                                    Button(model) {
+                                        if minutesService.setLiveTranscriptModel(model) {
+                                            // Backup file lives at config.toml.bak
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Configuration warning")
+                }
+            }
+
+            Section("Behavior") {
+                Toggle("Auto-record meetings when I join", isOn: $minutesService.autoRecord)
+                Toggle("Show AI prep brief in context panel", isOn: $minutesService.prepEnabled)
+                Toggle("Show live transcript pane during meetings", isOn: $liveTranscriptService.liveTranscriptEnabled)
+                Toggle("In-call coach (heuristic alerts)", isOn: $liveTranscriptService.inCallCoachEnabled)
+                    .disabled(!liveTranscriptService.liveTranscriptEnabled)
+                HStack {
+                    Text("Your name (for mention detection):")
+                        .foregroundColor(.secondary)
+                    TextField(NSFullUserName(), text: $liveTranscriptService.userName)
+                        .textFieldStyle(.roundedBorder)
+                }
+                .disabled(!liveTranscriptService.inCallCoachEnabled)
+            }
+
             Section("Features") {
-                Text("When connected, Meeting Reminder will:")
+                Text("Minutes is a local-first conversation memory tool.")
                     .font(.callout)
                     .foregroundColor(.secondary)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    featureRow(icon: "doc.badge.plus", text: "Auto-create a meeting notes page when the reminder fires")
-                    featureRow(icon: "safari", text: "Open the notes page in your browser")
-                    featureRow(icon: "checkmark.square", text: "Surface action items after the meeting ends")
+                    featureRow(icon: "waveform", text: "Local transcription with whisper.cpp (no cloud)")
+                    featureRow(icon: "person.2", text: "Speaker diarization (when enabled in Minutes)")
+                    featureRow(icon: "checkmark.square", text: "Auto-extracted action items + decisions")
+                    featureRow(icon: "brain", text: "Pre-meeting brief from past conversations")
                 }
-            }
-
-            Section {
-                Button("Clear Token") {
-                    notionService.clearAPIToken()
-                    notionTokenInput = ""
-                }
-                .foregroundColor(.red)
-                .controlSize(.small)
             }
         }
         .formStyle(.grouped)
         .padding()
+        .task {
+            await minutesService.detectInstall()
+        }
+    }
+
+    // MARK: - Obsidian Tab
+
+    private var obsidianTab: some View {
+        Form {
+            Section("Status") {
+                HStack {
+                    if obsidianService.isInstalled {
+                        Label("Obsidian installed", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    } else {
+                        Label("Not installed", systemImage: "xmark.circle.fill")
+                            .foregroundColor(.orange)
+                    }
+                    Spacer()
+                    Button("Detect") {
+                        obsidianService.detect()
+                    }
+                    .controlSize(.small)
+                }
+
+                if !obsidianService.isInstalled {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Obsidian isn't installed. Auto-opening meeting notes requires the Obsidian desktop app.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            Button("Install with Homebrew") {
+                                copyToClipboard("brew install --cask obsidian")
+                            }
+                            .controlSize(.small)
+                            Text("(copies command)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Link("Download obsidian.md", destination: URL(string: "https://obsidian.md/download")!)
+                            .font(.caption)
+                    }
+                }
+            }
+
+            if obsidianService.isInstalled {
+                Section("Vaults") {
+                    if obsidianService.vaults.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("No vaults registered with Obsidian yet.")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                            Text("Open Obsidian and create or open a vault. The vault needs to contain (or symlink to) your Minutes meetings folder — the [vault] section in `~/.config/minutes/config.toml` controls this.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        ForEach(obsidianService.vaults) { vault in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "folder.fill")
+                                    .foregroundColor(.purple)
+                                    .font(.system(size: 14))
+                                    .padding(.top, 2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(vault.name)
+                                        .font(.callout.weight(.medium))
+                                    Text(vault.path.path)
+                                        .font(.caption.monospaced())
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .textSelection(.enabled)
+                                    if let ts = vault.lastOpened {
+                                        Text("Last opened: \(formattedDate(ts))")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+
+                Section("Behavior") {
+                    Toggle("Auto-open meeting note after meeting ends", isOn: $obsidianService.autoOpenEnabled)
+
+                    Text("When a meeting ends and Minutes has finished transcribing, open the meeting note directly in the Obsidian desktop app.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Section("Meetings Dashboard") {
+                    dashboardInstallView
+                }
+
+                if let error = obsidianService.lastError {
+                    Section("Last error") {
+                        Text(error)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.orange)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            obsidianService.detect()
+        }
+    }
+
+    // MARK: - Dashboard install subview
+
+    @ViewBuilder
+    private var dashboardInstallView: some View {
+        let installURL = obsidianService.dashboardInstallURL()
+        let isInstalled = obsidianService.dashboardIsInstalled()
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Install a pre-built Dataview dashboard into your vault. It queries your Minutes meetings folder directly and shows: this week, open action items, recent decisions, people you talk to most, and who you're losing touch with.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if let installURL {
+                HStack(spacing: 4) {
+                    Text("Install location:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(installURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                        .font(.caption.monospaced())
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                    Text("Install location unknown — is Minutes' `[vault]` section configured?")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+
+            HStack(spacing: 8) {
+                if isInstalled {
+                    Label("Installed", systemImage: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
+
+                    Spacer()
+
+                    Button("Open in Obsidian") {
+                        if let url = installURL {
+                            obsidianService.openMeetingNote(at: url)
+                        }
+                    }
+                    .controlSize(.small)
+
+                    Button("Reinstall") {
+                        confirmReinstallDashboard()
+                    }
+                    .controlSize(.small)
+                } else {
+                    Spacer()
+                    Button("Install Meetings Dashboard") {
+                        installDashboard()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(installURL == nil)
+                }
+            }
+
+            Text("Requires the Dataview and Tasks community plugins to render the queries.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func installDashboard() {
+        guard let url = obsidianService.installDashboard() else { return }
+        // Offer to open it immediately
+        let alert = NSAlert()
+        alert.messageText = "Dashboard installed"
+        alert.informativeText = "Written to \(url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).\n\nMake sure you've enabled the Dataview and Tasks community plugins in Obsidian, then open the file to see live meeting data."
+        alert.addButton(withTitle: "Open in Obsidian")
+        alert.addButton(withTitle: "Done")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            obsidianService.openMeetingNote(at: url)
+        }
+    }
+
+    private func confirmReinstallDashboard() {
+        let alert = NSAlert()
+        alert.messageText = "Reinstall dashboard?"
+        alert.informativeText = "The existing Meetings Dashboard file will be overwritten. Any local edits you've made to it will be lost."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Overwrite")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            installDashboard()
+        }
+    }
+
+    private func copyToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func chooseMinutesBinary() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose the minutes binary"
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = URL(fileURLWithPath: "/opt/homebrew/bin")
+        if panel.runModal() == .OK, let url = panel.url {
+            minutesService.setBinaryPath(url)
+        }
     }
 
     private func featureRow(icon: String, text: String) -> some View {
@@ -385,7 +765,6 @@ struct SettingsView: View {
         let ids = UserDefaults.standard.stringArray(forKey: "enabledCalendarIDs") ?? []
         enabledCalendarIDs = Set(ids)
         checklistItems = ChecklistItem.load()
-        notionDatabaseInput = notionService.databaseID
 
         if #available(macOS 13.0, *) {
             launchAtLogin = SMAppService.mainApp.status == .enabled
