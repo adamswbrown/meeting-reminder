@@ -342,18 +342,22 @@ final class MeetingMonitor: ObservableObject {
         let inProgress = calendarService.events.first(where: { $0.isInProgress })
 
         if let current = inProgress {
-            menuBarText = "\(current.title) (in progress)"
+            // Wrap-up nudge: only when we're actually in a meeting and the
+            // next one is close enough that the user should start wrapping up.
+            if let next = upcoming.first {
+                let minutesUntilNext = Double(next.timeUntilStart) / 60.0
+                if minutesUntilNext <= Double(wrapUpMinutes) {
+                    menuBarText = "Wrap up — \(next.title) in \(next.shortTimeUntil)"
+                } else {
+                    menuBarText = "\(current.title) (in progress)"
+                }
+            } else {
+                menuBarText = "\(current.title) (in progress)"
+            }
             menuBarUrgency = .inProgress
         } else if let next = upcoming.first {
             let minutesUntil = Double(next.timeUntilStart) / 60.0
-
-            // Wrap-up nudge
-            if minutesUntil <= Double(wrapUpMinutes) && minutesUntil > Double(reminderMinutes) {
-                menuBarText = "Wrap up — \(next.title) in \(next.shortTimeUntil)"
-            } else {
-                menuBarText = "\(next.title) in \(next.shortTimeUntil)"
-            }
-
+            menuBarText = "\(next.title) in \(next.shortTimeUntil)"
             menuBarUrgency = MenuBarUrgency.from(
                 minutesUntil: minutesUntil,
                 isInProgress: false
