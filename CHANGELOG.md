@@ -2,6 +2,43 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [2.0.3] - 2026-04-09
+
+### Fixed
+- Notion HTTP 400 when calendar notes exceed 2000 characters — long notes are now split into multiple rich_text elements within the same paragraph block
+- Attendees rich_text property truncated to 2000 characters to prevent the same Notion validation error on meetings with many participants
+
+## [2.0.2] - 2026-04-09
+
+### Changed
+- Auto Minutes recording disabled by default — the Minutes CLI only captures mic input (one side of a call), not system audio. Notion handles full call capture natively, so `autoRecordWithMinutes` now defaults to `false`. Re-enable in Settings → Minutes if needed
+
+## [2.0.1] - 2026-04-09
+
+### Fixed
+- Minutes recording not triggering — `detectInstall()` only ran at app launch when the Minutes toggle was already on. Enabling the integration in Settings after launch left `isInstalled = false`, silently skipping recording. The pipeline now lazily detects the CLI when a meeting starts
+- Keychain password prompts on every Preferences open — switching between Debug and Release builds changed the code-signing identity, triggering macOS Keychain ACL prompts. Fixed by creating entries with no per-app ACL restriction
+
+### Changed
+- Split entitlements files — hardened-runtime exceptions moved to a dedicated release entitlements file
+
+## [2.0.0] - 2026-04-08
+
+### Added
+- Notion integration — auto-creates meeting pages in a configured Notion database on meeting join
+- Minutes CLI integration — automatic recording, live transcript, and post-meeting nudge with parsed action items
+- Progressive alert tiers (ambient, banner, urgent, blocking, last-chance) with per-tier toggles
+- Pre-meeting checklist panel
+- Context panel with attendees, notes, and AI prep brief
+- Break enforcement overlay between back-to-back meetings
+- Context-switch floating prompt
+- Live transcript pane with in-call coach hints (questions, mentions, commitments)
+- Ad-hoc meeting support (no calendar event required)
+- Onboarding flow for first launch
+- Screen dimming option (IOKit brightness control)
+- Colour-blind mode for menu bar
+- 7-tab Settings with full configuration
+
 ## [1.0.1] - 2026-02-19
 
 ### Fixed
