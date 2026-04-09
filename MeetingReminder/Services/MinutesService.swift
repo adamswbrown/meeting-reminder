@@ -80,7 +80,7 @@ final class MinutesService: ObservableObject {
     /// Settings → Minutes. Meeting Reminder's primary recording story is
     /// delegated to Notion.
     @AppStorage("minutesIntegrationEnabled") var integrationEnabled: Bool = false
-    @AppStorage("autoRecordWithMinutes") var autoRecord: Bool = true
+    @AppStorage("autoRecordWithMinutes") var autoRecord: Bool = false
     @AppStorage("minutesPrepEnabled") var prepEnabled: Bool = true
 
     // MARK: - Init
