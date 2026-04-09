@@ -145,9 +145,11 @@ final class NotionService: ObservableObject {
         ]
 
         if let attendees = event.attendees, !attendees.isEmpty {
+            let joined = attendees.joined(separator: ", ")
+            let truncated = String(joined.prefix(2000))
             properties["Attendees Name"] = [
                 "rich_text": [
-                    ["text": ["content": attendees.joined(separator: ", ")]]
+                    ["text": ["content": truncated]]
                 ]
             ]
         }
@@ -169,11 +171,21 @@ final class NotionService: ObservableObject {
                     "rich_text": [["text": ["content": "Calendar notes"]]]
                 ],
             ])
+            // Notion limits rich_text content to 2000 chars per element.
+            // Split long notes into multiple rich_text elements.
+            let limit = 2000
+            var richTextElements: [[String: Any]] = []
+            var remaining = notes[notes.startIndex...]
+            while !remaining.isEmpty {
+                let end = remaining.index(remaining.startIndex, offsetBy: limit, limitedBy: remaining.endIndex) ?? remaining.endIndex
+                richTextElements.append(["text": ["content": String(remaining[..<end])]])
+                remaining = remaining[end...]
+            }
             children.append([
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": [
-                    "rich_text": [["text": ["content": notes]]]
+                    "rich_text": richTextElements
                 ],
             ])
         }
