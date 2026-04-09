@@ -379,13 +379,38 @@ final class OverlayCoordinator: ObservableObject {
 
                 // Minutes: only if the user has explicitly opted in.
                 let minutesEnabled = self.minutesService.integrationEnabled
-                if minutesEnabled,
-                   self.minutesService.autoRecord,
-                   self.minutesService.isInstalled {
-                    // Pause Core Audio silence detection — `minutes record` will hold
-                    // the mic and the silence debounce can never fire while it's running.
-                    self.monitor.externalRecordingActive = true
-                    Task { await self.minutesService.startRecording(for: event) }
+                if minutesEnabled {
+                    Task { @MainActor in
+                        // detectInstall() only runs at launch when the toggle is
+                        // already on. If the user enables it after launch, isInstalled
+                        // is still false. Re-detect now so we don't silently skip.
+                        if !self.minutesService.isInstalled {
+                            await self.minutesService.detectInstall()
+                        }
+                        guard self.minutesService.isInstalled else { return }
+
+                        // Start recording if auto-record is on.
+                        if self.minutesService.autoRecord {
+                            // Pause Core Audio silence detection — `minutes record` will hold
+                            // the mic and the silence debounce can never fire while it's running.
+                            self.monitor.externalRecordingActive = true
+                            await self.minutesService.startRecording(for: event)
+                        }
+
+                        // Live transcript pane.
+                        if self.liveTranscriptService.liveTranscriptEnabled {
+                            // Small delay so the recording sidecar has time to create the JSONL file.
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            self.liveTranscriptController.show(
+                                onClose: { [weak self] in
+                                    self?.liveTranscriptController.close()
+                                },
+                                onEndMeeting: { [weak self] in
+                                    self?.monitor.markMeetingDone()
+                                }
+                            )
+                        }
+                    }
                 }
 
                 // Show context panel with prep brief alongside the meeting.
@@ -396,24 +421,6 @@ final class OverlayCoordinator: ObservableObject {
                     minutesService: minutesEnabled ? self.minutesService : nil
                 ) { [weak self] in
                     self?.contextPanelController.close()
-                }
-
-                // Live transcript pane: only if Minutes is enabled and healthy.
-                if minutesEnabled,
-                   self.liveTranscriptService.liveTranscriptEnabled,
-                   self.minutesService.isInstalled {
-                    // Small delay so the recording sidecar has time to create the JSONL file.
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 1_500_000_000)
-                        self.liveTranscriptController.show(
-                            onClose: { [weak self] in
-                                self?.liveTranscriptController.close()
-                            },
-                            onEndMeeting: { [weak self] in
-                                self?.monitor.markMeetingDone()
-                            }
-                        )
-                    }
                 }
             }
             .store(in: &cancellables)
