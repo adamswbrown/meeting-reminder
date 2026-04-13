@@ -91,6 +91,20 @@ struct MenuBarView: View {
                 .padding(.vertical, 6)
 
             Button {
+                dismiss()
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.orderFrontStandardAboutPanel(options: [
+                    .applicationName: "Meeting Reminder",
+                    .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+                    .version: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+                ])
+            } label: {
+                Text("About Meeting Reminder")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            Button {
                 NSApplication.shared.terminate(nil)
             } label: {
                 Text("Quit Meeting Reminder")

@@ -3,6 +3,8 @@ import SwiftUI
 
 @main
 struct MeetingReminderApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     @StateObject private var calendarService = CalendarService()
     @StateObject private var meetingMonitor: MeetingMonitor
     @StateObject private var overlayCoordinator: OverlayCoordinator
@@ -15,6 +17,11 @@ struct MeetingReminderApp: App {
     @AppStorage("colorBlindMode") private var colorBlindMode = false
 
     private let onboardingController = OnboardingWindowController()
+
+    /// Tracks whether services have been started. The `.task` on the menu bar
+    /// label fires at app launch (the label is always rendered), so this
+    /// prevents duplicate starts if SwiftUI re-evaluates the label.
+    @State private var hasStartedServices = false
 
     init() {
         let calendar = CalendarService()
@@ -47,8 +54,16 @@ struct MeetingReminderApp: App {
                 minutesService: minutesService,
                 overlayCoordinator: overlayCoordinator
             )
-            .onAppear {
-                Task {
+        } label: {
+            menuBarLabel
+                .task {
+                    // Best practice: start services when the menu bar label
+                    // appears (i.e. at app launch), NOT when the popover is
+                    // first opened. The label is always rendered; the popover
+                    // content is lazy.
+                    guard !hasStartedServices else { return }
+                    hasStartedServices = true
+
                     await calendarService.requestAccess()
                     calendarService.startMonitoring()
                     meetingMonitor.start()
@@ -59,9 +74,6 @@ struct MeetingReminderApp: App {
                         onboardingController.show(calendarService: calendarService)
                     }
                 }
-            }
-        } label: {
-            menuBarLabel
         }
         .menuBarExtraStyle(.window)
 
@@ -91,6 +103,8 @@ struct MeetingReminderApp: App {
             Text(meetingMonitor.menuBarText)
                 .font(.system(size: 12))
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Meeting Reminder: \(meetingMonitor.menuBarText)")
     }
 
     private func menuBarColor(_ name: String) -> Color {
@@ -507,5 +521,71 @@ final class OverlayCoordinator: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+}
+
+// MARK: - App Delegate
+
+/// Minimal AppDelegate for menu bar app best practices:
+/// - Installs global keyboard shortcuts (⌘Q, ⌘,) that work even though
+///   LSUIElement apps have no main menu bar.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Install global key-equivalent monitors so ⌘Q and ⌘, work from
+        // any window (overlays, settings, popovers). LSUIElement apps don't
+        // get the standard Edit/App menus, so we create invisible menu items.
+        let mainMenu = NSMenu()
+
+        let appMenu = NSMenu()
+        let aboutItem = NSMenuItem(
+            title: "About Meeting Reminder",
+            action: #selector(showAboutPanel),
+            keyEquivalent: ""
+        )
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(.separator())
+
+        let prefsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        prefsItem.target = self
+        appMenu.addItem(prefsItem)
+        appMenu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit Meeting Reminder",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appMenu.addItem(quitItem)
+
+        let appMenuItem = NSMenuItem()
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func showAboutPanel() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Meeting Reminder",
+            .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+            .version: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+        ])
+    }
+
+    @objc private func openSettings() {
+        if #available(macOS 14.0, *) {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        } else {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 }
