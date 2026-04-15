@@ -5,6 +5,7 @@ import SwiftUI
 struct BreakOverlayView: View {
     let nextMeetingTitle: String
     let nextMeetingStart: Date
+    let onOK: () -> Void
     let onSkip: () -> Void
 
     @State private var countdown: String = ""
@@ -65,20 +66,39 @@ struct BreakOverlayView: View {
 
                 Spacer()
 
-                Button(action: onSkip) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "forward.fill")
-                        Text("Skip Break")
+                HStack(spacing: 16) {
+                    Button(action: onOK) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark")
+                            Text("OK")
+                        }
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 14)
+                        .background(Color.green.opacity(0.5))
+                        .cornerRadius(12)
                     }
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.2))
-                    .cornerRadius(12)
+                    .buttonStyle(.plain)
+                    // Explicit shortcut needed: this view runs inside an NSPanel where
+                    // SwiftUI's implicit default-button behaviour is not active.
+                    .keyboardShortcut(.return, modifiers: [])
+
+                    Button(action: onSkip) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "forward.fill")
+                            Text("Skip Break")
+                        }
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 14)
+                        .background(Color.white.opacity(0.2))
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.escape, modifiers: [])
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
                     .frame(height: 60)
