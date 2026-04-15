@@ -20,6 +20,12 @@ final class NotionService: ObservableObject {
 
     private let tokenKey = "notionAPIToken"
 
+    /// Tracks event IDs for which a Notion page has already been created this
+    /// session. Prevents duplicate pages when the Combine sink fires more than
+    /// once for the same meeting (e.g. rapid state transitions or multi-screen
+    /// overlay setups).
+    private var createdEventIDs: Set<String> = []
+
     var databaseID: String {
         get { UserDefaults.standard.string(forKey: "notionDatabaseID") ?? "" }
         set {
@@ -120,6 +126,14 @@ final class NotionService: ObservableObject {
     ///   - End (date)
     ///   - Attendees Name (rich_text)  — optional
     func createMeetingPage(for event: MeetingEvent) async -> URL? {
+        guard !createdEventIDs.contains(event.id) else {
+            // A page was already created for this event in this session.
+            // Clear lastError so the caller knows this is a silent skip, not a
+            // real failure, and won't show a spurious error banner.
+            lastError = nil
+            return nil
+        }
+
         guard let token = apiToken, !databaseID.isEmpty else {
             lastError = "Notion not configured — missing API token or database ID."
             return nil
@@ -221,8 +235,12 @@ final class NotionService: ObservableObject {
             }
 
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let pageURL = json["url"] as? String {
-                return URL(string: pageURL)
+               let pageURL = json["url"] as? String,
+               let result = URL(string: pageURL) {
+                // Only mark as created after a confirmed successful API response so
+                // that transient failures don't permanently suppress retries.
+                createdEventIDs.insert(event.id)
+                return result
             }
             lastError = "Notion returned 200 but no page URL in response body"
         } catch {
@@ -254,7 +272,27 @@ final class NotionService: ObservableObject {
     }
 
     /// Opens a Notion URL in the desktop app; falls back to the default browser.
+    ///
+    /// Prefers the `notion://` deep-link scheme over passing an `https://` URL
+    /// via `withApplicationAt:`. Notion's Electron app can forward an `https://`
+    /// URL to the system browser in addition to opening it internally, which
+    /// causes the page to open twice (once in the app, once in a browser tab).
+    /// Using `notion://` routes the URL exclusively through Notion's registered
+    /// URL-scheme handler, so only the desktop app handles it.
     static func openInNotionApp(_ url: URL) {
+        // Convert https://www.notion.so/... → notion://www.notion.so/... so the
+        // URL is handled only by the Notion desktop app, not also by the browser.
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           components.scheme == "https" || components.scheme == "http",
+           NSWorkspace.shared.urlForApplication(withBundleIdentifier: "notion.id") != nil {
+            components.scheme = "notion"
+            if let deepLinkURL = components.url {
+                NSWorkspace.shared.open(deepLinkURL)
+                return
+            }
+        }
+
+        // Fallback: open via explicit app launch, or browser if Notion is absent.
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "notion.id") {
             NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
         } else {
