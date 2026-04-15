@@ -130,10 +130,13 @@ final class NotionService: ObservableObject {
         let startISO = iso.string(from: event.startDate)
         let endISO = iso.string(from: event.endDate)
 
+        // Notion limits title rich_text content to 2000 chars.
+        let titleContent = String(event.title.prefix(2000))
+
         var properties: [String: Any] = [
             "Title": [
                 "title": [
-                    ["text": ["content": event.title]]
+                    ["text": ["content": titleContent]]
                 ]
             ],
             "Start": [
@@ -163,7 +166,8 @@ final class NotionService: ObservableObject {
                 "bookmark": ["url": link],
             ])
         }
-        if let notes = event.notes, !notes.isEmpty {
+        let cleanedNotes = NotionService.stripVideoConferencingBoilerplate(from: event.notes ?? "")
+        if !cleanedNotes.isEmpty {
             children.append([
                 "object": "block",
                 "type": "heading_3",
@@ -171,23 +175,22 @@ final class NotionService: ObservableObject {
                     "rich_text": [["text": ["content": "Calendar notes"]]]
                 ],
             ])
-            // Notion limits rich_text content to 2000 chars per element.
-            // Split long notes into multiple rich_text elements.
+            // Notion limits each rich_text element's text.content to 2000 chars.
+            // Split long notes into separate paragraph blocks (one per chunk) so
+            // that every rich_text[0].text.content is guaranteed to be ≤ 2000 chars.
             let limit = 2000
-            var richTextElements: [[String: Any]] = []
-            var remaining = notes[notes.startIndex...]
+            var remaining = cleanedNotes[cleanedNotes.startIndex...]
             while !remaining.isEmpty {
                 let end = remaining.index(remaining.startIndex, offsetBy: limit, limitedBy: remaining.endIndex) ?? remaining.endIndex
-                richTextElements.append(["text": ["content": String(remaining[..<end])]])
+                children.append([
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": [
+                        "rich_text": [["text": ["content": String(remaining[..<end])]]]
+                    ],
+                ])
                 remaining = remaining[end...]
             }
-            children.append([
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": [
-                    "rich_text": richTextElements
-                ],
-            ])
         }
 
         let body: [String: Any] = [
@@ -230,6 +233,25 @@ final class NotionService: ObservableObject {
     }
 
     // MARK: - Open in Notion desktop app
+
+    /// Strips video-conferencing boilerplate blocks from calendar notes before
+    /// sending to Notion. Invite generators (Teams, Zoom, etc.) embed a block of
+    /// join-link metadata delimited by long horizontal separator lines (10+
+    /// underscores or dashes). That information is redundant in Notion because
+    /// the video link is already captured as a bookmark block.
+    static func stripVideoConferencingBoilerplate(from notes: String) -> String {
+        // Match a block that starts and ends with a line of 10+ underscores or dashes,
+        // capturing everything in between (including newlines via .dotMatchesLineSeparators).
+        let pattern = #"[ \t]*[_\-]{10,}[ \t]*[\r\n].+?[ \t]*[_\-]{10,}[ \t]*"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators) else { return notes }
+        let range = NSRange(notes.startIndex..., in: notes)
+        let cleaned = regex.stringByReplacingMatches(in: notes, range: range, withTemplate: "")
+        // Collapse 3+ consecutive blank lines left after removal
+        let collapsed = cleaned.replacingOccurrences(
+            of: #"\n{3,}"#, with: "\n\n", options: .regularExpression
+        )
+        return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Opens a Notion URL in the desktop app; falls back to the default browser.
     static func openInNotionApp(_ url: URL) {
