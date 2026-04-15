@@ -381,8 +381,10 @@ final class OverlayCoordinator: ObservableObject {
                     Task { @MainActor in
                         if let pageURL = await self.notionService.createMeetingPage(for: event) {
                             NotionService.openInNotionApp(pageURL)
-                        } else {
-                            let detail = self.notionService.lastError ?? "Unknown error"
+                        } else if let detail = self.notionService.lastError {
+                            // lastError is nil for a silent deduplication skip (page
+                            // already created for this event), so only show the banner
+                            // when there is an actual API or configuration failure.
                             NotificationService.shared.postIntegrationFailure(
                                 integration: "Notion",
                                 detail: detail
