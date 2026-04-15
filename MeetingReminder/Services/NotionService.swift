@@ -26,6 +26,15 @@ final class NotionService: ObservableObject {
     /// overlay setups).
     private var createdEventIDs: Set<String> = []
 
+    /// Tracks event IDs for which a page creation is currently in-flight.
+    /// Guards against concurrent `createMeetingPage` calls for the same event
+    /// that could both pass the `createdEventIDs` check before either inserts
+    /// its ID (possible because `@MainActor` suspends at `await` points).
+    private var pendingEventIDs: Set<String> = []
+
+    /// Bundle identifier for the Notion desktop application.
+    private static let notionBundleID = "notion.id"
+
     var databaseID: String {
         get { UserDefaults.standard.string(forKey: "notionDatabaseID") ?? "" }
         set {
@@ -126,13 +135,19 @@ final class NotionService: ObservableObject {
     ///   - End (date)
     ///   - Attendees Name (rich_text)  — optional
     func createMeetingPage(for event: MeetingEvent) async -> URL? {
-        guard !createdEventIDs.contains(event.id) else {
-            // A page was already created for this event in this session.
-            // Clear lastError so the caller knows this is a silent skip, not a
-            // real failure, and won't show a spurious error banner.
+        guard !createdEventIDs.contains(event.id),
+              !pendingEventIDs.contains(event.id) else {
+            // A page was already created (or is currently being created) for this
+            // event. Clear lastError so the caller knows this is a silent skip,
+            // not a real failure, and won't show a spurious error banner.
             lastError = nil
             return nil
         }
+
+        // Mark as in-flight before the first await so that a second call racing
+        // through while the API request is pending won't pass the guard above.
+        pendingEventIDs.insert(event.id)
+        defer { pendingEventIDs.remove(event.id) }
 
         guard let token = apiToken, !databaseID.isEmpty else {
             lastError = "Notion not configured — missing API token or database ID."
@@ -284,7 +299,7 @@ final class NotionService: ObservableObject {
         // URL is handled only by the Notion desktop app, not also by the browser.
         if var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
            components.scheme == "https" || components.scheme == "http",
-           NSWorkspace.shared.urlForApplication(withBundleIdentifier: "notion.id") != nil {
+           NSWorkspace.shared.urlForApplication(withBundleIdentifier: notionBundleID) != nil {
             components.scheme = "notion"
             if let deepLinkURL = components.url {
                 NSWorkspace.shared.open(deepLinkURL)
@@ -293,7 +308,7 @@ final class NotionService: ObservableObject {
         }
 
         // Fallback: open via explicit app launch, or browser if Notion is absent.
-        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "notion.id") {
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: notionBundleID) {
             NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
         } else {
             NSWorkspace.shared.open(url)
