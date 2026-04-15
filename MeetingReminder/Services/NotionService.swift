@@ -130,10 +130,13 @@ final class NotionService: ObservableObject {
         let startISO = iso.string(from: event.startDate)
         let endISO = iso.string(from: event.endDate)
 
+        // Notion limits title rich_text content to 2000 chars.
+        let titleContent = String(event.title.prefix(2000))
+
         var properties: [String: Any] = [
             "Title": [
                 "title": [
-                    ["text": ["content": event.title]]
+                    ["text": ["content": titleContent]]
                 ]
             ],
             "Start": [
@@ -171,23 +174,22 @@ final class NotionService: ObservableObject {
                     "rich_text": [["text": ["content": "Calendar notes"]]]
                 ],
             ])
-            // Notion limits rich_text content to 2000 chars per element.
-            // Split long notes into multiple rich_text elements.
+            // Notion limits each rich_text element's text.content to 2000 chars.
+            // Split long notes into separate paragraph blocks (one per chunk) so
+            // that every rich_text[0].text.content is guaranteed to be ≤ 2000 chars.
             let limit = 2000
-            var richTextElements: [[String: Any]] = []
             var remaining = notes[notes.startIndex...]
             while !remaining.isEmpty {
                 let end = remaining.index(remaining.startIndex, offsetBy: limit, limitedBy: remaining.endIndex) ?? remaining.endIndex
-                richTextElements.append(["text": ["content": String(remaining[..<end])]])
+                children.append([
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": [
+                        "rich_text": [["text": ["content": String(remaining[..<end])]]]
+                    ],
+                ])
                 remaining = remaining[end...]
             }
-            children.append([
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": [
-                    "rich_text": richTextElements
-                ],
-            ])
         }
 
         let body: [String: Any] = [
