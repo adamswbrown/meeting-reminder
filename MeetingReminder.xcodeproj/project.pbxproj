@@ -12,6 +12,7 @@
 		A1000003 /* CalendarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000003 /* CalendarService.swift */; };
 		A1000004 /* MeetingMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000004 /* MeetingMonitor.swift */; };
 		A1000005 /* VideoLinkDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000005 /* VideoLinkDetector.swift */; };
+		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
 		A1000006 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000006 /* MenuBarView.swift */; };
 		A1000007 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000007 /* OverlayWindow.swift */; };
 		A1000008 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000008 /* OverlayView.swift */; };
@@ -58,6 +59,7 @@
 		B1000003 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
 		B1000004 /* MeetingMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingMonitor.swift; sourceTree = "<group>"; };
 		B1000005 /* VideoLinkDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetector.swift; sourceTree = "<group>"; };
+		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
 		B1000006 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		B1000007 /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		B1000008 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
@@ -149,6 +151,7 @@
 				B1000003 /* CalendarService.swift */,
 				B1000004 /* MeetingMonitor.swift */,
 				B1000005 /* VideoLinkDetector.swift */,
+				B1000099 /* MeetingLauncher.swift */,
 				B100000F /* AlertTier.swift */,
 				B1000011 /* NotificationService.swift */,
 				B1000012 /* ScreenDimmer.swift */,
@@ -296,6 +299,7 @@
 				A1000003 /* CalendarService.swift in Sources */,
 				A1000004 /* MeetingMonitor.swift in Sources */,
 				A1000005 /* VideoLinkDetector.swift in Sources */,
+				A1000099 /* MeetingLauncher.swift in Sources */,
 				A1000006 /* MenuBarView.swift in Sources */,
 				A1000007 /* OverlayWindow.swift in Sources */,
 				A1000008 /* OverlayView.swift in Sources */,

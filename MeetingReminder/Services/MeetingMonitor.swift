@@ -190,7 +190,7 @@ final class MeetingMonitor: ObservableObject {
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
         audioInactiveSince = nil  // reset debounce for fresh meeting
-        NSWorkspace.shared.open(url)
+        MeetingLauncher.open(url)
         dismiss()
     }
 
@@ -208,7 +208,7 @@ final class MeetingMonitor: ObservableObject {
         audioWasActive = isAudioInputActive()
         audioInactiveSince = nil
         if let url = event.videoLink {
-            NSWorkspace.shared.open(url)
+            MeetingLauncher.open(url)
         }
     }
 
