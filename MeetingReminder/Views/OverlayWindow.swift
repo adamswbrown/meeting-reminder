@@ -86,13 +86,16 @@ final class BreakOverlayWindowController {
             panel.isMovable = false
             panel.hidesOnDeactivate = false
 
+            // Both OK and Skip dismiss the overlay; the distinction is semantic/UX only.
+            let dismissOverlay = { [weak self] in
+                self?.close()
+                onSkip()
+            }
             let view = BreakOverlayView(
                 nextMeetingTitle: nextEvent.title,
                 nextMeetingStart: nextEvent.startDate,
-                onSkip: { [weak self] in
-                    self?.close()
-                    onSkip()
-                }
+                onOK: dismissOverlay,
+                onSkip: dismissOverlay
             )
 
             panel.contentView = NSHostingView(rootView: view)
