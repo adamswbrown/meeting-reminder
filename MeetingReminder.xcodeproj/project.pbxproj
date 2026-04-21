@@ -12,7 +12,6 @@
 		A1000003 /* CalendarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000003 /* CalendarService.swift */; };
 		A1000004 /* MeetingMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000004 /* MeetingMonitor.swift */; };
 		A1000005 /* VideoLinkDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000005 /* VideoLinkDetector.swift */; };
-		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
 		A1000006 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000006 /* MenuBarView.swift */; };
 		A1000007 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000007 /* OverlayWindow.swift */; };
 		A1000008 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000008 /* OverlayView.swift */; };
@@ -24,19 +23,20 @@
 		A100000E /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000011 /* NotificationService.swift */; };
 		A100000F /* ScreenDimmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000012 /* ScreenDimmer.swift */; };
 		A1000010 /* MinutesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000013 /* MinutesService.swift */; };
-		A1000020 /* MinutesMeeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000020 /* MinutesMeeting.swift */; };
-		A1000021 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000021 /* KeychainHelper.swift */; };
-		A1000022 /* LiveTranscriptService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000022 /* LiveTranscriptService.swift */; };
-		A1000023 /* LiveTranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000023 /* LiveTranscriptView.swift */; };
 		A1000011 /* ContextPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000014 /* ContextPanelView.swift */; };
 		A1000012 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000015 /* ChecklistView.swift */; };
 		A1000013 /* BreakOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000016 /* BreakOverlayView.swift */; };
 		A1000014 /* FloatingPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000017 /* FloatingPromptView.swift */; };
 		A1000015 /* PostMeetingNudgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000018 /* PostMeetingNudgeView.swift */; };
 		A1000016 /* DisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000019 /* DisplayPreferences.swift */; };
+		A1000017 /* MinimalAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001A /* MinimalAlertView.swift */; };
+		A1000020 /* MinutesMeeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000020 /* MinutesMeeting.swift */; };
+		A1000021 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000021 /* KeychainHelper.swift */; };
+		A1000022 /* LiveTranscriptService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000022 /* LiveTranscriptService.swift */; };
+		A1000023 /* LiveTranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000023 /* LiveTranscriptView.swift */; };
 		A1000030 /* ObsidianService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000030 /* ObsidianService.swift */; };
 		A1000031 /* NotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000031 /* NotionService.swift */; };
-		A1000017 /* MinimalAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001A /* MinimalAlertView.swift */; };
+		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
 		T2000003 /* OverlayBackgroundTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000003 /* OverlayBackgroundTests.swift */; };
@@ -59,7 +59,6 @@
 		B1000003 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
 		B1000004 /* MeetingMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingMonitor.swift; sourceTree = "<group>"; };
 		B1000005 /* VideoLinkDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetector.swift; sourceTree = "<group>"; };
-		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
 		B1000006 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		B1000007 /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		B1000008 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
@@ -74,19 +73,20 @@
 		B1000011 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		B1000012 /* ScreenDimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenDimmer.swift; sourceTree = "<group>"; };
 		B1000013 /* MinutesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinutesService.swift; sourceTree = "<group>"; };
-		B1000020 /* MinutesMeeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinutesMeeting.swift; sourceTree = "<group>"; };
-		B1000021 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
-		B1000022 /* LiveTranscriptService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptService.swift; sourceTree = "<group>"; };
-		B1000023 /* LiveTranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptView.swift; sourceTree = "<group>"; };
 		B1000014 /* ContextPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelView.swift; sourceTree = "<group>"; };
 		B1000015 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
 		B1000016 /* BreakOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreakOverlayView.swift; sourceTree = "<group>"; };
 		B1000017 /* FloatingPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPromptView.swift; sourceTree = "<group>"; };
 		B1000018 /* PostMeetingNudgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostMeetingNudgeView.swift; sourceTree = "<group>"; };
 		B1000019 /* DisplayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayPreferences.swift; sourceTree = "<group>"; };
+		B100001A /* MinimalAlertView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalAlertView.swift; sourceTree = "<group>"; };
+		B1000020 /* MinutesMeeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinutesMeeting.swift; sourceTree = "<group>"; };
+		B1000021 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		B1000022 /* LiveTranscriptService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptService.swift; sourceTree = "<group>"; };
+		B1000023 /* LiveTranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptView.swift; sourceTree = "<group>"; };
 		B1000030 /* ObsidianService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianService.swift; sourceTree = "<group>"; };
 		B1000031 /* NotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionService.swift; sourceTree = "<group>"; };
-		B100001A /* MinimalAlertView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalAlertView.swift; sourceTree = "<group>"; };
+		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
 		T1000003 /* OverlayBackgroundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayBackgroundTests.swift; sourceTree = "<group>"; };
@@ -257,7 +257,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
-				LastUpgradeCheck = 2620;
+				LastUpgradeCheck = 2640;
 			};
 			buildConfigurationList = F1000001 /* Build configuration list for PBXProject "MeetingReminder" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -352,6 +352,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -406,6 +407,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -459,9 +461,11 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MeetingReminder/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Meeting Reminder";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -484,9 +488,11 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MeetingReminder/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Meeting Reminder";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

@@ -1,0 +1,200 @@
+name: Release
+
+# Triggers:
+#   * Pushing a tag matching v*.*.* (e.g. v2.1.0) cuts a signed + notarized release.
+#   * workflow_dispatch lets you dry-run the pipeline manually against any branch.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 2.1.0) — used only when the workflow is manually dispatched without a tag'
+        required: false
+        default: '0.0.0-dryrun'
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 30
+    permissions:
+      contents: write   # required for softprops/action-gh-release to create the release
+
+    env:
+      APP_NAME: MeetingReminder
+      SCHEME: MeetingReminder
+      BUNDLE_ID: com.meetingreminder.app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # so auto-changelog can walk the history
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ github.event.inputs.version || '0.0.0-dryrun' }}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Select Xcode
+        # Pin to a specific Xcode to avoid surprise breakage when the runner's
+        # default is bumped. Available Xcodes: https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" \
+            -P "$MACOS_CERTIFICATE_PWD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"' | xargs)
+
+          # Save for later steps.
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+          # Discover the imported identity so we don't hard-code the team ID in the repo.
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep 'Developer ID Application' \
+            | head -n1 \
+            | sed -E 's/.*"(Developer ID Application: [^"]+)".*/\1/')"
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error::Could not find a Developer ID Application identity in the imported cert"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          TEAM_ID="$(echo "$IDENTITY" | sed -E 's/.*\(([A-Z0-9]{10})\).*/\1/')"
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "Signing identity: $IDENTITY"
+          echo "Team ID: $TEAM_ID"
+
+      - name: Render ExportOptions.plist
+        run: |
+          mkdir -p build
+          sed "s/__TEAM_ID__/$TEAM_ID/" scripts/ExportOptions.plist > build/ExportOptions.plist
+          cat build/ExportOptions.plist
+
+      - name: Build & archive
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project MeetingReminder.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath build/MeetingReminder.xcarchive \
+            -destination "generic/platform=macOS" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime" \
+            archive
+
+      - name: Export .app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/MeetingReminder.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/ExportOptions.plist
+
+          test -d "build/export/$APP_NAME.app" || {
+            echo "::error::Export did not produce build/export/$APP_NAME.app"
+            ls -la build/export || true
+            exit 1
+          }
+
+      - name: Notarize
+        # Skip notarization on workflow_dispatch dry-runs to save time (no cert = no release anyway).
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
+          NOTARIZATION_PWD: ${{ secrets.NOTARIZATION_PWD }}
+        run: |
+          set -euo pipefail
+          APP="build/export/$APP_NAME.app"
+          ZIP="build/notarize.zip"
+
+          /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
+
+          xcrun notarytool submit "$ZIP" \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --password "$NOTARIZATION_PWD" \
+            --team-id "$TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+
+      - name: Build DMG
+        env:
+          SIGNING_IDENTITY: ${{ env.SIGNING_IDENTITY }}
+          KEYCHAIN_PATH: ${{ env.KEYCHAIN_PATH }}
+        run: |
+          set -euo pipefail
+          scripts/create-dmg.sh "build/export/$APP_NAME.app" "$VERSION" dist
+
+      - name: Staple DMG
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          xcrun stapler staple "dist/MeetingReminder-$VERSION.dmg"
+          xcrun stapler validate "dist/MeetingReminder-$VERSION.dmg"
+
+      - name: Upload artifact (for workflow_dispatch dry-runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeetingReminder-${{ env.VERSION }}-dryrun
+          path: |
+            dist/MeetingReminder-*.dmg
+            dist/MeetingReminder-*.dmg.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MeetingReminder-${{ env.VERSION }}.dmg
+            dist/MeetingReminder-${{ env.VERSION }}.dmg.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" || true

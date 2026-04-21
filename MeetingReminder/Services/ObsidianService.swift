@@ -113,10 +113,10 @@ final class ObsidianService: ObservableObject {
         // Candidate paths to test against each vault root:
         //   1. The real file path (e.g. ~/meetings/foo.md)
         //   2. Any symlinks inside each vault that point at the real file
-        let realFilePath = (try? fileURL.resolvingSymlinksInPath().path) ?? fileURL.path
+        let realFilePath = fileURL.resolvingSymlinksInPath().path
 
         for vault in vaults {
-            let vaultRoot = (try? vault.path.resolvingSymlinksInPath().path) ?? vault.path.path
+            let vaultRoot = vault.path.resolvingSymlinksInPath().path
 
             // Case 1: the file literally lives inside the vault
             if realFilePath.hasPrefix(vaultRoot + "/") {
@@ -164,7 +164,7 @@ final class ObsidianService: ObservableObject {
             // Only care about symlinks
             if values?.isSymbolicLink != true { continue }
 
-            let resolved = (try? entry.resolvingSymlinksInPath().path) ?? entry.path
+            let resolved = entry.resolvingSymlinksInPath().path
             if resolved == targetRealPath {
                 return entry.path
             }
