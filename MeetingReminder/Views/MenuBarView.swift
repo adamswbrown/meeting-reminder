@@ -114,6 +114,15 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 280)
+        .onAppear {
+            // User opening the popover is a strong "I want the latest" signal.
+            // Triggers `refreshSourcesIfNecessary` so remote calendars
+            // (Google / Exchange / iCloud) get nudged to sync any meetings
+            // added since the last poll.
+            if calendarService.authorizationStatus == .authorized {
+                calendarService.fetchEvents()
+            }
+        }
     }
 
     // MARK: - Recording section
