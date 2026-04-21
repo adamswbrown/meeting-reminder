@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import EventKit
 import Foundation
@@ -10,7 +11,8 @@ final class CalendarService: ObservableObject {
 
     private let eventStore = EKEventStore()
     private var refreshTimer: Timer?
-    private var notificationObserver: Any?
+    private var storeChangeObserver: Any?
+    private var wakeObserver: Any?
 
     init() {
         updateAuthorizationStatus()
@@ -19,8 +21,11 @@ final class CalendarService: ObservableObject {
 
     deinit {
         refreshTimer?.invalidate()
-        if let observer = notificationObserver {
+        if let observer = storeChangeObserver {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
     }
 
@@ -185,8 +190,13 @@ final class CalendarService: ObservableObject {
     }
 
     private func startAutoRefresh() {
+        // Poll every 60s so a newly-added calendar event (especially from a
+        // remote source like Google/Exchange that hasn't pushed a change
+        // notification yet) shows up within about a minute. `fetchEvents`
+        // also calls `refreshSourcesIfNecessary`, which hints EventKit to
+        // pull remote updates — the poll is what kicks that off.
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.fetchEvents()
             }
@@ -194,9 +204,24 @@ final class CalendarService: ObservableObject {
     }
 
     private func setupNotificationObserver() {
-        notificationObserver = NotificationCenter.default.addObserver(
+        // Observe with `object: nil` — EventKit does not always post this
+        // notification with the store instance as the sender, so filtering by
+        // object can silently drop sync-driven updates.
+        storeChangeObserver = NotificationCenter.default.addObserver(
             forName: .EKEventStoreChanged,
-            object: eventStore,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.fetchEvents()
+            }
+        }
+
+        // Laptops that wake from sleep can be minutes behind — fetch immediately
+        // on wake so the menu bar isn't showing a stale list.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
