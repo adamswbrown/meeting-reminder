@@ -12,6 +12,18 @@ A native macOS menu bar app built for people who lose track of time. Reads your 
 <img src="https://img.shields.io/badge/macOS-13%2B-blue" alt="macOS"> <img src="https://img.shields.io/badge/Swift-5-orange" alt="Swift"> <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
 
+## Latest Release
+
+Current release: **v2.0.6** (2026-04-24)
+
+- Restored the Notion pre-call brief flow in the meeting startup pipeline
+- Added a dedicated "Pre-call briefs database ID" field in Settings -> Notion
+- Published a signed and notarized DMG
+
+Download:
+- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v2.0.6/MeetingReminder-2.0.6.dmg
+- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v2.0.6/MeetingReminder-2.0.6.dmg.sha256
+
 ## Credits
 
 This project was originally inspired by [In Your Face](https://www.inyourface.app), a fantastic Mac app that pioneered the full-screen meeting overlay concept. Meeting Reminder started as a free, open-source alternative and has since evolved into something different — an ADHD-focused meeting assistant with progressive alerts, Notion integration for meeting notes, and hybrid meeting-end detection. If you want a polished, commercial full-screen reminder — In Your Face is excellent and worth supporting.

@@ -2,6 +2,22 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [2.0.6] - 2026-04-24
+
+### Added
+- Restored the Notion pre-call brief flow in the meeting startup pipeline
+- Added a configurable "Pre-call briefs database ID" field in Settings -> Notion
+
+### Changed
+- Wired the pre-call brief panel into both overlay and direct-join paths so briefs appear when a meeting starts
+
+### Fixed
+- Added missing pre-call brief source files to the Xcode target so Release builds compile reliably
+- Fixed DMG signing script handling for empty keychain argument expansion under `set -u`
+
+### Distribution
+- Published a signed and notarized DMG for v2.0.6
+
 ## [2.0.3] - 2026-04-09
 
 ### Fixed
