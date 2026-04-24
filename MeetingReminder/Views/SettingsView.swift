@@ -20,6 +20,7 @@ struct SettingsView: View {
     @ObservedObject var liveTranscriptService: LiveTranscriptService
     @ObservedObject var obsidianService: ObsidianService
     @ObservedObject var notionService: NotionService
+    @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
     @State private var launchAtLogin = false
     @State private var enabledCalendarIDs: Set<String> = []
@@ -28,6 +29,7 @@ struct SettingsView: View {
     @State private var availableScreens: [NSScreen] = []
     @State private var notionTokenDraft: String = ""
     @State private var notionDatabaseDraft: String = ""
+    @State private var preCallBriefDatabaseDraft: String = ""
 
     var body: some View {
         TabView {
@@ -730,6 +732,19 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Divider()
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pre-call briefs database ID")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("32-character UUID for Pre-Call Briefings", text: $preCallBriefDatabaseDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Used by the floating pre-call brief panel. Reuses the same Notion token above.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
                 HStack(spacing: 8) {
                     Button("Save & Test") {
                         saveAndTestNotion()
@@ -744,6 +759,8 @@ struct SettingsView: View {
                         notionService.databaseID = ""
                         notionTokenDraft = ""
                         notionDatabaseDraft = ""
+                        preCallBriefsDatabaseID = ""
+                        preCallBriefDatabaseDraft = ""
                     }
                     .foregroundColor(.red)
                 }
@@ -762,6 +779,7 @@ struct SettingsView: View {
         .padding()
         .onAppear {
             notionDatabaseDraft = notionService.databaseID
+            preCallBriefDatabaseDraft = preCallBriefsDatabaseID.isEmpty ? PreCallBriefService.defaultDatabaseID : preCallBriefsDatabaseID
             // Don't pre-populate the token field — it's in Keychain and we want
             // to keep it opaque. Empty field = "leave existing token alone".
         }
@@ -885,9 +903,15 @@ struct SettingsView: View {
         let trimmedDB = notionDatabaseDraft
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "-", with: "")
+        let trimmedBriefDB = preCallBriefDatabaseDraft
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
 
         if !trimmedDB.isEmpty {
             notionService.databaseID = trimmedDB
+        }
+        if !trimmedBriefDB.isEmpty {
+            preCallBriefsDatabaseID = trimmedBriefDB
         }
         if !trimmedToken.isEmpty {
             // setAPIToken calls testConnection internally — don't double-fire.

@@ -12,6 +12,7 @@ struct MeetingReminderApp: App {
     @StateObject private var liveTranscriptService: LiveTranscriptService
     @StateObject private var obsidianService = ObsidianService()
     @StateObject private var notionService = NotionService()
+    @StateObject private var preCallBriefService: PreCallBriefService
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -30,12 +31,14 @@ struct MeetingReminderApp: App {
         let live = LiveTranscriptService()
         let obsidian = ObsidianService()
         let notion = NotionService()
+        let preCallBriefs = PreCallBriefService()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             minutesService: minutes,
             liveTranscriptService: live,
             obsidianService: obsidian,
-            notionService: notion
+            notionService: notion,
+            preCallBriefService: preCallBriefs
         )
         _calendarService = StateObject(wrappedValue: calendar)
         _meetingMonitor = StateObject(wrappedValue: monitor)
@@ -44,6 +47,7 @@ struct MeetingReminderApp: App {
         _liveTranscriptService = StateObject(wrappedValue: live)
         _obsidianService = StateObject(wrappedValue: obsidian)
         _notionService = StateObject(wrappedValue: notion)
+        _preCallBriefService = StateObject(wrappedValue: preCallBriefs)
     }
 
     var body: some Scene {
@@ -128,6 +132,7 @@ final class OverlayCoordinator: ObservableObject {
     private let liveTranscriptService: LiveTranscriptService
     let obsidianService: ObsidianService
     private let notionService: NotionService
+    private let preCallBriefService: PreCallBriefService
     private let windowController = OverlayWindowController()
     private let breakWindowController = BreakOverlayWindowController()
     private let checklistController = ChecklistWindowController()
@@ -135,6 +140,7 @@ final class OverlayCoordinator: ObservableObject {
     private let postMeetingController = PostMeetingNudgeWindowController()
     private let minimalAlertController = MinimalAlertWindowController()
     private let liveTranscriptController: LiveTranscriptWindowController
+    private let briefPanelController = BriefPanelWindowController()
     private var cancellables = Set<AnyCancellable>()
 
     init(
@@ -142,13 +148,15 @@ final class OverlayCoordinator: ObservableObject {
         minutesService: MinutesService,
         liveTranscriptService: LiveTranscriptService,
         obsidianService: ObsidianService,
-        notionService: NotionService
+        notionService: NotionService,
+        preCallBriefService: PreCallBriefService
     ) {
         self.monitor = monitor
         self.minutesService = minutesService
         self.liveTranscriptService = liveTranscriptService
         self.obsidianService = obsidianService
         self.notionService = notionService
+        self.preCallBriefService = preCallBriefService
         self.liveTranscriptController = LiveTranscriptWindowController(service: liveTranscriptService)
 
         // Detect minutes CLI installation in the background, but only if the
@@ -182,6 +190,7 @@ final class OverlayCoordinator: ObservableObject {
         postMeetingController.close()
         minimalAlertController.close()
         liveTranscriptController.close()
+        briefPanelController.close()
     }
 
     /// Present an NSAlert describing a failed `minutes record` attempt.
@@ -307,6 +316,8 @@ final class OverlayCoordinator: ObservableObject {
                     checklistController.show {
                         // Checklist dismissed independently
                     }
+                    // Kick off/show Notion pre-call brief when reminder appears.
+                    showBriefPanelIfConfigured(for: event)
                 } else {
                     windowController.close()
                     checklistController.close()
@@ -438,6 +449,10 @@ final class OverlayCoordinator: ObservableObject {
                 ) { [weak self] in
                     self?.contextPanelController.close()
                 }
+
+                // Also show the brief when a meeting is started directly from
+                // the menu bar (which bypasses the reminder overlay path).
+                self.showBriefPanelIfConfigured(for: event)
             }
             .store(in: &cancellables)
 
@@ -458,6 +473,7 @@ final class OverlayCoordinator: ObservableObject {
                 // Close the panels we opened in anticipation of a recording
                 self.contextPanelController.close()
                 self.liveTranscriptController.close()
+                self.briefPanelController.close()
                 // Clear the failure so it can fire again next time
                 self.minutesService.recordingDidFail = nil
                 // Surface to the user with actionable diagnostics
@@ -479,6 +495,7 @@ final class OverlayCoordinator: ObservableObject {
                     // Always close the panels we opened for the meeting.
                     self.contextPanelController.close()
                     self.liveTranscriptController.close()
+                    self.briefPanelController.close()
 
                     let minutesEnabled = self.minutesService.integrationEnabled
                     let obsidianEnabled = self.obsidianService.integrationEnabled
@@ -523,6 +540,17 @@ final class OverlayCoordinator: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    private func showBriefPanelIfConfigured(for event: MeetingEvent) {
+        guard notionService.isConfigured else { return }
+        briefPanelController.show(
+            event: event,
+            service: preCallBriefService,
+            onClose: { [weak self] in
+                self?.briefPanelController.close()
+            }
+        )
     }
 }
 

@@ -52,17 +52,19 @@ hdiutil create \
 
 # Sign the DMG itself. Notarization of the .app inside doesn't extend to the
 # container, so gate-keeper treats an unsigned DMG as untrusted.
-KEYCHAIN_ARG=()
-if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
-    KEYCHAIN_ARG=(--keychain "$KEYCHAIN_PATH")
-fi
-
 echo "==> Signing DMG with identity: $SIGNING_IDENTITY"
-codesign \
-    --sign "$SIGNING_IDENTITY" \
-    --timestamp \
-    "${KEYCHAIN_ARG[@]}" \
-    "$DMG_PATH"
+if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
+    codesign \
+        --sign "$SIGNING_IDENTITY" \
+        --timestamp \
+        --keychain "$KEYCHAIN_PATH" \
+        "$DMG_PATH"
+else
+    codesign \
+        --sign "$SIGNING_IDENTITY" \
+        --timestamp \
+        "$DMG_PATH"
+fi
 
 echo "==> Verifying DMG signature"
 codesign --verify --verbose=2 "$DMG_PATH"
