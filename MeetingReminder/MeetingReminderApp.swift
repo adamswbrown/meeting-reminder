@@ -13,6 +13,7 @@ struct MeetingReminderApp: App {
     @StateObject private var obsidianService = ObsidianService()
     @StateObject private var notionService = NotionService()
     @StateObject private var preCallBriefService: PreCallBriefService
+    @StateObject private var calendarNotionSync = CalendarNotionSyncService()
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -56,7 +57,8 @@ struct MeetingReminderApp: App {
                 calendarService: calendarService,
                 meetingMonitor: meetingMonitor,
                 minutesService: minutesService,
-                overlayCoordinator: overlayCoordinator
+                overlayCoordinator: overlayCoordinator,
+                calendarNotionSync: calendarNotionSync
             )
         } label: {
             menuBarLabel
@@ -73,9 +75,20 @@ struct MeetingReminderApp: App {
                     meetingMonitor.start()
                     overlayCoordinator.startObserving()
                     minutesService.startStatusPolling()
+                    calendarNotionSync.startScheduleIfEnabled()
 
                     if !hasCompletedOnboarding {
                         onboardingController.show(calendarService: calendarService)
+                    }
+                }
+                .onOpenURL { url in
+                    // meetingreminder://calsync triggers an immediate Calendar→Notion
+                    // sync. Wired up so an Apple Shortcut (Open URL action) can run
+                    // the sync on demand from the menu bar / dock without needing a
+                    // separate launchd job.
+                    guard url.scheme == "meetingreminder" else { return }
+                    if url.host == "calsync" {
+                        Task { await calendarNotionSync.runNow() }
                     }
                 }
         }
@@ -87,7 +100,8 @@ struct MeetingReminderApp: App {
                 minutesService: minutesService,
                 liveTranscriptService: liveTranscriptService,
                 obsidianService: obsidianService,
-                notionService: notionService
+                notionService: notionService,
+                calendarNotionSync: calendarNotionSync
             )
         }
     }
@@ -595,6 +609,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
+
+        // Edit menu — without this, LSUIElement apps don't get Cmd+X/C/V/A in
+        // text fields (Settings inputs, overlay text fields, etc.). Items have
+        // nil targets so they hit the responder chain (NSText, NSResponder).
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Undo",
+                                     action: Selector(("undo:")), keyEquivalent: "z"))
+        let redoItem = NSMenuItem(title: "Redo",
+                                   action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut",
+                                     action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy",
+                                     action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste",
+                                     action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All",
+                                     action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a"))
+        let editMenuItem = NSMenuItem()
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
 
         NSApp.mainMenu = mainMenu
     }
