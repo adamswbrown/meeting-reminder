@@ -40,6 +40,12 @@
 		A1000033 /* PreCallBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000033 /* PreCallBriefService.swift */; };
 		A1000034 /* BriefPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000034 /* BriefPanelView.swift */; };
 		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
+		A1000040 /* CalendarSyncTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000040 /* CalendarSyncTypes.swift */; };
+		A1000041 /* CalendarEventMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000041 /* CalendarEventMapper.swift */; };
+		A1000042 /* CalendarNotionSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000042 /* CalendarNotionSyncService.swift */; };
+		A1000043 /* CalendarSyncMigrations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000043 /* CalendarSyncMigrations.swift */; };
+		A1000044 /* RelationLinker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000044 /* RelationLinker.swift */; };
+		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
 		T2000003 /* OverlayBackgroundTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000003 /* OverlayBackgroundTests.swift */; };
@@ -93,6 +99,12 @@
 		B1000033 /* PreCallBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefService.swift; sourceTree = "<group>"; };
 		B1000034 /* BriefPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefPanelView.swift; sourceTree = "<group>"; };
 		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
+		B1000040 /* CalendarSyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncTypes.swift; sourceTree = "<group>"; };
+		B1000041 /* CalendarEventMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapper.swift; sourceTree = "<group>"; };
+		B1000042 /* CalendarNotionSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarNotionSyncService.swift; sourceTree = "<group>"; };
+		B1000043 /* CalendarSyncMigrations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncMigrations.swift; sourceTree = "<group>"; };
+		B1000044 /* RelationLinker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationLinker.swift; sourceTree = "<group>"; };
+		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
 		T1000003 /* OverlayBackgroundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayBackgroundTests.swift; sourceTree = "<group>"; };
@@ -169,6 +181,11 @@
 				B1000030 /* ObsidianService.swift */,
 				B1000031 /* NotionService.swift */,
 				B1000033 /* PreCallBriefService.swift */,
+				B1000040 /* CalendarSyncTypes.swift */,
+				B1000041 /* CalendarEventMapper.swift */,
+				B1000042 /* CalendarNotionSyncService.swift */,
+				B1000043 /* CalendarSyncMigrations.swift */,
+				B1000044 /* RelationLinker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -217,6 +234,7 @@
 				T1000002 /* MeetingEventTests.swift */,
 				T1000003 /* OverlayBackgroundTests.swift */,
 				T1000004 /* ClampedExtensionTests.swift */,
+				T1000005 /* CalendarEventMapperTests.swift */,
 			);
 			path = MeetingReminderTests;
 			sourceTree = "<group>";
@@ -335,6 +353,11 @@
 				A1000032 /* PreCallBrief.swift in Sources */,
 				A1000033 /* PreCallBriefService.swift in Sources */,
 				A1000034 /* BriefPanelView.swift in Sources */,
+				A1000040 /* CalendarSyncTypes.swift in Sources */,
+				A1000041 /* CalendarEventMapper.swift in Sources */,
+				A1000042 /* CalendarNotionSyncService.swift in Sources */,
+				A1000043 /* CalendarSyncMigrations.swift in Sources */,
+				A1000044 /* RelationLinker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -346,6 +369,7 @@
 				T2000002 /* MeetingEventTests.swift in Sources */,
 				T2000003 /* OverlayBackgroundTests.swift in Sources */,
 				T2000004 /* ClampedExtensionTests.swift in Sources */,
+				T2000005 /* CalendarEventMapperTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

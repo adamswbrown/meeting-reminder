@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @ObservedObject var meetingMonitor: MeetingMonitor
     @ObservedObject var minutesService: MinutesService
     var overlayCoordinator: OverlayCoordinator
+    @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @Environment(\.dismiss) private var dismiss
 
     private var upcomingEvents: [MeetingEvent] {
@@ -30,6 +31,12 @@ struct MenuBarView: View {
 
             // Recording / reconnect / ad-hoc section
             recordingSection
+
+            if calendarNotionSync.isConfigured {
+                Divider()
+                    .padding(.vertical, 6)
+                calendarNotionSyncSection
+            }
 
             Divider()
                 .padding(.vertical, 6)
@@ -452,6 +459,30 @@ struct MenuBarView: View {
         .padding(.vertical, 2)
     }
 
+    @ViewBuilder
+    private var calendarNotionSyncSection: some View {
+        Button {
+            Task { await calendarNotionSync.runNow() }
+        } label: {
+            HStack {
+                Image(systemName: calendarNotionSync.isRunning
+                      ? "arrow.triangle.2.circlepath"
+                      : "arrow.triangle.2.circlepath.circle")
+                Text(calendarNotionSync.isRunning
+                     ? "Syncing calendar to Notion…"
+                     : "Sync calendar to Notion now")
+                Spacer()
+                if let last = calendarNotionSync.lastRunAt, !calendarNotionSync.isRunning {
+                    Text(last, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .disabled(calendarNotionSync.isRunning)
+    }
 }
 
 private struct PreferencesButton: View {

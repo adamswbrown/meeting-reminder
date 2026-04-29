@@ -20,6 +20,7 @@ struct SettingsView: View {
     @ObservedObject var liveTranscriptService: LiveTranscriptService
     @ObservedObject var obsidianService: ObsidianService
     @ObservedObject var notionService: NotionService
+    @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
     @State private var launchAtLogin = false
@@ -30,6 +31,9 @@ struct SettingsView: View {
     @State private var notionTokenDraft: String = ""
     @State private var notionDatabaseDraft: String = ""
     @State private var preCallBriefDatabaseDraft: String = ""
+    @State private var calendarSyncEnabledDraft: Bool = false
+    @State private var rollingWeekViewDraft: String = ""
+    @State private var calendarSyncEnabledCalendarIDs: Set<String> = []
 
     var body: some View {
         TabView {
@@ -56,8 +60,11 @@ struct SettingsView: View {
 
             integrationsTab
                 .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
+
+            calendarSyncTab
+                .tabItem { Label("Cal Sync", systemImage: "arrow.triangle.2.circlepath") }
         }
-        .frame(width: 560, height: 480)
+        .frame(width: 720, height: 520)
         .onAppear {
             loadSettings()
         }
@@ -972,10 +979,202 @@ struct SettingsView: View {
         let ids = UserDefaults.standard.stringArray(forKey: "enabledCalendarIDs") ?? []
         enabledCalendarIDs = Set(ids)
         checklistItems = ChecklistItem.load()
+        calendarSyncEnabledDraft = calendarNotionSync.isEnabled
+        rollingWeekViewDraft = calendarNotionSync.rollingWeekViewID
+        calendarSyncEnabledCalendarIDs = Set(
+            UserDefaults.standard.stringArray(forKey: CalendarSyncConstants.prefEnabledCalendarIDsKey) ?? []
+        )
 
         if #available(macOS 13.0, *) {
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
+    }
+
+    // MARK: - Calendar → Notion Sync Tab
+
+    private var calendarSyncTab: some View {
+        calendarSyncForm
+            .onAppear {
+                // Re-pull every time the tab appears so a defaults-write or a
+                // change from another window is reflected in the field.
+                rollingWeekViewDraft = calendarNotionSync.rollingWeekViewID
+                calendarSyncEnabledDraft = calendarNotionSync.isEnabled
+                calendarSyncEnabledCalendarIDs = Set(
+                    UserDefaults.standard.stringArray(forKey: CalendarSyncConstants.prefEnabledCalendarIDsKey) ?? []
+                )
+            }
+    }
+
+    private var calendarSyncForm: some View {
+        Form {
+            Section {
+                if let last = calendarNotionSync.lastRunAt {
+                    LabeledContent("Last run", value: last.formatted(date: .abbreviated, time: .standard))
+                } else {
+                    LabeledContent("Last run", value: "never")
+                }
+                if let result = calendarNotionSync.lastResult {
+                    LabeledContent("Result", value: result)
+                }
+                if calendarNotionSync.isRunning {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Syncing…").foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Status")
+            }
+
+            Section {
+                HStack {
+                    Image(systemName: calendarNotionSync.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(calendarNotionSync.isConfigured ? .green : .orange)
+                    Text(calendarNotionSync.isConfigured
+                         ? "Using the Notion token from the Notion tab."
+                         : "No Notion token set. Add one in the Notion tab first.")
+                }
+            } header: {
+                Text("Notion Token")
+            } footer: {
+                Text("This sync reuses the token from the Notion tab. Make sure that integration has access to the Operations parent page in Notion (the Calendar Events and Skip List databases live under it).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Run daily at 06:00", isOn: $calendarSyncEnabledDraft)
+                    .onChange(of: calendarSyncEnabledDraft) { newValue in
+                        calendarNotionSync.isEnabled = newValue
+                    }
+            } header: {
+                Text("Schedule")
+            }
+
+            Section {
+                if calendarService.availableCalendars.isEmpty {
+                    Text("Grant Calendar access first (Calendars tab) to choose calendars to sync.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(calendarService.availableCalendars, id: \.calendarIdentifier) { cal in
+                        Toggle(isOn: Binding(
+                            get: { calendarSyncEnabledCalendarIDs.contains(cal.calendarIdentifier) },
+                            set: { isOn in
+                                if isOn {
+                                    calendarSyncEnabledCalendarIDs.insert(cal.calendarIdentifier)
+                                } else {
+                                    calendarSyncEnabledCalendarIDs.remove(cal.calendarIdentifier)
+                                }
+                                UserDefaults.standard.set(
+                                    Array(calendarSyncEnabledCalendarIDs),
+                                    forKey: CalendarSyncConstants.prefEnabledCalendarIDsKey
+                                )
+                            }
+                        )) {
+                            HStack {
+                                Text(cal.title)
+                                Spacer()
+                                Text(cal.source.title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Calendars to Sync")
+            } footer: {
+                Text("Tick each calendar to include in the Notion sync. When nothing is ticked, the sync falls back to the single Exchange calendar (v1 behaviour).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Archive orphaned rows",
+                       isOn: Binding(get: { calendarNotionSync.archiveOrphansEnabled },
+                                     set: { calendarNotionSync.archiveOrphansEnabled = $0 }))
+                Toggle("Skip Free / Out-of-Office events",
+                       isOn: Binding(get: { calendarNotionSync.skipFreeAndOOOEnabled },
+                                     set: { calendarNotionSync.skipFreeAndOOOEnabled = $0 }))
+                Toggle("Auto-link Meeting Notes & Pre-Call Briefings",
+                       isOn: Binding(get: { calendarNotionSync.autoLinkRelationsEnabled },
+                                     set: { calendarNotionSync.autoLinkRelationsEnabled = $0 }))
+            } header: {
+                Text("Cleanup")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Archive orphaned rows: rows in Notion whose source calendar event has disappeared get classified as Orphaned and archived. Rows with manual Meeting Notes or Pre-Call Briefing relations are marked Stale instead — never archived. Both states are reversible from Notion.")
+                    Text("Skip Free / OOO: drops events marked Free or Out of Office (e.g. Annual Leave) before they reach Notion. Off by default — keeps holidays in the ledger.")
+                    Text("Auto-link: after each upsert, query Meeting Notes and Pre-Call Briefings for a single same-day-same-title match and link it. Append-only — manual links are never overwritten. Ambiguous matches (>1 candidate) are skipped with a log warning.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section {
+                TextField("Notion view URL or UUID",
+                          text: Binding(
+                            get: { calendarNotionSync.rollingWeekViewID },
+                            set: { calendarNotionSync.rollingWeekViewID = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                          ))
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("Paste from clipboard") {
+                        if let s = NSPasteboard.general.string(forType: .string) {
+                            calendarNotionSync.rollingWeekViewID = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                    Button("Patch now") {
+                        Task { await calendarNotionSync.patchRollingWeekNow() }
+                    }
+                    .disabled(!calendarNotionSync.isConfigured || calendarNotionSync.rollingWeekViewID.isEmpty)
+                    if !calendarNotionSync.rollingWeekViewID.isEmpty {
+                        Spacer()
+                        Button("Clear") {
+                            calendarNotionSync.rollingWeekViewID = ""
+                        }
+                    }
+                }
+            } header: {
+                Text("Rolling-Week View")
+            } footer: {
+                Text("Optional. When set, every sync run also patches this Notion view's filter to \"Date is within Mon–Sun (Europe/London) of the current week\". Paste the view URL (with the ?v=… parameter) or the bare view UUID.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                HStack {
+                    Button("Sync Now") {
+                        Task { await calendarNotionSync.runNow(dryRun: false) }
+                    }
+                    .disabled(!calendarNotionSync.isConfigured || calendarNotionSync.isRunning)
+                    Button("Dry Run") {
+                        Task { await calendarNotionSync.runNow(dryRun: true) }
+                    }
+                    .disabled(!calendarNotionSync.isConfigured || calendarNotionSync.isRunning)
+                    Button("Scan Duplicates") {
+                        Task { await calendarNotionSync.scanForDuplicates() }
+                    }
+                    .disabled(!calendarNotionSync.isConfigured || calendarNotionSync.isRunning)
+                    Spacer()
+                    Button("Open Log") { calendarNotionSync.openLogFile() }
+                }
+            } header: {
+                Text("Manual Trigger")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("One-way sync from Apple Calendar (Exchange) → Notion Calendar Events.")
+                    Text("Existing rows are updated, never deleted. Manual relations to Meeting Notes and Pre-Call Briefings are preserved.")
+                    Text("Trigger from anywhere with the URL meetingreminder://calsync (use in Apple Shortcuts).")
+                        .padding(.top, 4)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 
     private func saveCalendarSelection() {
