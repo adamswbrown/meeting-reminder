@@ -99,13 +99,21 @@ enum CalendarEventMapper {
 
     static func attendeesString(for event: EventLike) -> String {
         let organiser = event.organizerEmail
-        let parts: [String] = event.attendeesList.compactMap { att in
-            if let organiser, att.email == organiser { return nil }
+        // EventKit returns attendees in a non-stable order across launches,
+        // which makes the field churn on every sync. Sort by email
+        // (case-insensitive) so the same event always serialises to the
+        // same string — the diff in the upserter can then short-circuit.
+        let filtered = event.attendeesList.filter { att in
+            !(organiser != nil && att.email == organiser)
+        }
+        let sorted = filtered.sorted { a, b in
+            a.email.lowercased() < b.email.lowercased()
+        }
+        let parts: [String] = sorted.map { att in
             if let name = att.name, !name.isEmpty {
                 return "\(name) <\(att.email)>"
-            } else {
-                return "<\(att.email)>"
             }
+            return "<\(att.email)>"
         }
         let joined = parts.joined(separator: " | ")
         return truncate(joined, toCharCount: 1900)

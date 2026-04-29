@@ -123,6 +123,11 @@ enum CalendarSyncNotionQueries {
         /// Trash). Tracked so we can keep the canonical pageID even if the
         /// archived row was the first one seen during pagination.
         let archived: Bool
+        /// Raw `properties` payload from the Notion query response. Stored so
+        /// the upserter can diff incoming props against the current state and
+        /// skip the PATCH when nothing changed. Comparing read-format against
+        /// write-format requires the canonicaliser in `PropertyDiff`.
+        let properties: [String: Any]
     }
 
     struct ExistingEventsResult {
@@ -167,7 +172,8 @@ enum CalendarSyncNotionQueries {
                     hasManualRelations: hasRelations,
                     hasMeetingNotesLink: notesCount > 0,
                     hasPreCallBriefingLink: briefCount > 0,
-                    archived: archived)
+                    archived: archived,
+                    properties: props)
 
                 if let existing = map[appleID] {
                     // Record both page IDs as a duplicate set.
@@ -214,11 +220,16 @@ enum CalendarSyncNotionQueries {
 struct CalendarSyncCounts: CustomStringConvertible {
     var created = 0, updated = 0, skipped = 0, failed = 0
     var archived = 0, staled = 0
+    /// Rows whose incoming props matched the existing Notion row exactly
+    /// (ignoring `Last Synced`), so the PATCH was skipped. Tracked separately
+    /// from `skipped` (which is for malformed/empty-id events) to make the
+    /// no-op short-circuit visible in the run summary.
+    var unchanged = 0
     /// Count of distinct appleIDs that had >1 row in Notion at run start.
     /// Surfaced so a regression that sneaks duplicates in is loud, not silent.
     var duplicates = 0
     var description: String {
-        var s = "created=\(created) updated=\(updated) skipped=\(skipped) failed=\(failed)"
+        var s = "created=\(created) updated=\(updated) unchanged=\(unchanged) skipped=\(skipped) failed=\(failed)"
         if archived > 0 || staled > 0 {
             s += " archived=\(archived) staled=\(staled)"
         }
@@ -227,6 +238,159 @@ struct CalendarSyncCounts: CustomStringConvertible {
         }
         return s
     }
+}
+
+// MARK: - Property diffing
+
+/// Compares incoming write-format properties (as built by
+/// `CalendarEventMapper.buildProperties`) against the read-format properties
+/// returned by Notion's data-source query. Equality means the upsert can skip
+/// the PATCH entirely — the dominant cost in steady-state runs where most
+/// events haven't changed.
+///
+/// `Last Synced` is always excluded because the incoming value is `now()`,
+/// which would defeat the purpose. Skipped rows therefore retain their
+/// previous `Last Synced` timestamp — a feature, not a bug: it now means
+/// "last time we actually wrote this row," which is more useful than "last
+/// time we looked at it."
+enum PropertyDiff {
+    static let ignoredKeys: Set<String> = ["Last Synced"]
+
+    static func equal(incoming: [String: Any], existing: [String: Any]) -> Bool {
+        return diff(incoming: incoming, existing: existing).isEmpty
+    }
+
+    /// Returns the keys whose canonical values differ. Empty set means the
+    /// row is unchanged. Exposed so callers can log which properties are
+    /// causing PATCHes and tighten the canonicaliser if a benign format
+    /// difference is fooling the diff.
+    static func diff(incoming: [String: Any], existing: [String: Any]) -> [(key: String, incoming: String, existing: String)] {
+        var result: [(String, String, String)] = []
+        for (key, value) in incoming where !ignoredKeys.contains(key) {
+            let incomingCanon = canonical(value)
+            let existingCanon = canonical(existing[key])
+            if incomingCanon != existingCanon {
+                result.append((key, incomingCanon, existingCanon))
+            }
+        }
+        return result
+    }
+
+    /// Reduce a Notion property payload (read or write format) to a single
+    /// comparable string. Read format wraps the payload in a `type` field
+    /// alongside the type-named payload key; write format only has the
+    /// type-named key. Both share the inner payload shape that we key on.
+    static func canonical(_ any: Any?) -> String {
+        guard let dict = any as? [String: Any] else { return "absent" }
+
+        if let arr = dict["title"] as? [[String: Any]] {
+            return "title:" + extractText(arr)
+        }
+        if let arr = dict["rich_text"] as? [[String: Any]] {
+            return "rich_text:" + extractText(arr)
+        }
+        if dict.keys.contains("date") {
+            if let d = dict["date"] as? [String: Any] {
+                let s = (d["start"] as? String) ?? ""
+                let e = (d["end"] as? String) ?? ""
+                return "date:\(normaliseDateString(s))|\(normaliseDateString(e))"
+            }
+            return "date:nil"
+        }
+        if dict.keys.contains("checkbox") {
+            return "checkbox:\((dict["checkbox"] as? Bool) ?? false)"
+        }
+        if dict.keys.contains("select") {
+            if let s = dict["select"] as? [String: Any], let n = s["name"] as? String {
+                return "select:\(n)"
+            }
+            return "select:nil"
+        }
+        if dict.keys.contains("number") {
+            if let n = dict["number"] as? Int { return "number:\(n)" }
+            if let n = dict["number"] as? Double { return "number:\(Int(n))" }
+            return "number:nil"
+        }
+        if dict.keys.contains("url") {
+            if let u = dict["url"] as? String { return "url:\(u)" }
+            return "url:nil"
+        }
+        return "unknown"
+    }
+
+    /// Concatenates the visible text from either format. Read format exposes
+    /// `plain_text`; write format embeds the string under `text.content`.
+    /// Notion sometimes splits a single logical string across multiple
+    /// rich-text objects (links, mentions, formatting), so we always join.
+    ///
+    /// EventKit's `notes` returns CRLF line endings on Exchange-backed
+    /// calendars, while Notion stores plain LF. Both encode the same text;
+    /// stripping CR from the canonical form lets the diff match.
+    private static func extractText(_ arr: [[String: Any]]) -> String {
+        let raw = arr.compactMap { item -> String? in
+            if let pt = item["plain_text"] as? String { return pt }
+            if let t = item["text"] as? [String: Any], let c = t["content"] as? String { return c }
+            return nil
+        }.joined()
+        return raw.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    /// Notion stores ISO8601 datetimes with fractional seconds and a
+    /// `+00:00` offset (e.g. `2026-01-29T10:00:00.000+00:00`) regardless of
+    /// what we wrote. Our writer emits `2026-01-29T10:00:00Z`. Both encode
+    /// the same instant, so we parse-and-reformat to a canonical no-fraction
+    /// `Z` form for comparison. All-day strings (`YYYY-MM-DD`) don't parse
+    /// with these formatters and pass through unchanged, which is correct —
+    /// they're already canonical.
+    private static let parseFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let parsePlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let emitCanonical: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static func normaliseDateString(_ s: String) -> String {
+        if s.isEmpty { return "" }
+        if let d = parseFractional.date(from: s) ?? parsePlain.date(from: s) {
+            return emitCanonical.string(from: d)
+        }
+        return s
+    }
+}
+
+// MARK: - Diff diagnostics helpers
+
+/// Returns the index of the first differing character, or nil if one string
+/// is a prefix of the other.
+private func firstDifferenceIndex(_ a: String, _ b: String) -> Int? {
+    let aChars = Array(a)
+    let bChars = Array(b)
+    let n = min(aChars.count, bChars.count)
+    for i in 0..<n where aChars[i] != bChars[i] { return i }
+    if aChars.count != bChars.count { return n }
+    return nil
+}
+
+/// Returns a window of `radius` characters either side of `at`, with newlines
+/// escaped so a single log line stays single-line.
+private func sliceAround(_ s: String, at: Int, radius: Int) -> String {
+    let chars = Array(s)
+    let lo = max(0, at - radius)
+    let hi = min(chars.count, at + radius)
+    let slice = String(chars[lo..<hi])
+    return slice
+        .replacingOccurrences(of: "\n", with: "\\n")
+        .replacingOccurrences(of: "\r", with: "\\r")
+        .replacingOccurrences(of: "\t", with: "\\t")
 }
 
 // MARK: - Upsert engine
@@ -263,6 +427,9 @@ final class CalendarSyncUpserter {
         let now = Date()
         var touched: Set<String> = []
         touched.reserveCapacity(rows.count)
+        // Cap diagnostic logging so a noisy run doesn't fill the log file.
+        var diagnosticsLogged = 0
+        let diagnosticsCap = 5
 
         for row in rows {
             let appleID = row.isSeriesMaster
@@ -287,14 +454,48 @@ final class CalendarSyncUpserter {
                 var needsMN = false
                 var needsPCB = false
                 if let existingRow = existing[appleID] {
-                    if dryRun {
+                    // No-op short-circuit: when the incoming props match what
+                    // Notion already has (excluding `Last Synced`) AND the row
+                    // isn't currently archived (revival requires a write), we
+                    // skip the PATCH entirely. This is the dominant path in
+                    // steady-state runs where most rows are unchanged from the
+                    // previous sync.
+                    let differences = existingRow.archived
+                        ? [(key: "<archived>", incoming: "false", existing: "true")]
+                        : PropertyDiff.diff(incoming: props, existing: existingRow.properties)
+                    let unchanged = differences.isEmpty
+                    if !unchanged, diagnosticsLogged < diagnosticsCap {
+                        let summary = differences.prefix(3).map { d -> String in
+                            let inLen = d.incoming.count
+                            let exLen = d.existing.count
+                            let firstDiff = firstDifferenceIndex(d.incoming, d.existing)
+                            let context: String
+                            if let i = firstDiff {
+                                let inSlice = sliceAround(d.incoming, at: i, radius: 40)
+                                let exSlice = sliceAround(d.existing, at: i, radius: 40)
+                                context = "@\(i) in=«\(inSlice)» ex=«\(exSlice)»"
+                            } else {
+                                context = "len-only"
+                            }
+                            return "\(d.key)[inLen=\(inLen) exLen=\(exLen) \(context)]"
+                        }.joined(separator: " || ")
+                        logger.info("diff \(appleID): \(summary)")
+                        diagnosticsLogged += 1
+                    }
+                    if unchanged {
+                        if dryRun {
+                            logger.info("DRY NOOP \(appleID) :: \(existingRow.pageID)")
+                        }
+                        counts.unchanged += 1
+                    } else if dryRun {
                         logger.info("DRY UPDATE \(appleID) :: \(existingRow.pageID)")
+                        counts.updated += 1
                     } else {
                         var body: [String: Any] = ["properties": props]
                         body["archived"] = false
                         _ = try await client.patch(path: "/pages/\(existingRow.pageID)", body: body)
+                        counts.updated += 1
                     }
-                    counts.updated += 1
                     resultPageID = existingRow.pageID
                     needsMN = !existingRow.hasMeetingNotesLink
                     needsPCB = !existingRow.hasPreCallBriefingLink
@@ -319,7 +520,19 @@ final class CalendarSyncUpserter {
                 }
                 // Series masters are not auto-linkable — meeting notes are
                 // written per-occurrence, not per-series.
-                if !row.isSeriesMaster, let pid = resultPageID, (needsMN || needsPCB) {
+                //
+                // ±7-day window: Meeting Notes and Pre-Call Briefings are
+                // authored close to meeting time. Querying Notion twice for
+                // every event in the 90/30-day sync window is mostly wasted
+                // calls returning empty results. Constraining auto-link to
+                // events within ±7 days of now drops the candidate set by
+                // ~80% in steady state without losing meaningful matches —
+                // a PCB written for an event 60 days out is vanishingly
+                // rare, and if one *does* land later, the next sync after
+                // it crosses into the window will pick it up.
+                let withinAutoLinkWindow = abs(row.event.eventStart.timeIntervalSince(now)) <= 7 * 86_400
+                if !row.isSeriesMaster, withinAutoLinkWindow,
+                   let pid = resultPageID, (needsMN || needsPCB) {
                     linkTargets.append(RelationLinker.LinkTarget(
                         pageID: pid,
                         event: row.event,
