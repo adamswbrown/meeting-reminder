@@ -17,6 +17,16 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   );
 }
 
+// Catch the most common footgun: copying the placeholder from
+// .env.local.example verbatim. The literal "…" ellipsis (char code 8230)
+// can't be serialised into an HTTP header and produces a cryptic
+// "Cannot convert argument to a ByteString" error deep in undici.
+if (/[^\x20-\x7e]/.test(SUPABASE_ANON_KEY)) {
+  throw new Error(
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY contains a non-ASCII character — did you paste the placeholder value 'sb_publishable_…' verbatim? Replace it with your real publishable key from Supabase → Project Settings → API."
+  );
+}
+
 export interface FreeBusyEvent {
   event_id: string;
   start_utc: string;
