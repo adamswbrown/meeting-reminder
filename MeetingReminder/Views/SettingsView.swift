@@ -832,7 +832,6 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 Toggle("Enable availability push", isOn: $availabilityPushService.isEnabled)
-                    .disabled(!availabilityPushService.isConfigured)
             }
 
             Section("Supabase project") {
@@ -842,7 +841,6 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                     TextField("https://<ref>.supabase.co", text: $supabaseURLDraft)
                         .textFieldStyle(.roundedBorder)
-                        .disableAutocorrection(true)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -929,7 +927,12 @@ struct SettingsView: View {
             supabaseKeyDraft = ""
         }
 
+        // Push once immediately, then (re)start the timer so subsequent
+        // pushes happen on schedule. start() no-ops if disabled.
         Task { await availabilityPushService.pushNow() }
+        if availabilityPushService.isEnabled {
+            availabilityPushService.start()
+        }
     }
 
     private func relativeTimeString(_ date: Date) -> String {
