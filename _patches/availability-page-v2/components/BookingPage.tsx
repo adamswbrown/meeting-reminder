@@ -3,7 +3,9 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { config } from "@/lib/config";
 import { formatDayDate, formatDayHeading } from "@/lib/format";
+import type { SlotDescriptor } from "@/lib/booking";
 import { SlotCard } from "./SlotCard";
+import { SlotActionsDialog } from "./SlotActionsDialog";
 
 interface Slot {
   startISO: string;
@@ -71,6 +73,7 @@ function prettifyTZName(tzName: string): string {
 export function BookingPage({ slotsByDuration, nowISO }: Props) {
   const [duration, setDuration] = useState<number>(config.defaultSlotMinutes);
   const [showAll, setShowAll] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState<SlotDescriptor | null>(null);
 
   const visitorTZ = useSyncExternalStore(
     subscribe,
@@ -185,6 +188,7 @@ export function BookingPage({ slotsByDuration, nowISO }: Props) {
                     startISO={slot.startISO}
                     endISO={slot.endISO}
                     dayLabel={formatDayHeading(new Date(day.dayStartISO), now)}
+                    onSelect={setSelectedSlot}
                   />
                 ))}
               </div>
@@ -220,6 +224,11 @@ export function BookingPage({ slotsByDuration, nowISO }: Props) {
           )}
         </div>
       )}
+
+      <SlotActionsDialog
+        slot={selectedSlot}
+        onClose={() => setSelectedSlot(null)}
+      />
     </>
   );
 }

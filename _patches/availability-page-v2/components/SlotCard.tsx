@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { config } from "@/lib/config";
+import type { SlotDescriptor } from "@/lib/booking";
 
 interface Props {
   startISO: string;
   endISO: string;
   /** Pre-formatted heading for the day this slot belongs to. */
   dayLabel: string;
+  /** Fires when the visitor clicks the slot. The fully-formed
+   *  SlotDescriptor (including visitor-tz renders) is passed up so the
+   *  dialog can construct deep-links/ICS/mailto without redoing the work. */
+  onSelect: (descriptor: SlotDescriptor) => void;
 }
 
 interface TZRender {
@@ -54,10 +59,10 @@ const getServerTZ = () => config.timezone;
  *   secondary annotation below. This removes the mental math for the
  *   most common "transatlantic call" case.
  *
- * Click copies a ready-to-paste sentence in the visitor's voice ("...
- * works for me.").
+ * Click opens the slot actions dialog with Outlook/Google/ICS/mailto
+ * options — the SlotCard is now pure presentation + click forwarding.
  */
-export function SlotCard({ startISO, endISO, dayLabel }: Props) {
+export function SlotCard({ startISO, endISO, dayLabel, onSelect }: Props) {
   const visitorTZ = useSyncExternalStore(
     subscribe,
     getVisitorTZ,
@@ -77,26 +82,23 @@ export function SlotCard({ startISO, endISO, dayLabel }: Props) {
   const primary = visitorRender ?? ownerRender;
   const secondary = visitorRender ? ownerRender : null;
 
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    const text = secondary
-      ? `${dayLabel} ${primary.label} ${primary.tzAbbr} (${secondary.label} ${secondary.tzAbbr}) works for me.`
-      : `${dayLabel} ${primary.label} ${primary.tzAbbr} works for me.`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Silently no-op — the slot text is still readable on screen.
-    }
+  function handleClick() {
+    onSelect({
+      startISO,
+      endISO,
+      dayLabel,
+      ownerLabel: ownerRender.label,
+      ownerTZAbbr: ownerRender.tzAbbr,
+      visitorLabel: visitorRender?.label,
+      visitorTZAbbr: visitorRender?.tzAbbr,
+    });
   }
 
   return (
     <button
-      onClick={copy}
+      onClick={handleClick}
       className="group relative flex flex-col items-start rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:focus:ring-zinc-100"
-      aria-label={`Copy reply text for ${primary.label} ${primary.tzAbbr}`}
+      aria-label={`Book ${primary.label} ${primary.tzAbbr}`}
     >
       <span className="font-mono text-base font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
         {primary.label}
@@ -109,14 +111,8 @@ export function SlotCard({ startISO, endISO, dayLabel }: Props) {
           </span>
         )}
       </span>
-      <span
-        className={`absolute right-3 top-3 text-[10px] font-medium uppercase tracking-wide transition ${
-          copied
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-zinc-400 opacity-0 group-hover:opacity-100 dark:text-zinc-600"
-        }`}
-      >
-        {copied ? "Copied" : "Copy"}
+      <span className="absolute right-3 top-3 text-[10px] font-medium uppercase tracking-wide text-zinc-400 opacity-0 transition group-hover:opacity-100 dark:text-zinc-600">
+        Book
       </span>
     </button>
   );
