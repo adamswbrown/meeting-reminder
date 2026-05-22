@@ -21,6 +21,7 @@ struct SettingsView: View {
     @ObservedObject var obsidianService: ObsidianService
     @ObservedObject var notionService: NotionService
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
+    @ObservedObject var availabilityPushService: AvailabilityPushService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
     @State private var launchAtLogin = false
@@ -34,6 +35,8 @@ struct SettingsView: View {
     @State private var calendarSyncEnabledDraft: Bool = false
     @State private var rollingWeekViewDraft: String = ""
     @State private var calendarSyncEnabledCalendarIDs: Set<String> = []
+    @State private var supabaseURLDraft: String = ""
+    @State private var supabaseKeyDraft: String = ""
 
     var body: some View {
         TabView {
@@ -57,6 +60,9 @@ struct SettingsView: View {
 
             notionTab
                 .tabItem { Label("Notion", systemImage: "square.and.pencil") }
+
+            availabilityTab
+                .tabItem { Label("Availability", systemImage: "globe") }
 
             integrationsTab
                 .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
@@ -790,6 +796,146 @@ struct SettingsView: View {
             // Don't pre-populate the token field — it's in Keychain and we want
             // to keep it opaque. Empty field = "leave existing token alone".
         }
+    }
+
+    // MARK: - Availability Tab
+
+    private var availabilityTab: some View {
+        Form {
+            Section("Status") {
+                HStack {
+                    if availabilityPushService.isSyncing {
+                        ProgressView().controlSize(.small).scaleEffect(0.7)
+                        Text("Syncing…").foregroundColor(.secondary)
+                    } else if !availabilityPushService.isConfigured {
+                        Label("Not configured", systemImage: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    } else if !availabilityPushService.isEnabled {
+                        Label("Paused", systemImage: "pause.circle.fill")
+                            .foregroundColor(.orange)
+                    } else if let last = availabilityPushService.lastSyncDate {
+                        Label("Synced", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("— \(availabilityPushService.lastSyncCount) events, \(relativeTimeString(last)) ago")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Label("Idle", systemImage: "clock")
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+
+                Text("Pushes the next \(availabilityPushService.windowDays) days of your free/busy state to Supabase every \(availabilityPushService.intervalMinutes) minutes. A public Vercel page can read the sanitised view (no titles, no attendees) to show when you're free. The push only runs while this Mac is awake.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("Enable availability push", isOn: $availabilityPushService.isEnabled)
+                    .disabled(!availabilityPushService.isConfigured)
+            }
+
+            Section("Supabase project") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Project URL")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("https://<ref>.supabase.co", text: $supabaseURLDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .disableAutocorrection(true)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Service-role key")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    SecureField("eyJ… (Settings → API → service_role)", text: $supabaseKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Stored in Keychain. Never sent anywhere except your own Supabase project.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Save & Sync now") {
+                        saveAndSyncAvailability()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(availabilityPushService.isSyncing)
+
+                    Spacer()
+
+                    Button("Clear") {
+                        availabilityPushService.clearCredentials()
+                        availabilityPushService.isEnabled = false
+                        supabaseURLDraft = ""
+                        supabaseKeyDraft = ""
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+
+            Section("Schedule") {
+                Picker("Push every", selection: Binding(
+                    get: { availabilityPushService.intervalMinutes },
+                    set: { availabilityPushService.intervalMinutes = $0 }
+                )) {
+                    Text("1 minute").tag(1)
+                    Text("5 minutes").tag(5)
+                    Text("10 minutes").tag(10)
+                    Text("15 minutes").tag(15)
+                    Text("30 minutes").tag(30)
+                }
+                .pickerStyle(.menu)
+
+                Picker("Look ahead", selection: Binding(
+                    get: { availabilityPushService.windowDays },
+                    set: { availabilityPushService.windowDays = $0 }
+                )) {
+                    Text("7 days").tag(7)
+                    Text("14 days").tag(14)
+                    Text("21 days").tag(21)
+                    Text("30 days").tag(30)
+                }
+                .pickerStyle(.menu)
+            }
+
+            if let error = availabilityPushService.lastError {
+                Section("Last error") {
+                    Text(error)
+                        .font(.caption.monospaced())
+                        .foregroundColor(.orange)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            supabaseURLDraft = availabilityPushService.projectURL
+            // Leave key field blank — Keychain value stays opaque.
+        }
+    }
+
+    private func saveAndSyncAvailability() {
+        let trimmedURL = supabaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKey = supabaseKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmedURL.isEmpty {
+            availabilityPushService.projectURL = trimmedURL
+        }
+        if !trimmedKey.isEmpty {
+            availabilityPushService.setServiceRoleKey(trimmedKey)
+            supabaseKeyDraft = ""
+        }
+
+        Task { await availabilityPushService.pushNow() }
+    }
+
+    private func relativeTimeString(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     // MARK: - Dashboard install subview

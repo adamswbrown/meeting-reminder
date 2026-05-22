@@ -39,6 +39,7 @@
 		A1000032 /* PreCallBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000032 /* PreCallBrief.swift */; };
 		A1000033 /* PreCallBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000033 /* PreCallBriefService.swift */; };
 		A1000034 /* BriefPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000034 /* BriefPanelView.swift */; };
+		A1000035 /* AvailabilityPushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000035 /* AvailabilityPushService.swift */; };
 		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
 		A1000040 /* CalendarSyncTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000040 /* CalendarSyncTypes.swift */; };
 		A1000041 /* CalendarEventMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000041 /* CalendarEventMapper.swift */; };
@@ -98,6 +99,7 @@
 		B1000032 /* PreCallBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBrief.swift; sourceTree = "<group>"; };
 		B1000033 /* PreCallBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefService.swift; sourceTree = "<group>"; };
 		B1000034 /* BriefPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefPanelView.swift; sourceTree = "<group>"; };
+		B1000035 /* AvailabilityPushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityPushService.swift; sourceTree = "<group>"; };
 		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
 		B1000040 /* CalendarSyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncTypes.swift; sourceTree = "<group>"; };
 		B1000041 /* CalendarEventMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapper.swift; sourceTree = "<group>"; };
@@ -181,6 +183,7 @@
 				B1000030 /* ObsidianService.swift */,
 				B1000031 /* NotionService.swift */,
 				B1000033 /* PreCallBriefService.swift */,
+				B1000035 /* AvailabilityPushService.swift */,
 				B1000040 /* CalendarSyncTypes.swift */,
 				B1000041 /* CalendarEventMapper.swift */,
 				B1000042 /* CalendarNotionSyncService.swift */,
@@ -353,6 +356,7 @@
 				A1000032 /* PreCallBrief.swift in Sources */,
 				A1000033 /* PreCallBriefService.swift in Sources */,
 				A1000034 /* BriefPanelView.swift in Sources */,
+				A1000035 /* AvailabilityPushService.swift in Sources */,
 				A1000040 /* CalendarSyncTypes.swift in Sources */,
 				A1000041 /* CalendarEventMapper.swift in Sources */,
 				A1000042 /* CalendarNotionSyncService.swift in Sources */,

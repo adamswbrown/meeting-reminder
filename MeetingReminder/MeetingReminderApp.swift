@@ -14,6 +14,7 @@ struct MeetingReminderApp: App {
     @StateObject private var notionService = NotionService()
     @StateObject private var preCallBriefService: PreCallBriefService
     @StateObject private var calendarNotionSync = CalendarNotionSyncService()
+    @StateObject private var availabilityPushService: AvailabilityPushService
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -33,6 +34,7 @@ struct MeetingReminderApp: App {
         let obsidian = ObsidianService()
         let notion = NotionService()
         let preCallBriefs = PreCallBriefService()
+        let availability = AvailabilityPushService()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             minutesService: minutes,
@@ -49,6 +51,7 @@ struct MeetingReminderApp: App {
         _obsidianService = StateObject(wrappedValue: obsidian)
         _notionService = StateObject(wrappedValue: notion)
         _preCallBriefService = StateObject(wrappedValue: preCallBriefs)
+        _availabilityPushService = StateObject(wrappedValue: availability)
     }
 
     var body: some Scene {
@@ -76,6 +79,7 @@ struct MeetingReminderApp: App {
                     overlayCoordinator.startObserving()
                     minutesService.startStatusPolling()
                     calendarNotionSync.startScheduleIfEnabled()
+                    availabilityPushService.start()
 
                     if !hasCompletedOnboarding {
                         onboardingController.show(calendarService: calendarService)
@@ -101,7 +105,8 @@ struct MeetingReminderApp: App {
                 liveTranscriptService: liveTranscriptService,
                 obsidianService: obsidianService,
                 notionService: notionService,
-                calendarNotionSync: calendarNotionSync
+                calendarNotionSync: calendarNotionSync,
+                availabilityPushService: availabilityPushService
             )
         }
     }
