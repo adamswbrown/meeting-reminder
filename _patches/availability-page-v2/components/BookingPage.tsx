@@ -43,6 +43,31 @@ function isInVisitorHours(startISO: string, tzName: string): boolean {
   );
 }
 
+/**
+ * Current short timezone abbreviation for a given IANA zone, e.g. "BST" or
+ * "EDT". Recomputed from `now` because it changes across DST boundaries.
+ */
+function currentTZAbbreviation(tzName: string, now: Date): string {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tzName,
+    timeZoneName: "short",
+  });
+  return (
+    fmt.formatToParts(now).find((p) => p.type === "timeZoneName")?.value ?? ""
+  );
+}
+
+/**
+ * Humanise an IANA zone name like "America/New_York" → "New York" or
+ * "Europe/London" → "London". Takes the final path segment so multi-segment
+ * zones like "America/Argentina/Buenos_Aires" still produce "Buenos Aires".
+ */
+function prettifyTZName(tzName: string): string {
+  const parts = tzName.split("/");
+  const last = parts[parts.length - 1] ?? tzName;
+  return last.replace(/_/g, " ");
+}
+
 export function BookingPage({ slotsByDuration, nowISO }: Props) {
   const [duration, setDuration] = useState<number>(config.defaultSlotMinutes);
   const [showAll, setShowAll] = useState(false);
@@ -77,8 +102,23 @@ export function BookingPage({ slotsByDuration, nowISO }: Props) {
     [days, filtered, visitorIsLondon, showAll]
   );
 
+  const visitorTZAbbr = currentTZAbbreviation(visitorTZ, now);
+  const visitorTZPretty = prettifyTZName(visitorTZ);
+
   return (
     <>
+      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-500">
+        {visitorIsLondon ? (
+          <>
+            Times shown in {visitorTZAbbr} &middot; {visitorTZPretty}
+          </>
+        ) : (
+          <>
+            Times shown in your local time &middot; {visitorTZAbbr} (
+            {visitorTZPretty})
+          </>
+        )}
+      </p>
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
           Duration
