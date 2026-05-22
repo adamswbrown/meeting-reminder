@@ -80,7 +80,7 @@ export function SlotActionsDialog({ slot, onClose }: Props) {
     <dialog
       ref={dialogRef}
       onClick={handleBackdropClick}
-      className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-0 text-zinc-900 shadow-xl backdrop:bg-zinc-900/60 backdrop:backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+      className="fixed inset-0 m-auto h-fit w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-0 text-zinc-900 shadow-xl backdrop:bg-zinc-900/60 backdrop:backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
     >
       {slot && (
         <div className="p-6">
