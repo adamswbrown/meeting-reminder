@@ -839,16 +839,32 @@ struct SettingsView: View {
                     Text("Project URL")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    TextField("https://<ref>.supabase.co", text: $supabaseURLDraft)
-                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 6) {
+                        TextField("https://<ref>.supabase.co", text: $supabaseURLDraft)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Paste") {
+                            if let s = NSPasteboard.general.string(forType: .string) {
+                                supabaseURLDraft = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Service-role key")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    SecureField("eyJ… (Settings → API → service_role)", text: $supabaseKeyDraft)
-                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 6) {
+                        SecureField("eyJ… (Settings → API → service_role)", text: $supabaseKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Paste") {
+                            if let s = NSPasteboard.general.string(forType: .string) {
+                                supabaseKeyDraft = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
                     Text("Stored in Keychain. Never sent anywhere except your own Supabase project.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
