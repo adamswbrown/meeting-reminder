@@ -27,6 +27,14 @@ export interface DayOfDiscreteSlots {
   slots: DiscreteSlot[];
 }
 
+/** A contiguous run of whole days the owner is out of office. */
+export interface OOOPeriod {
+  /** Owner-tz midnight of the first OOO day, ISO 8601 UTC. */
+  firstDayISO: string;
+  /** Owner-tz midnight of the last OOO day, ISO 8601 UTC. */
+  lastDayISO: string;
+}
+
 interface Interval {
   start: Date;
   end: Date;
@@ -183,4 +191,67 @@ export function computeAvailabilityForDuration(
   }
 
   return days;
+}
+
+/**
+ * Derive out-of-office day-runs from the event snapshot. Only all-day OOO
+ * blocks count — a one-hour "OOO: dentist" appointment just blocks its time
+ * like any other busy event and shouldn't trigger an "Adam is away" banner.
+ *
+ * Overlapping or back-to-back ranges (≤ 1 day gap) are merged so a Mon–Wed
+ * leave block plus a Thu–Fri leave block read as a single "Mon–Fri" period.
+ * Only periods that intersect the visible window are returned.
+ */
+export function computeOOOPeriods(
+  events: FreeBusyEvent[],
+  now: Date = new Date()
+): OOOPeriod[] {
+  const today = startOfDay(now, { in: ownerTZ });
+  const horizon = addDays(today, config.lookAheadDays, { in: ownerTZ });
+
+  const ranges = events
+    .filter((e) => e.is_ooo && e.is_all_day && e.status !== "cancelled")
+    .map((e) => {
+      const start = new Date(e.start_utc);
+      const end = new Date(e.end_utc);
+      // All-day events use an exclusive end (midnight of the following day),
+      // so step back 1ms before taking the day to get the inclusive last day.
+      return {
+        firstDay: startOfDay(start, { in: ownerTZ }),
+        lastDay: startOfDay(new Date(end.getTime() - 1), { in: ownerTZ }),
+      };
+    })
+    .filter((r) => r.lastDay >= today && r.firstDay < horizon)
+    .sort((a, b) => a.firstDay.getTime() - b.firstDay.getTime());
+
+  const merged: { firstDay: Date; lastDay: Date }[] = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    const adjacentCutoff = last
+      ? addDays(last.lastDay, 1, { in: ownerTZ }).getTime()
+      : 0;
+    if (last && r.firstDay.getTime() <= adjacentCutoff) {
+      if (r.lastDay > last.lastDay) last.lastDay = r.lastDay;
+    } else {
+      merged.push({ ...r });
+    }
+  }
+
+  return merged.map((r) => ({
+    firstDayISO: r.firstDay.toISOString(),
+    lastDayISO: r.lastDay.toISOString(),
+  }));
+}
+
+/**
+ * The next working day strictly after `day`, skipping weekends (and any other
+ * non-working day configured). Used for the "back on …" banner hint.
+ */
+export function nextWorkingDay(day: Date): Date {
+  let candidate = addDays(day, 1, { in: ownerTZ });
+  for (let i = 0; i < 14; i++) {
+    if (config.workdays.includes(weekdayNumber(candidate))) return candidate;
+    candidate = addDays(candidate, 1, { in: ownerTZ });
+  }
+  return candidate;
 }

@@ -1,10 +1,12 @@
 import { config } from "@/lib/config";
 import {
   computeAvailabilityForDuration,
+  computeOOOPeriods,
   type DayOfDiscreteSlots,
 } from "@/lib/availability";
 import { fetchFreeBusy, fetchSyncState } from "@/lib/supabase";
 import { BookingPage } from "@/components/BookingPage";
+import { OOOBanner } from "@/components/OOOBanner";
 import { StalenessPill } from "@/components/StalenessPill";
 
 export const revalidate = 300;
@@ -30,6 +32,8 @@ export default async function Page() {
     );
   }
 
+  const oooPeriods = computeOOOPeriods(events, now);
+
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-12 sm:py-20">
       <header className="mb-8 flex flex-col gap-3">
@@ -43,6 +47,8 @@ export default async function Page() {
           <StalenessPill lastSyncedAt={lastSyncedAt} now={now} />
         </div>
       </header>
+
+      <OOOBanner periods={oooPeriods} nowISO={now.toISOString()} />
 
       <BookingPage
         slotsByDuration={slotsByDuration}

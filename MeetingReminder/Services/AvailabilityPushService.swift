@@ -338,6 +338,7 @@ struct PushEvent {
     let endUTC: Date
     let isAllDay: Bool
     let isTentative: Bool
+    let isOOO: Bool
     let status: String
     let calendarName: String
     let hasVideoLink: Bool
@@ -356,6 +357,12 @@ struct PushEvent {
 
         let myStatus = ekEvent.attendees?.first(where: { $0.isCurrentUser })?.participantStatus
         self.isTentative = (myStatus == .tentative)
+
+        // Reuse the same OOO detection the Notion sync uses: EKEventAvailability
+        // when Exchange provides it, falling back to a title heuristic for the
+        // common case where the Exchange bridge drops the OOO bit on all-day
+        // leave blocks. `availabilityName` returns "OOO" in both cases.
+        self.isOOO = (CalendarEventMapper.availabilityName(for: ekEvent) == "OOO")
 
         switch ekEvent.status {
         case .canceled:
@@ -376,6 +383,7 @@ struct PushEvent {
             "end_utc": iso.string(from: endUTC),
             "is_all_day": isAllDay,
             "is_tentative": isTentative,
+            "is_ooo": isOOO,
             "status": status,
             "calendar_name": String(calendarName.prefix(200)),
             "has_video_link": hasVideoLink,
