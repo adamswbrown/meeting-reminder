@@ -2,6 +2,29 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [2.1.0] - 2026-05-29
+
+### Added
+- **Calendar → Notion sync** — one-way push of Apple Calendar events (Exchange-backed) into a Notion *Calendar Events* database as a canonical event ledger. Includes:
+  - Multi-calendar support — opt in to any combination of calendars (falls back to the single Exchange "Calendar" on first launch)
+  - Recurring-series expansion — one row per occurrence plus a synthetic series-master row, keyed by a composite Apple Event ID rendered in Europe/London time
+  - Availability column with an OOO heuristic for events Exchange reports as unsupported (annual leave, PTO, out-of-office, etc.); optional toggle to skip Free/OOO events
+  - Auto-link Meeting Notes & Pre-Call Briefings on an unambiguous title-and-day match (opt-in, append-only — never overwrites manual links)
+  - Orphan archive (opt-in) — rows whose calendar event disappears are archived, or marked Stale if they carry manual notes; reversible on the next run
+  - Duplicate detection with a read-only "Scan Duplicates" report
+  - Rolling-week Notion view auto-patch (recomputes Mon–Sun each run)
+  - Idempotent schema migrations gated by a Notion log database
+  - Skip List read from Notion at runtime (Exact Title / Title Contains)
+  - Triggers: daily 06:00 timer, menu bar "Sync now", Settings tab (Sync / Dry Run / Patch), and `meetingreminder://calsync` URL scheme for Shortcuts
+  - Rotating log at `~/Library/Logs/MeetingReminder/calendar-notion-sync.log`
+- **Availability push** — publishes a sanitised 14-day free/busy snapshot to Supabase so a public web page can show availability without calendar access; cancellations/reschedules are reconciled on each push
+- **Obsidian integration** — detects installed vaults and opens meeting-note markdown via the `obsidian://` URL scheme
+- **Reopen pre-call brief** — a brief button on each menu bar event row (and in the in-progress recording section) reopens the in-app pre-call brief if it gets closed, without reopening Notion
+
+### Changed
+- Notion API upgraded to the `2025-09-03` data-source model; all sync upserts target data source IDs with retry/backoff on transient errors
+- `PreCallBriefService` and `CalendarNotionSyncService` share the single `notionAPIToken` Keychain entry used by `NotionService`
+
 ## [2.0.6] - 2026-04-24
 
 ### Added

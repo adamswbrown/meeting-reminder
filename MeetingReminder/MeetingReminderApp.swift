@@ -561,7 +561,11 @@ final class OverlayCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
 
-    private func showBriefPanelIfConfigured(for event: MeetingEvent) {
+    /// True when a pre-call brief can be shown — drives the menu bar
+    /// "Show pre-call brief" button visibility so it never appears as a no-op.
+    var canShowPreCallBrief: Bool { notionService.isConfigured }
+
+    func showBriefPanelIfConfigured(for event: MeetingEvent) {
         guard notionService.isConfigured else { return }
         briefPanelController.show(
             event: event,

@@ -169,6 +169,20 @@ struct MenuBarView: View {
                 .lineLimit(1)
                 .padding(.bottom, 4)
 
+            if overlayCoordinator.canShowPreCallBrief {
+                Button {
+                    overlayCoordinator.showBriefPanelIfConfigured(for: current)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .foregroundColor(.accentColor)
+                        Text("Show pre-call brief")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+
             Button {
                 meetingMonitor.markMeetingDone()
             } label: {
@@ -424,6 +438,18 @@ struct MenuBarView: View {
             }
 
             Spacer()
+
+            if overlayCoordinator.canShowPreCallBrief {
+                Button {
+                    overlayCoordinator.showBriefPanelIfConfigured(for: event)
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.borderless)
+                .help("Show pre-call brief")
+            }
 
             if event.videoLink != nil {
                 Button {
