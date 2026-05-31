@@ -2,6 +2,18 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [2.2.0] - 2026-05-31
+
+### Added
+- **Busy Light via Shortcuts** — a new *Busy Light* tab in Settings drives a HomeKit accessory (or anything else you can do in a Shortcut) automatically when you're in a meeting or your microphone is hot, and again when you're free. Picks the right Shortcut from a dropdown populated by `shortcuts list`, with a 30-second debounce on the falling edge so brief mic drops don't flicker the light.
+- **One-click starter Shortcuts** — two signed `.shortcut` files (*Meeting Busy*, *Meeting Free*) ship bundled in the app. Install buttons in Settings hand them to Shortcuts.app for a one-tap add; bind your bulb on first open. Starters built using [viticci/shortcuts-playground-plugin](https://github.com/viticci/shortcuts-playground-plugin) — credit to Federico Viticci for the toolkit.
+- `MeetingMonitor.micActive` is now published so any future integration can react to mic state independently of calendar meetings.
+
+### Removed
+- **Minutes integration** — local-first transcription via the `minutes` CLI, the live transcript pane, the post-meeting nudge with parsed action items, and the AI prep-brief section of the context panel.
+- **Obsidian integration** — the Obsidian vault detection, "Open in Obsidian" buttons, and the Meetings Dashboard installer. Notion is now the single capture story; the context panel still shows attendees, notes, location, and the Notion-fed pre-call brief.
+- The Integrations tab and its associated Settings UI.
+
 ## [2.1.0] - 2026-05-29
 
 ### Added
