@@ -24,8 +24,6 @@
 	<string>Meeting Reminder needs access to your calendars to show upcoming meeting notifications and provide quick-join links for video conferences.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Meeting Reminder needs access to your calendars to show upcoming meeting notifications and provide quick-join links for video conferences.</string>
-	<key>NSHomeKitUsageDescription</key>
-	<string>Meeting Reminder uses HomeKit to change a chosen lightbulb to a busy or free colour based on whether you are in a meeting.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
