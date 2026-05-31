@@ -22,6 +22,12 @@ final class MeetingMonitor: ObservableObject {
     /// Whether a meeting is currently considered "in progress" (for end detection)
     @Published var currentMeetingInProgress: MeetingEvent?
 
+    /// Whether the microphone is currently active. Polled by the same audio
+    /// check timer that handles meeting-end detection. Observers (e.g. the
+    /// HomeKit busy-light) can subscribe to be told the moment the mic flips,
+    /// independently of whether a calendar meeting is recognised.
+    @Published var micActive: Bool = false
+
     // MARK: - Dependencies
 
     private var calendarService: CalendarService
@@ -482,12 +488,19 @@ final class MeetingMonitor: ObservableObject {
     }
 
     private func checkAudioState() {
-        guard currentMeetingInProgress != nil else {
-            audioInactiveSince = nil
-            return
+        let audioActive = isAudioInputActive()
+
+        // Always publish the raw mic state so observers (HomeKit busy-light)
+        // can react even when there's no calendar meeting in progress.
+        if micActive != audioActive {
+            micActive = audioActive
         }
 
-        let audioActive = isAudioInputActive()
+        guard currentMeetingInProgress != nil else {
+            audioInactiveSince = nil
+            audioWasActive = audioActive
+            return
+        }
 
         if audioActive {
             // Audio is active — reset the debounce timer

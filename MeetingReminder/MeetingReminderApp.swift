@@ -12,6 +12,7 @@ struct MeetingReminderApp: App {
     @StateObject private var preCallBriefService: PreCallBriefService
     @StateObject private var calendarNotionSync = CalendarNotionSyncService()
     @StateObject private var availabilityPushService: AvailabilityPushService
+    @StateObject private var homeKitService = HomeKitService()
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -66,6 +67,7 @@ struct MeetingReminderApp: App {
                     overlayCoordinator.startObserving()
                     calendarNotionSync.startScheduleIfEnabled()
                     availabilityPushService.start()
+                    overlayCoordinator.startHomeKitBusyLight(homeKitService)
 
                     if !hasCompletedOnboarding {
                         onboardingController.show(calendarService: calendarService)
@@ -89,7 +91,8 @@ struct MeetingReminderApp: App {
                 calendarService: calendarService,
                 notionService: notionService,
                 calendarNotionSync: calendarNotionSync,
-                availabilityPushService: availabilityPushService
+                availabilityPushService: availabilityPushService,
+                homeKitService: homeKitService
             )
         }
     }
@@ -345,6 +348,40 @@ final class OverlayCoordinator: ObservableObject {
                 self?.briefPanelController.close()
             }
         )
+    }
+
+    /// Subscribe HomeKit to the busy signal: a calendar meeting in progress OR
+    /// the mic is hot. Free is the inverse. Falling-edge (going from busy → free)
+    /// is debounced 30s so a brief mic drop doesn't flicker the light.
+    func startHomeKitBusyLight(_ service: HomeKitService) {
+        // Start HMHomeManager now so a previously selected bulb is resolvable
+        // before the first state change fires.
+        service.start()
+
+        let busyStream = monitor.$currentMeetingInProgress
+            .map { $0 != nil }
+            .combineLatest(monitor.$micActive)
+            .map { meeting, mic in meeting || mic }
+            .removeDuplicates()
+
+        busyStream
+            .receive(on: DispatchQueue.main)
+            .sink { isBusy in
+                if isBusy {
+                    service.apply(.busy)
+                }
+            }
+            .store(in: &cancellables)
+
+        // Falling edge: debounce 30s so brief mic blips don't flip green.
+        busyStream
+            .debounce(for: .seconds(30), scheduler: DispatchQueue.main)
+            .sink { isBusy in
+                if !isBusy {
+                    service.apply(.free)
+                }
+            }
+            .store(in: &cancellables)
     }
 }
 
