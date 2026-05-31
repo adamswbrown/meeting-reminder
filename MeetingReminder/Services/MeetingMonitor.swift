@@ -50,12 +50,6 @@ final class MeetingMonitor: ObservableObject {
     private var audioInactiveSince: Date?  // debounce: when audio first went idle
     private let audioDebounceSeconds: TimeInterval = 30  // require 30s of silence
 
-    /// When true, audio-based silence detection is paused. Set this when an external
-    /// recorder (e.g. `minutes record`) is holding the mic, since the mic will never
-    /// go silent and the silence-debounce can't fire. Manual end via `markMeetingDone`
-    /// (or the End Meeting button in the live transcript pane) is the end signal in this mode.
-    var externalRecordingActive: Bool = false
-
     // MARK: - Video App Monitoring
 
     private var workspaceObserver: Any?
@@ -246,38 +240,6 @@ final class MeetingMonitor: ObservableObject {
 
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
-        audioInactiveSince = nil
-        return event
-    }
-
-    /// Adopt an existing `minutes record` process into the app's state.
-    ///
-    /// When the app is launched while `minutes record` is already running
-    /// (e.g. the app was killed mid-meeting, or the recording was started
-    /// from the CLI directly), we have no `currentMeetingInProgress` set and
-    /// the UI shows "Start ad-hoc meeting" instead of "Recording / End".
-    /// This reconstructs a synthetic `MeetingEvent` from the known title so
-    /// the rest of the pipeline (context panel, post-meeting nudge, end
-    /// detection) can run normally. The audio debounce is suppressed because
-    /// the mic is being held by the external recorder — the user must end
-    /// the meeting manually.
-    @discardableResult
-    func reconnectToActiveRecording(title: String) -> MeetingEvent {
-        let now = Date()
-        let event = MeetingEvent(
-            id: "reconnect-\(UUID().uuidString)",
-            title: title,
-            startDate: now,
-            endDate: now.addingTimeInterval(3600),
-            calendar: "Reconnected",
-            videoLink: nil,
-            attendees: nil,
-            notes: nil,
-            location: nil
-        )
-
-        currentMeetingInProgress = event
-        externalRecordingActive = true  // suppress audio-silence auto-end
         audioInactiveSince = nil
         return event
     }
@@ -521,14 +483,6 @@ final class MeetingMonitor: ObservableObject {
 
     private func checkAudioState() {
         guard currentMeetingInProgress != nil else {
-            audioInactiveSince = nil
-            return
-        }
-
-        // When an external recorder (e.g. `minutes record`) is holding the mic,
-        // the mic never goes silent and silence-debounce is meaningless.
-        // Manual end (button / `markMeetingDone`) is the end signal in this mode.
-        guard !externalRecordingActive else {
             audioInactiveSince = nil
             return
         }

@@ -22,19 +22,13 @@
 		A100000D /* ChecklistItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000010 /* ChecklistItem.swift */; };
 		A100000E /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000011 /* NotificationService.swift */; };
 		A100000F /* ScreenDimmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000012 /* ScreenDimmer.swift */; };
-		A1000010 /* MinutesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000013 /* MinutesService.swift */; };
 		A1000011 /* ContextPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000014 /* ContextPanelView.swift */; };
 		A1000012 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000015 /* ChecklistView.swift */; };
 		A1000013 /* BreakOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000016 /* BreakOverlayView.swift */; };
 		A1000014 /* FloatingPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000017 /* FloatingPromptView.swift */; };
-		A1000015 /* PostMeetingNudgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000018 /* PostMeetingNudgeView.swift */; };
 		A1000016 /* DisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000019 /* DisplayPreferences.swift */; };
 		A1000017 /* MinimalAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001A /* MinimalAlertView.swift */; };
-		A1000020 /* MinutesMeeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000020 /* MinutesMeeting.swift */; };
 		A1000021 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000021 /* KeychainHelper.swift */; };
-		A1000022 /* LiveTranscriptService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000022 /* LiveTranscriptService.swift */; };
-		A1000023 /* LiveTranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000023 /* LiveTranscriptView.swift */; };
-		A1000030 /* ObsidianService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000030 /* ObsidianService.swift */; };
 		A1000031 /* NotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000031 /* NotionService.swift */; };
 		A1000032 /* PreCallBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000032 /* PreCallBrief.swift */; };
 		A1000033 /* PreCallBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000033 /* PreCallBriefService.swift */; };
@@ -82,19 +76,13 @@
 		B1000010 /* ChecklistItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistItem.swift; sourceTree = "<group>"; };
 		B1000011 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		B1000012 /* ScreenDimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenDimmer.swift; sourceTree = "<group>"; };
-		B1000013 /* MinutesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinutesService.swift; sourceTree = "<group>"; };
 		B1000014 /* ContextPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelView.swift; sourceTree = "<group>"; };
 		B1000015 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
 		B1000016 /* BreakOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreakOverlayView.swift; sourceTree = "<group>"; };
 		B1000017 /* FloatingPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPromptView.swift; sourceTree = "<group>"; };
-		B1000018 /* PostMeetingNudgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostMeetingNudgeView.swift; sourceTree = "<group>"; };
 		B1000019 /* DisplayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayPreferences.swift; sourceTree = "<group>"; };
 		B100001A /* MinimalAlertView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalAlertView.swift; sourceTree = "<group>"; };
-		B1000020 /* MinutesMeeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinutesMeeting.swift; sourceTree = "<group>"; };
 		B1000021 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
-		B1000022 /* LiveTranscriptService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptService.swift; sourceTree = "<group>"; };
-		B1000023 /* LiveTranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptView.swift; sourceTree = "<group>"; };
-		B1000030 /* ObsidianService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianService.swift; sourceTree = "<group>"; };
 		B1000031 /* NotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionService.swift; sourceTree = "<group>"; };
 		B1000032 /* PreCallBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBrief.swift; sourceTree = "<group>"; };
 		B1000033 /* PreCallBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefService.swift; sourceTree = "<group>"; };
@@ -160,7 +148,6 @@
 			children = (
 				B1000002 /* MeetingEvent.swift */,
 				B1000010 /* ChecklistItem.swift */,
-				B1000020 /* MinutesMeeting.swift */,
 				B1000032 /* PreCallBrief.swift */,
 			);
 			path = Models;
@@ -176,11 +163,8 @@
 				B100000F /* AlertTier.swift */,
 				B1000011 /* NotificationService.swift */,
 				B1000012 /* ScreenDimmer.swift */,
-				B1000013 /* MinutesService.swift */,
 				B1000019 /* DisplayPreferences.swift */,
 				B1000021 /* KeychainHelper.swift */,
-				B1000022 /* LiveTranscriptService.swift */,
-				B1000030 /* ObsidianService.swift */,
 				B1000031 /* NotionService.swift */,
 				B1000033 /* PreCallBriefService.swift */,
 				B1000035 /* AvailabilityPushService.swift */,
@@ -205,9 +189,7 @@
 				B1000015 /* ChecklistView.swift */,
 				B1000016 /* BreakOverlayView.swift */,
 				B1000017 /* FloatingPromptView.swift */,
-				B1000018 /* PostMeetingNudgeView.swift */,
 				B100001A /* MinimalAlertView.swift */,
-				B1000023 /* LiveTranscriptView.swift */,
 				B1000034 /* BriefPanelView.swift */,
 			);
 			path = Views;
@@ -339,19 +321,13 @@
 				A100000D /* ChecklistItem.swift in Sources */,
 				A100000E /* NotificationService.swift in Sources */,
 				A100000F /* ScreenDimmer.swift in Sources */,
-				A1000010 /* MinutesService.swift in Sources */,
-				A1000020 /* MinutesMeeting.swift in Sources */,
 				A1000021 /* KeychainHelper.swift in Sources */,
-				A1000022 /* LiveTranscriptService.swift in Sources */,
-				A1000023 /* LiveTranscriptView.swift in Sources */,
 				A1000011 /* ContextPanelView.swift in Sources */,
 				A1000012 /* ChecklistView.swift in Sources */,
 				A1000013 /* BreakOverlayView.swift in Sources */,
 				A1000014 /* FloatingPromptView.swift in Sources */,
-				A1000015 /* PostMeetingNudgeView.swift in Sources */,
 				A1000016 /* DisplayPreferences.swift in Sources */,
 				A1000017 /* MinimalAlertView.swift in Sources */,
-				A1000030 /* ObsidianService.swift in Sources */,
 				A1000031 /* NotionService.swift in Sources */,
 				A1000032 /* PreCallBrief.swift in Sources */,
 				A1000033 /* PreCallBriefService.swift in Sources */,

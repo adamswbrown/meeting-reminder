@@ -3,7 +3,6 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var calendarService: CalendarService
     @ObservedObject var meetingMonitor: MeetingMonitor
-    @ObservedObject var minutesService: MinutesService
     var overlayCoordinator: OverlayCoordinator
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @Environment(\.dismiss) private var dismiss
@@ -85,13 +84,6 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button {
-                    overlayCoordinator.previewLiveTranscript()
-                } label: {
-                    Label("Live Transcript", systemImage: "waveform")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
             }
 
             Divider()
@@ -134,20 +126,13 @@ struct MenuBarView: View {
 
     // MARK: - Recording section
 
-    /// Shows one of three states:
-    ///   1. App has `currentMeetingInProgress` set → "Recording / End meeting"
-    ///   2. CLI is recording but app isn't tracking it → "Reconnect to active recording"
-    ///   3. Nothing going on → "Start ad-hoc meeting"
+    /// Shows either the in-progress meeting controls or an idle start button.
     @ViewBuilder
     private var recordingSection: some View {
         Divider().padding(.vertical, 6)
 
         if let current = meetingMonitor.currentMeetingInProgress {
             inProgressView(current: current)
-        } else if case let .recording(title) = minutesService.status {
-            reconnectView(externalTitle: title)
-        } else if case let .processing(title, stage) = minutesService.status {
-            processingView(title: title, stage: stage)
         } else {
             idleView
         }
@@ -157,10 +142,10 @@ struct MenuBarView: View {
     private func inProgressView(current: MeetingEvent) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: "record.circle.fill")
-                    .foregroundColor(.red)
+                Image(systemName: "person.wave.2.fill")
+                    .foregroundColor(.accentColor)
                     .font(.system(size: 11))
-                Text("Recording")
+                Text("In meeting")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
             }
@@ -198,84 +183,6 @@ struct MenuBarView: View {
     }
 
     @ViewBuilder
-    private func reconnectView(externalTitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                    .font(.system(size: 11))
-                Text("External recording detected")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-            }
-            if let t = externalTitle {
-                Text(t)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-            } else {
-                Text("Untitled")
-                    .font(.system(size: 12))
-                    .italic()
-                    .foregroundColor(.secondary)
-            }
-            Text("Minutes is recording but this app didn't start it.")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.bottom, 4)
-
-            Button {
-                dismiss()
-                let title = externalTitle ?? "Reconnected recording"
-                meetingMonitor.reconnectToActiveRecording(title: title)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "link.circle.fill")
-                        .foregroundColor(.accentColor)
-                    Text("Reconnect to recording")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                Task { await minutesService.stopRecording() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "stop.circle.fill")
-                        .foregroundColor(.red)
-                    Text("Stop external recording")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    @ViewBuilder
-    private func processingView(title: String?, stage: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
-                Text("Processing")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-            }
-            if let t = title {
-                Text(t)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-            }
-            if let s = stage {
-                Text(s)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    @ViewBuilder
     private var idleView: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
@@ -283,8 +190,8 @@ struct MenuBarView: View {
                 meetingMonitor.startAdHocMeeting()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "record.circle")
-                        .foregroundColor(.red)
+                    Image(systemName: "play.circle")
+                        .foregroundColor(.accentColor)
                     Text("Start ad-hoc meeting")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -310,9 +217,9 @@ struct MenuBarView: View {
     private func promptForAdHocTitle() {
         let alert = NSAlert()
         alert.messageText = "Start ad-hoc meeting"
-        alert.informativeText = "Give this meeting a title. Recording will start immediately."
+        alert.informativeText = "Give this meeting a title."
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Start Recording")
+        alert.addButton(withTitle: "Start")
         alert.addButton(withTitle: "Cancel")
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
