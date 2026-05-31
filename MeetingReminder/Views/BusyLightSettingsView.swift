@@ -20,20 +20,32 @@ struct BusyLightSettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     setupStep(
                         number: 1,
-                        text: "Open Shortcuts and create two new Shortcuts — one for busy, one for free. Inside each, add a \"Control [your Home accessory]\" action and set the bulb colour you want.",
-                        button: "Open Shortcuts",
-                        action: { service.openShortcutsApp() }
-                    )
-                    setupStep(
-                        number: 2,
-                        text: "Suggested names: \"Meeting Busy\" and \"Meeting Free\" — pick whatever you like.",
+                        text: "Install the two starter Shortcuts. Shortcuts.app will open with an \"Add Shortcut\" sheet for each — click Add Shortcut.",
                         button: nil,
                         action: nil
                     )
+                    HStack {
+                        Button("Install \"Meeting Busy\"") {
+                            service.installStarter(.busy)
+                        }
+                        Button("Install \"Meeting Free\"") {
+                            service.installStarter(.free)
+                        }
+                    }
+                    .controlSize(.regular)
+                    .padding(.leading, 28)
+
+                    setupStep(
+                        number: 2,
+                        text: "Open each newly added Shortcut and pick your bulb in the \"Control My Home\" action — by default they target an accessory called \"Lamp\" in a room called \"Office\". For Meeting Busy: Power On, Colour Red, Brightness 100%. For Meeting Free: Power Off.",
+                        button: "Open Shortcuts",
+                        action: { service.openShortcutsApp() }
+                    )
+
                     setupStep(
                         number: 3,
-                        text: "Come back here, click Refresh, and pick each one from the dropdowns below.",
-                        button: "Refresh now",
+                        text: "Come back here and pick each Shortcut from the dropdowns below.",
+                        button: "Refresh list",
                         action: { service.refresh() }
                     )
                 }

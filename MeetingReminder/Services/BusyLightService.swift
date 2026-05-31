@@ -100,6 +100,32 @@ final class BusyLightService: ObservableObject {
         }
     }
 
+    /// Bundled starter Shortcuts shipped with the app. Each is a signed
+    /// `.shortcut` file targeting the Office Lamp accessory; the user picks
+    /// the accessory binding once when Shortcuts.app prompts on first open.
+    enum Starter: String, CaseIterable, Identifiable {
+        case busy = "Meeting Busy"
+        case free = "Meeting Free"
+        var id: String { rawValue }
+
+        var bundleResourceName: String { rawValue }
+    }
+
+    /// Install a starter Shortcut: hands the bundled `.shortcut` file to
+    /// Shortcuts.app, which presents its standard "Add Shortcut" sheet.
+    /// Returns true if the file was found and opened.
+    @discardableResult
+    func installStarter(_ starter: Starter) -> Bool {
+        guard let url = Bundle.main.url(
+            forResource: starter.bundleResourceName,
+            withExtension: "shortcut"
+        ) else {
+            lastError = "Bundled \(starter.rawValue).shortcut not found in app bundle"
+            return false
+        }
+        return NSWorkspace.shared.open(url)
+    }
+
     // MARK: - CLI helpers
 
     nonisolated private static func runList() async -> ListResult {
