@@ -19,6 +19,7 @@ struct SettingsView: View {
     @ObservedObject var notionService: NotionService
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @ObservedObject var availabilityPushService: AvailabilityPushService
+    @ObservedObject var busyLightService: BusyLightService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
     @State private var launchAtLogin = false
@@ -63,6 +64,9 @@ struct SettingsView: View {
 
             calendarSyncTab
                 .tabItem { Label("Cal Sync", systemImage: "arrow.triangle.2.circlepath") }
+
+            BusyLightSettingsView(service: busyLightService)
+                .tabItem { Label("Busy Light", systemImage: "lightbulb.fill") }
         }
         .frame(width: 720, height: 520)
         .onAppear {

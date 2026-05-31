@@ -12,6 +12,7 @@ struct MeetingReminderApp: App {
     @StateObject private var preCallBriefService: PreCallBriefService
     @StateObject private var calendarNotionSync = CalendarNotionSyncService()
     @StateObject private var availabilityPushService: AvailabilityPushService
+    @StateObject private var busyLightService = BusyLightService()
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -66,6 +67,7 @@ struct MeetingReminderApp: App {
                     overlayCoordinator.startObserving()
                     calendarNotionSync.startScheduleIfEnabled()
                     availabilityPushService.start()
+                    overlayCoordinator.startBusyLightObserver(busyLightService)
 
                     if !hasCompletedOnboarding {
                         onboardingController.show(calendarService: calendarService)
@@ -89,7 +91,8 @@ struct MeetingReminderApp: App {
                 calendarService: calendarService,
                 notionService: notionService,
                 calendarNotionSync: calendarNotionSync,
-                availabilityPushService: availabilityPushService
+                availabilityPushService: availabilityPushService,
+                busyLightService: busyLightService
             )
         }
     }
@@ -345,6 +348,36 @@ final class OverlayCoordinator: ObservableObject {
                 self?.briefPanelController.close()
             }
         )
+    }
+
+    /// Subscribe the busy-light to the meeting/mic signal. Busy = a calendar
+    /// meeting is in progress OR the mic is hot. Free is the inverse.
+    /// Falling edge (busy → free) is debounced 30s so a brief mic drop doesn't
+    /// flicker the light. Rising edge is instant.
+    func startBusyLightObserver(_ service: BusyLightService) {
+        let busyStream = monitor.$currentMeetingInProgress
+            .map { $0 != nil }
+            .combineLatest(monitor.$micActive)
+            .map { meeting, mic in meeting || mic }
+            .removeDuplicates()
+
+        busyStream
+            .receive(on: DispatchQueue.main)
+            .sink { isBusy in
+                if isBusy {
+                    service.apply(.busy)
+                }
+            }
+            .store(in: &cancellables)
+
+        busyStream
+            .debounce(for: .seconds(30), scheduler: DispatchQueue.main)
+            .sink { isBusy in
+                if !isBusy {
+                    service.apply(.free)
+                }
+            }
+            .store(in: &cancellables)
     }
 }
 
