@@ -17,6 +17,8 @@
 		A1000008 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000008 /* OverlayView.swift */; };
 		A1000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000009 /* SettingsView.swift */; };
 		A100000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000A /* Assets.xcassets */; };
+		A1000060 /* Meeting Busy.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B1000060 /* Meeting Busy.shortcut */; };
+		A1000061 /* Meeting Free.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B1000061 /* Meeting Free.shortcut */; };
 		A100000B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000E /* OnboardingView.swift */; };
 		A100000C /* AlertTier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000F /* AlertTier.swift */; };
 		A100000D /* ChecklistItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000010 /* ChecklistItem.swift */; };
@@ -70,6 +72,8 @@
 		B1000008 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
 		B1000009 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B100000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B1000060 /* Meeting Busy.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Meeting Busy.shortcut"; sourceTree = "<group>"; };
+		B1000061 /* Meeting Free.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Meeting Free.shortcut"; sourceTree = "<group>"; };
 		B100000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B100000C /* MeetingReminder.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeetingReminder.entitlements; sourceTree = "<group>"; };
 		B100000D /* MeetingReminder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetingReminder.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -214,6 +218,8 @@
 			isa = PBXGroup;
 			children = (
 				B100000A /* Assets.xcassets */,
+				B1000060 /* Meeting Busy.shortcut */,
+				B1000061 /* Meeting Free.shortcut */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -302,6 +308,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A100000A /* Assets.xcassets in Resources */,
+				A1000060 /* Meeting Busy.shortcut in Resources */,
+				A1000061 /* Meeting Free.shortcut in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
