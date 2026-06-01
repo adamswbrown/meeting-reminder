@@ -520,8 +520,23 @@ final class MeetingMonitor: ObservableObject {
         audioWasActive = audioActive
     }
 
-    /// Check if any audio input device is currently running (mic in use)
+    /// Check if any audio input device is currently running (mic in use).
+    ///
+    /// On macOS 14+ we use a process-aware check that ignores known always-on
+    /// listeners (Superwhisper, dictation, etc.) so the busy light isn't
+    /// pinned by background apps that just happen to keep the mic open. The
+    /// ignored bundle ID set is the default list plus anything the user has
+    /// added via `busyLightIgnoredAudioBundleIDs` UserDefaults.
+    ///
+    /// On macOS 13 there's no process API so we fall back to the device-level
+    /// signal — same behavior as before.
     private func isAudioInputActive() -> Bool {
+        let userIgnored = UserDefaults.standard.stringArray(forKey: "busyLightIgnoredAudioBundleIDs") ?? []
+        let ignored = AudioProcessMonitor.defaultIgnoredBundleIDs.union(userIgnored)
+        if let processBased = AudioProcessMonitor.isAnyOtherProcessUsingInput(ignoredBundleIDs: ignored) {
+            return processBased
+        }
+
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
