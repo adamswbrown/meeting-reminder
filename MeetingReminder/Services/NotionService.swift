@@ -204,21 +204,39 @@ final class NotionService: ObservableObject {
                     "rich_text": [["text": ["content": "Calendar notes"]]]
                 ],
             ])
-            // Notion limits each rich_text element's text.content to 2000 chars.
-            // Split long notes into separate paragraph blocks (one per chunk) so
-            // that every rich_text[0].text.content is guaranteed to be ≤ 2000 chars.
+            // Notion's 2000-char limit counts UTF-16 code units, not Swift
+            // Characters. Slicing by Character.count overshoots when the text
+            // contains multi-code-unit graphemes (emoji, CRLF pairs, accented
+            // forms) — observed: 2000 chars → 2036 code units → HTTP 400.
+            // Walk grapheme clusters and flush whenever the next one would
+            // exceed the UTF-16 budget.
             let limit = 2000
-            var remaining = cleanedNotes[cleanedNotes.startIndex...]
-            while !remaining.isEmpty {
-                let end = remaining.index(remaining.startIndex, offsetBy: limit, limitedBy: remaining.endIndex) ?? remaining.endIndex
+            var buffer = ""
+            var bufferUTF16 = 0
+            for ch in cleanedNotes {
+                let chUTF16 = ch.utf16.count
+                if bufferUTF16 + chUTF16 > limit {
+                    children.append([
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": [
+                            "rich_text": [["text": ["content": buffer]]]
+                        ],
+                    ])
+                    buffer = ""
+                    bufferUTF16 = 0
+                }
+                buffer.append(ch)
+                bufferUTF16 += chUTF16
+            }
+            if !buffer.isEmpty {
                 children.append([
                     "object": "block",
                     "type": "paragraph",
                     "paragraph": [
-                        "rich_text": [["text": ["content": String(remaining[..<end])]]]
+                        "rich_text": [["text": ["content": buffer]]]
                     ],
                 ])
-                remaining = remaining[end...]
             }
         }
 
