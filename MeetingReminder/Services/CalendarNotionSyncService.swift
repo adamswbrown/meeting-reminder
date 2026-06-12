@@ -663,7 +663,6 @@ final class CalendarSyncReader {
     }
 
     func fetchEvents(in calendar: EKCalendar) -> [EKEvent] {
-        store.refreshSourcesIfNecessary()
         let now = Date()
         let from = Calendar.current.date(byAdding: .day,
                                          value: -CalendarSyncConstants.lookbackDays,
@@ -671,12 +670,33 @@ final class CalendarSyncReader {
         let to   = Calendar.current.date(byAdding: .day,
                                          value:  CalendarSyncConstants.lookaheadDays,
                                          to: now)!
+        return fetchEvents(in: calendar, from: from, to: to)
+    }
+
+    /// Window-parameterized fetch. The reactive path passes a narrow
+    /// `now → +reactiveLookaheadDays` window.
+    func fetchEvents(in calendar: EKCalendar, from: Date, to: Date) -> [EKEvent] {
+        store.refreshSourcesIfNecessary()
         let p = store.predicateForEvents(withStart: from, end: to, calendars: [calendar])
         return store.events(matching: p)
     }
 }
 
 // MARK: - Orchestrator
+
+enum CalendarSyncMode {
+    case full      // 06:00 + manual: 90/30 window, orphan sweep, rolling-week patch
+    case reactive  // change-driven: now→+reactiveLookaheadDays, no orphan sweep, no rolling-week patch
+
+    /// Compiler-exhaustive label for log lines — avoids a ternary that would
+    /// silently mislabel a future third mode.
+    var logLabel: String {
+        switch self {
+        case .full: return "full"
+        case .reactive: return "reactive"
+        }
+    }
+}
 
 @MainActor
 final class CalendarNotionSyncService: ObservableObject {
@@ -686,6 +706,7 @@ final class CalendarNotionSyncService: ObservableObject {
 
     private let logger = CalendarSyncLogger()
     private var dailyTimer: Timer?
+    private var changeWatcher: CalendarChangeWatcher?
 
     init() {
         self.lastResult = UserDefaults.standard.string(forKey: CalendarSyncConstants.prefLastResultKey)
@@ -751,9 +772,38 @@ final class CalendarNotionSyncService: ObservableObject {
         }
     }
 
+    /// When on, install a CalendarChangeWatcher that runs a narrow-window
+    /// reactive sync on calendar changes (debounced + 2-min floor). Default
+    /// off — opt-in. The 06:00 full run is unaffected.
+    var reactiveEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: CalendarSyncConstants.prefReactiveEnabledKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: CalendarSyncConstants.prefReactiveEnabledKey)
+            objectWillChange.send()
+            reconfigureWatcher()
+        }
+    }
+
+    private func reconfigureWatcher() {
+        if reactiveEnabled && isConfigured {
+            if changeWatcher == nil {
+                changeWatcher = CalendarChangeWatcher(logger: logger) { [weak self] in
+                    await self?.runReactive()
+                }
+            }
+            changeWatcher?.start()
+        } else {
+            changeWatcher?.stop()
+            changeWatcher = nil
+        }
+    }
+
     // MARK: Lifecycle
 
-    func startScheduleIfEnabled() { rescheduleDaily() }
+    func startScheduleIfEnabled() {
+        rescheduleDaily()
+        reconfigureWatcher()
+    }
 
     /// Open the on-disk log in the user's default reader (usually Console.app).
     func openLogFile() {
@@ -771,6 +821,16 @@ final class CalendarNotionSyncService: ObservableObject {
     // MARK: Run
 
     func runNow(dryRun: Bool = false) async {
+        await run(mode: .full, dryRun: dryRun)
+    }
+
+    /// Change-driven run. Narrow forward window, orphan archival forced off,
+    /// rolling-week patch skipped. Shares the upsert pipeline with the full run.
+    func runReactive() async {
+        await run(mode: .reactive, dryRun: false)
+    }
+
+    private func run(mode: CalendarSyncMode, dryRun: Bool) async {
         guard !isRunning else {
             logger.warn("run skipped: already running")
             return
@@ -783,7 +843,7 @@ final class CalendarNotionSyncService: ObservableObject {
 
         isRunning = true
         defer { isRunning = false }
-        logger.info("=== sync start (dryRun=\(dryRun)) ===")
+        logger.info("=== sync start (mode=\(mode.logLabel) dryRun=\(dryRun)) ===")
 
         let reader = CalendarSyncReader(logger: logger)
         // Resolve the calendars we'll sync this run. If the user has opted into
@@ -825,7 +885,16 @@ final class CalendarNotionSyncService: ObservableObject {
             var totalEK = 0
             let skipFreeOOO = skipFreeAndOOOEnabled
             for cal in calendars {
-                let events = reader.fetchEvents(in: cal)
+                let events: [EKEvent]
+                switch mode {
+                case .full:
+                    events = reader.fetchEvents(in: cal)
+                case .reactive:
+                    let now = Date()
+                    let to = Calendar.current.date(byAdding: .day,
+                        value: CalendarSyncConstants.reactiveLookaheadDays, to: now)!
+                    events = reader.fetchEvents(in: cal, from: now, to: to)
+                }
                 totalEK += events.count
                 let calName = reader.notionCalendarName(for: cal)
                 let kept: [EKEvent] = events.filter { e in
@@ -866,7 +935,7 @@ final class CalendarNotionSyncService: ObservableObject {
             let upserter = CalendarSyncUpserter(client: client,
                                                 logger: logger,
                                                 dryRun: dryRun,
-                                                archiveOrphans: archiveOrphansEnabled)
+                                                archiveOrphans: mode == .full && archiveOrphansEnabled)
             let outcome = await upserter.run(rows: rows, existing: existing)
             var counts = outcome.counts
             counts.duplicates = existingResult.duplicates.count
@@ -889,7 +958,7 @@ final class CalendarNotionSyncService: ObservableObject {
             // Roll the configured "this week" view forward. Cheap to do every
             // run — Notion's PATCH is idempotent and amounts to a single API
             // call. Skipped on dry-run so dry runs are pure no-ops.
-            if !dryRun {
+            if !dryRun && mode == .full {
                 await patchRollingWeekViewIfConfigured(client: client)
             }
         } catch {
