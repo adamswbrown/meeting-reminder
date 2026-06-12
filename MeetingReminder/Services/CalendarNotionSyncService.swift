@@ -663,7 +663,6 @@ final class CalendarSyncReader {
     }
 
     func fetchEvents(in calendar: EKCalendar) -> [EKEvent] {
-        store.refreshSourcesIfNecessary()
         let now = Date()
         let from = Calendar.current.date(byAdding: .day,
                                          value: -CalendarSyncConstants.lookbackDays,
@@ -671,6 +670,13 @@ final class CalendarSyncReader {
         let to   = Calendar.current.date(byAdding: .day,
                                          value:  CalendarSyncConstants.lookaheadDays,
                                          to: now)!
+        return fetchEvents(in: calendar, from: from, to: to)
+    }
+
+    /// Window-parameterized fetch. The reactive path passes a narrow
+    /// `now → +reactiveLookaheadDays` window.
+    func fetchEvents(in calendar: EKCalendar, from: Date, to: Date) -> [EKEvent] {
+        store.refreshSourcesIfNecessary()
         let p = store.predicateForEvents(withStart: from, end: to, calendars: [calendar])
         return store.events(matching: p)
     }

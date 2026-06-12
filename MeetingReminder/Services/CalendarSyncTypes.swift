@@ -21,6 +21,9 @@ enum CalendarSyncConstants {
     static let internalDomain = "altra.cloud"
     static let lookbackDays = 90
     static let lookaheadDays = 30
+    /// Reactive runs only care about upcoming meetings (pre-call briefs), so
+    /// they use a narrow forward-only window instead of the full 90/30.
+    static let reactiveLookaheadDays = 30
     static let dailyHour = 6
     static let dailyMinute = 0
     static let logRelativePath = "Library/Logs/MeetingReminder/calendar-notion-sync.log"
