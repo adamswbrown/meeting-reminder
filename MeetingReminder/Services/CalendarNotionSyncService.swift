@@ -684,6 +684,11 @@ final class CalendarSyncReader {
 
 // MARK: - Orchestrator
 
+enum CalendarSyncMode {
+    case full      // 06:00 + manual: 90/30 window, orphan sweep, rolling-week patch
+    case reactive  // change-driven: now→+reactiveLookaheadDays, no orphan sweep, no rolling-week patch
+}
+
 @MainActor
 final class CalendarNotionSyncService: ObservableObject {
     @Published private(set) var isRunning = false
@@ -777,6 +782,16 @@ final class CalendarNotionSyncService: ObservableObject {
     // MARK: Run
 
     func runNow(dryRun: Bool = false) async {
+        await run(mode: .full, dryRun: dryRun)
+    }
+
+    /// Change-driven run. Narrow forward window, orphan archival forced off,
+    /// rolling-week patch skipped. Shares the upsert pipeline with the full run.
+    func runReactive() async {
+        await run(mode: .reactive, dryRun: false)
+    }
+
+    private func run(mode: CalendarSyncMode, dryRun: Bool) async {
         guard !isRunning else {
             logger.warn("run skipped: already running")
             return
@@ -789,7 +804,7 @@ final class CalendarNotionSyncService: ObservableObject {
 
         isRunning = true
         defer { isRunning = false }
-        logger.info("=== sync start (dryRun=\(dryRun)) ===")
+        logger.info("=== sync start (mode=\(mode == .full ? "full" : "reactive") dryRun=\(dryRun)) ===")
 
         let reader = CalendarSyncReader(logger: logger)
         // Resolve the calendars we'll sync this run. If the user has opted into
@@ -831,7 +846,16 @@ final class CalendarNotionSyncService: ObservableObject {
             var totalEK = 0
             let skipFreeOOO = skipFreeAndOOOEnabled
             for cal in calendars {
-                let events = reader.fetchEvents(in: cal)
+                let events: [EKEvent]
+                switch mode {
+                case .full:
+                    events = reader.fetchEvents(in: cal)
+                case .reactive:
+                    let now = Date()
+                    let to = Calendar.current.date(byAdding: .day,
+                        value: CalendarSyncConstants.reactiveLookaheadDays, to: now)!
+                    events = reader.fetchEvents(in: cal, from: now, to: to)
+                }
                 totalEK += events.count
                 let calName = reader.notionCalendarName(for: cal)
                 let kept: [EKEvent] = events.filter { e in
@@ -872,7 +896,7 @@ final class CalendarNotionSyncService: ObservableObject {
             let upserter = CalendarSyncUpserter(client: client,
                                                 logger: logger,
                                                 dryRun: dryRun,
-                                                archiveOrphans: archiveOrphansEnabled)
+                                                archiveOrphans: mode == .full && archiveOrphansEnabled)
             let outcome = await upserter.run(rows: rows, existing: existing)
             var counts = outcome.counts
             counts.duplicates = existingResult.duplicates.count
@@ -895,7 +919,7 @@ final class CalendarNotionSyncService: ObservableObject {
             // Roll the configured "this week" view forward. Cheap to do every
             // run — Notion's PATCH is idempotent and amounts to a single API
             // call. Skipped on dry-run so dry runs are pure no-ops.
-            if !dryRun {
+            if !dryRun && mode == .full {
                 await patchRollingWeekViewIfConfigured(client: client)
             }
         } catch {
