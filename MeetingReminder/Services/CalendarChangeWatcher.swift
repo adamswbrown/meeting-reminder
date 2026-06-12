@@ -31,7 +31,6 @@ struct ReactiveSyncScheduler {
 /// run timer exists at a time; a new change reschedules it.
 @MainActor
 final class CalendarChangeWatcher {
-    private let store = EKEventStore()
     private let scheduler = ReactiveSyncScheduler()
     private let logger: CalendarSyncLogger
     private let onFire: () async -> Void
@@ -45,10 +44,22 @@ final class CalendarChangeWatcher {
         self.onFire = onFire
     }
 
+    deinit {
+        // The block-based observer is retained by NotificationCenter and the
+        // scheduled Timer by the run loop, independent of `self`'s lifetime —
+        // so clean both up even if `stop()` was never called.
+        if let o = observer { NotificationCenter.default.removeObserver(o) }
+        pendingTimer?.invalidate()
+    }
+
     func start() {
         guard observer == nil else { return }
+        // Observe with `object: nil` — EventKit does not always post this
+        // notification with a store instance as the sender, so filtering by
+        // object can silently drop sync-driven updates. This matches the
+        // hard-won precedent in CalendarService.setupNotificationObserver().
         observer = NotificationCenter.default.addObserver(
-            forName: .EKEventStoreChanged, object: store, queue: .main) { [weak self] _ in
+            forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.handleChange() }
             }
         logger.info("reactive watcher: started")
@@ -72,6 +83,10 @@ final class CalendarChangeWatcher {
 
     private func fire() async {
         pendingTimer = nil
+        // Floor is measured start-to-start (set before the await). Overlapping
+        // runs are harmless: CalendarNotionSyncService.run() has its own
+        // `isRunning` guard, so a reactive run that begins while another sync
+        // is in flight no-ops immediately.
         lastRunAt = Date()
         await onFire()
     }
