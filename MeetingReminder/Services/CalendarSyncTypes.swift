@@ -22,7 +22,10 @@ enum CalendarSyncConstants {
     static let lookbackDays = 90
     static let lookaheadDays = 30
     /// Reactive runs only care about upcoming meetings (pre-call briefs), so
-    /// they use a narrow forward-only window instead of the full 90/30.
+    /// they use a narrow forward-only window instead of the full 90/30. The
+    /// distinction from `lookaheadDays` is the *forward-only* shape (no
+    /// lookback), not the magnitude — they happen to share the value 30 but are
+    /// independent knobs; change one without assuming the other follows.
     static let reactiveLookaheadDays = 30
     static let dailyHour = 6
     static let dailyMinute = 0

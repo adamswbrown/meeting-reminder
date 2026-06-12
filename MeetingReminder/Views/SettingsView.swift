@@ -655,6 +655,12 @@ struct SettingsView: View {
             // setAPIToken calls testConnection internally — don't double-fire.
             notionService.setAPIToken(trimmedToken)
             notionTokenDraft = ""  // clear the secure field after saving
+            // The Cal Sync service shares this token (same Keychain entry). Its
+            // daily timer and reactive watcher gate on `isConfigured`, so a
+            // token saved *after* enabling those toggles would otherwise stay
+            // inert until the next launch. Re-run the scheduler now so they
+            // activate immediately.
+            calendarNotionSync.startScheduleIfEnabled()
         } else {
             Task { await notionService.testConnection() }
         }
