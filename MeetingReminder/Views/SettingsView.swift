@@ -808,6 +808,9 @@ struct SettingsView: View {
                 Toggle("Auto-link Meeting Notes & Pre-Call Briefings",
                        isOn: Binding(get: { calendarNotionSync.autoLinkRelationsEnabled },
                                      set: { calendarNotionSync.autoLinkRelationsEnabled = $0 }))
+                Toggle("Watch for changes (reactive sync)",
+                       isOn: Binding(get: { calendarNotionSync.reactiveEnabled },
+                                     set: { calendarNotionSync.reactiveEnabled = $0 }))
             } header: {
                 Text("Cleanup")
             } footer: {
@@ -815,6 +818,7 @@ struct SettingsView: View {
                     Text("Archive orphaned rows: rows in Notion whose source calendar event has disappeared get classified as Orphaned and archived. Rows with manual Meeting Notes or Pre-Call Briefing relations are marked Stale instead — never archived. Both states are reversible from Notion.")
                     Text("Skip Free / OOO: drops events marked Free or Out of Office (e.g. Annual Leave) before they reach Notion. Off by default — keeps holidays in the ledger.")
                     Text("Auto-link: after each upsert, query Meeting Notes and Pre-Call Briefings for a single same-day-same-title match and link it. Append-only — manual links are never overwritten. Ambiguous matches (>1 candidate) are skipped with a log warning.")
+                    Text("Watch for changes (reactive sync): sync changed events to Notion within ~2 min of a calendar change, instead of waiting for the daily 06:00 run. Feeds Co-Work pre-call briefs via a Notion automation.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -706,6 +706,7 @@ final class CalendarNotionSyncService: ObservableObject {
 
     private let logger = CalendarSyncLogger()
     private var dailyTimer: Timer?
+    private var changeWatcher: CalendarChangeWatcher?
 
     init() {
         self.lastResult = UserDefaults.standard.string(forKey: CalendarSyncConstants.prefLastResultKey)
@@ -771,9 +772,38 @@ final class CalendarNotionSyncService: ObservableObject {
         }
     }
 
+    /// When on, install a CalendarChangeWatcher that runs a narrow-window
+    /// reactive sync on calendar changes (debounced + 2-min floor). Default
+    /// off — opt-in. The 06:00 full run is unaffected.
+    var reactiveEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: CalendarSyncConstants.prefReactiveEnabledKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: CalendarSyncConstants.prefReactiveEnabledKey)
+            objectWillChange.send()
+            reconfigureWatcher()
+        }
+    }
+
+    private func reconfigureWatcher() {
+        if reactiveEnabled && isConfigured {
+            if changeWatcher == nil {
+                changeWatcher = CalendarChangeWatcher(logger: logger) { [weak self] in
+                    await self?.runReactive()
+                }
+            }
+            changeWatcher?.start()
+        } else {
+            changeWatcher?.stop()
+            changeWatcher = nil
+        }
+    }
+
     // MARK: Lifecycle
 
-    func startScheduleIfEnabled() { rescheduleDaily() }
+    func startScheduleIfEnabled() {
+        rescheduleDaily()
+        reconfigureWatcher()
+    }
 
     /// Open the on-disk log in the user's default reader (usually Console.app).
     func openLogFile() {

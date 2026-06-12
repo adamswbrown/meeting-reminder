@@ -59,6 +59,10 @@ enum CalendarSyncConstants {
     /// the Calendar Events row's relation when (and only when) the relation
     /// column is currently empty. Default false — opt-in.
     static let prefAutoLinkRelationsKey = "calendarNotionSyncAutoLinkRelations"
+    /// When true, install a CalendarChangeWatcher that runs a narrow-window
+    /// reactive sync whenever the calendar store changes (debounced + floored).
+    /// Default false — opt-in. The 06:00 full run is unaffected.
+    static let prefReactiveEnabledKey = "calendarNotionSyncReactiveEnabled"
 
     /// Notion data source IDs and property names for B1 auto-linking.
     static let meetingNotesDataSourceID = "1f2ef850-f293-80ba-a763-000bb894d2c0"
