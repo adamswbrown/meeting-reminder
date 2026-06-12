@@ -687,6 +687,15 @@ final class CalendarSyncReader {
 enum CalendarSyncMode {
     case full      // 06:00 + manual: 90/30 window, orphan sweep, rolling-week patch
     case reactive  // change-driven: now→+reactiveLookaheadDays, no orphan sweep, no rolling-week patch
+
+    /// Compiler-exhaustive label for log lines — avoids a ternary that would
+    /// silently mislabel a future third mode.
+    var logLabel: String {
+        switch self {
+        case .full: return "full"
+        case .reactive: return "reactive"
+        }
+    }
 }
 
 @MainActor
@@ -804,7 +813,7 @@ final class CalendarNotionSyncService: ObservableObject {
 
         isRunning = true
         defer { isRunning = false }
-        logger.info("=== sync start (mode=\(mode == .full ? "full" : "reactive") dryRun=\(dryRun)) ===")
+        logger.info("=== sync start (mode=\(mode.logLabel) dryRun=\(dryRun)) ===")
 
         let reader = CalendarSyncReader(logger: logger)
         // Resolve the calendars we'll sync this run. If the user has opted into
