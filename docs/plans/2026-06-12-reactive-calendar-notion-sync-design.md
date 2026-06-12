@@ -19,54 +19,59 @@ backstop.
 2. **Webhook origin:** **Notion fires it.** The app's only job is to keep
    Notion fresh; the Co-Work integration is a Notion automation on the
    Calendar Events DB. The app never calls Co-Work directly.
-3. **Change detection:** **Content-hash guard.** Only PATCH a Notion row when a
-   mapped field actually changed — so Notion (and therefore Co-Work) only ever
-   sees a write for a genuinely changed event. This gates **both** the reactive
-   path and the daily run.
-4. **Reactive scope:** **Changed events only**, via a local hash cache. No
-   full-window read of the Notion DB on reactive triggers.
-5. **Dupe-guard:** new-event path does a targeted Notion query by `Apple Event
-   ID` before creating, so a lost/stale cache can't create duplicate rows.
+3. **Change detection:** **Reuse the existing `PropertyDiff` no-op
+   short-circuit.** The upserter (`CalendarSyncUpserter.run`) already compares
+   incoming properties against the row's current Notion state and skips the
+   PATCH when nothing changed (counted as `unchanged`). So Notion — and
+   therefore Co-Work — already only ever sees a write for a genuinely changed
+   event. **No new hash column or local cache is needed.**
+4. **Reactive scope:** narrow window `now → +30d`. The reactive run does one
+   read-only paginated query of the Notion DB to build the diff map, then
+   `PropertyDiff` ensures only changed events get written. The 2-min floor
+   bounds this to ~30 reads/hour — trivial for Notion's rate limit.
 
-## Why changed-events-only needs a local cache
+## Revision note (2026-06-12)
+
+The original design proposed a `Sync Hash` column + on-disk hash cache +
+dupe-guard query to deliver "changed-events-only." During plan grounding we
+found the existing upserter **already** guarantees changed-events-only *writes*
+via `PropertyDiff`. The hash cache only saved the per-trigger Notion read, which
+the 2-min floor already makes negligible. **Dropped** (YAGNI): no
+`CalendarSyncCache`, no `Sync Hash` column, no migration 004, no dupe-guard
+query. The feature collapses to: a change watcher + a narrow-window reactive
+variant of the existing run.
 
 EventKit has **no delta API**. `.EKEventStoreChanged` only says *something*
-changed — not what. To get true changed-events-only behaviour the app keeps its
-own on-disk cache and diffs against it.
+changed — not what. We therefore re-query the narrow window on each trigger and
+let `PropertyDiff` decide what (if anything) to write.
 
 ## New components
 
-1. **`CalendarChangeWatcher`** (`Services/CalendarChangeWatcher.swift`)
-   - Subscribes to `.EKEventStoreChanged` on the shared `EKEventStore`.
-   - Owns the 30s debounce + 2-min floor. Coalesces — never more than one
-     pending run queued.
-   - Installed at launch when `calendarNotionSyncReactiveEnabled` is on;
-     toggled live from Settings.
+1. **`ReactiveSyncScheduler`** (pure decision logic, in
+   `Services/CalendarChangeWatcher.swift`)
+   - `fireTime(changeAt:lastRunAt:) -> Date` implementing 30s debounce + 2-min
+     floor. No NotificationCenter/Timer — unit-testable in isolation.
 
-2. **Local hash cache** (`Services/CalendarSyncCache.swift`)
-   - `Codable` map `appleEventID → { contentHash, notionPageID }`.
-   - Persisted to
-     `~/Library/Application Support/MeetingReminder/calsync-cache.json`.
-   - Loaded at launch, rewritten after every run (reactive *and* daily).
+2. **`CalendarChangeWatcher`** (`Services/CalendarChangeWatcher.swift`)
+   - Owns an `EKEventStore`, subscribes to `.EKEventStoreChanged`.
+   - On each notification, computes `fireTime` via `ReactiveSyncScheduler` and
+     (re)schedules a single coalesced `Timer` — never more than one pending run.
+   - On fire, calls back into `CalendarNotionSyncService.runReactive()` on the
+     main actor; records `lastRunAt`.
+   - Installed/torn down by the service when
+     `calendarNotionSyncReactiveEnabled` flips.
 
-3. **`CalendarEventMapper.contentHash(for:sourceCalendarName:)`**
-   - Pure function, no EventKit import (testable with stub structs).
-   - Hashes mapped fields in a fixed order: title, start (ISO8601
-     Europe/London), end, location, sorted attendee emails, availability name,
-     sourceCalendarName, isSeriesMaster.
-   - SHA-256 (CryptoKit — already in SDK), hex, first 16 chars.
+3. **`CalendarSyncReader.fetchEvents(in:from:to:)`** — parameterized-window
+   overload; the existing 90/30 `fetchEvents(in:)` delegates to it.
 
-4. **`CalendarNotionSyncService.runReactive()`** — the changed-events-only flow.
-   `runNow()` is unchanged in behaviour (full 90/30 reconciler) except it now
-   also writes `Sync Hash` and rebuilds the cache.
+4. **`CalendarNotionSyncService.runReactive()`** — narrow-window
+   (`now → +30d`) variant of the run. Shares the upsert pipeline with
+   `runNow()` via a private `run(mode:dryRun:)`; forces `archiveOrphans:false`
+   and skips the rolling-week patch.
 
-5. **Migration `004-add-sync-hash-column`** — `ensureRichTextColumn("Sync Hash")`
-   on the Calendar Events DS (idempotent, same pattern as 001–003).
-
-6. **`CalendarSyncNotionQueries.findByAppleID(_:)`** — targeted DS query for the
-   dupe-guard.
-
-7. **New setting** `calendarNotionSyncReactiveEnabled` (Bool, default false).
+5. **New setting** `calendarNotionSyncReactiveEnabled` (Bool, default false),
+   plus service property + `CalendarChangeWatcher` install/teardown + Settings
+   toggle.
 
 ## Reactive data flow
 
@@ -77,59 +82,53 @@ Trigger → 30s debounce → 2-min floor → `runReactive()`:
 2. Fetch EventKit events `now → +30d`; apply skip rules + free/OOO filter
    (identical to `runNow`).
 3. `expandToRows` → `(event, isSeriesMaster, sourceCalendarName)` rows.
-4. Load cache. Per row compute `contentHash`, classify:
-   - **not in cache** → *new*: targeted Notion query by `appleID` first
-     (dupe-guard). Hit → adopt pageID + PATCH if hash differs. Miss → create.
-   - **in cache, hash differs** → *changed*: PATCH using cached pageID.
-   - **in cache, hash equal** → *skip* (no Notion call).
-5. **Vanished:** cache entries whose start is in `now→+30d` but absent from the
-   current fetch → archive/orphan **only if `archiveOrphansEnabled`**, else drop
-   from cache.
-6. B1 auto-link applied **only** to rows actually created/changed.
-7. Update + persist cache (hash + pageID for every current event).
-8. **Skip** rolling-week view patch and global orphan sweep — daily-only.
+4. `fetchExistingEvents` (read-only paginated query of Calendar Events DS).
+5. `CalendarSyncUpserter.run(... archiveOrphans: false)` — `PropertyDiff` skips
+   unchanged rows; only genuinely-changed events are PATCHed/created.
+6. B1 auto-link runs as in `runNow` (only on rows with empty relations).
+7. **Skip** the rolling-week view patch (daily-only).
 
-Net Notion writes per reactive run = number of genuinely changed events.
-Zero changes → zero writes → zero Co-Work webhooks.
+Net Notion writes per reactive run = number of genuinely changed events
+(`PropertyDiff` guarantees it). Zero changes → zero writes → zero Co-Work
+webhooks.
 
-## Hash gating the daily run too
+## Why orphan sweep must be off in reactive mode
 
-Today `runNow`'s upserter writes `Sync State=Active` + `archived:false` on
-*every* update unconditionally — which under a Notion automation would fire a
-Co-Work webhook for all ~180 rows every morning. The hash guard must gate the
-daily upsert as well: only write when the incoming hash differs from the row's
-stored `Sync Hash`. The daily run also reads `Sync Hash` back to rebuild the
-local cache (e.g. after a reinstall).
+The narrow `now→+30d` window means most rows in the full Notion DB are "not
+touched" this run. If `archiveOrphans` ran, it would archive nearly the whole
+ledger. Reactive therefore **always** passes `archiveOrphans: false`
+regardless of the user's setting. Orphan archival stays exclusively on the
+06:00 full-window run.
 
 ## Edge cases
 
 - **App asleep during an edit** → watcher misses it; the 06:00 reconciler
   catches it. Acceptable by design.
-- **Cache lost (reinstall/corruption)** → first reactive run treats everything
-  as new, but the dupe-guard adopts existing pageIDs (no duplicate rows). A
-  one-time PATCH burst, then steady state. Next daily run fully rebuilds the
-  cache from `Sync Hash`.
+- **`.EKEventStoreChanged` is coarse** → fires for *any* calendar change, even
+  on calendars we don't sync. Harmless: a reactive run on an irrelevant change
+  finds nothing to write (PropertyDiff → all `unchanged`), costing one
+  read-only query. The floor bounds the frequency.
 - **Recurring series** → each occurrence + series master has its own appleID,
-  hashes/diffs independently. No special handling.
+  upserts independently. No special handling.
 - **Floor + burst** → rapid edits collapse to one debounced run; an edit inside
-  the floor schedules exactly one more run at the floor boundary.
-- **Migration not yet applied** → reactive path calls `applyPending` once at
-  first run (idempotent), guaranteeing `Sync Hash` exists.
+  the floor reschedules the single pending timer to the floor boundary.
+- **Overlap with daily run** → `runReactive` shares the `isRunning` guard, so it
+  no-ops if the daily run is mid-flight (and vice versa).
 - **Token missing** → reactive run no-ops with a log line (same guard as
   `runNow`).
 
 ## Error handling
 
-- Reactive run wraps the same do/catch. On failure the cache is left
-  **unchanged**, so failed events retry next trigger rather than being marked
-  synced.
-- Per-event create/PATCH failures are counted + logged; cache is updated only
-  for events that succeeded.
+- Reactive run wraps the same do/catch as `runNow`; failures log and update
+  `lastResult`. Per-event create/PATCH failures are counted + logged by the
+  existing upserter.
 
 ## Out of scope
 
 - Direct app→Co-Work webhook (Notion owns it).
 - Bidirectional sync.
+- Any local hash cache, `Sync Hash` column, or dupe-guard query (dropped — see
+  revision note).
 - Any change to the existing 90/30 daily window or orphan/duplicate semantics.
 
 ## New setting
