@@ -10,3 +10,6 @@ DerivedData/
 
 # Icon generation
 __pycache__/
+
+# availability-page (Next.js) build output
+availability-page/.next/
