@@ -2,12 +2,15 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
-## [2.2.0] - 2026-05-31
+## [3.0.0] - 2026-06-15
 
 ### Added
 - **Busy Light via Shortcuts** — a new *Busy Light* tab in Settings drives a HomeKit accessory (or anything else you can do in a Shortcut) automatically when you're in a meeting or your microphone is hot, and again when you're free. Picks the right Shortcut from a dropdown populated by `shortcuts list`, with a 30-second debounce on the falling edge so brief mic drops don't flicker the light.
+- **Process-aware mic detection** — the busy light now enumerates per-process audio input (macOS 14+ `kAudioHardwarePropertyProcessObjectList`) instead of the device-wide "is anything using the mic" flag, so always-on listeners like Superwhisper and Apple's dictation/speech daemons no longer pin the light to Busy forever. Default ignore set covers those; extend it via the `busyLightIgnoredAudioBundleIDs` UserDefaults key. Falls back to the device-level check on macOS 13.
 - **One-click starter Shortcuts** — two signed `.shortcut` files (*Meeting Busy*, *Meeting Free*) ship bundled in the app. Install buttons in Settings hand them to Shortcuts.app for a one-tap add; bind your bulb on first open. Starters built using [viticci/shortcuts-playground-plugin](https://github.com/viticci/shortcuts-playground-plugin) — credit to Federico Viticci for the toolkit.
 - `MeetingMonitor.micActive` is now published so any future integration can react to mic state independently of calendar meetings.
+- **Availability page** — opt-in push of a sanitised 14-day free/busy snapshot to Supabase every 5 minutes, so a public Vercel/Next.js page can show "when am I free?" without exposing titles or attendees. New *Availability* tab in Settings (project URL + service-role key in Keychain). Frontend lives in its own repo. See [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md).
+- **Docs** — setup guides for [Busy Light](docs/BUSY-LIGHT.md) and the [Availability Page](docs/AVAILABILITY-PAGE.md).
 
 ### Removed
 - **Minutes integration** — local-first transcription via the `minutes` CLI, the live transcript pane, the post-meeting nudge with parsed action items, and the AI prep-brief section of the context panel.
