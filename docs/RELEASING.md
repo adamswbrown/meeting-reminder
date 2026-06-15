@@ -149,11 +149,13 @@ The cert didn't import. Common causes:
 
 Verify locally: `security find-identity -v -p codesigning` should list "Developer ID Application" for your team.
 
-### CI fails with "Xcode_15.4.app: command not found"
+### Build fails with "reference to captured var 'self'" / concurrency errors
 
-GitHub rotated available Xcode versions. Update the `Select Xcode` step in
-`.github/workflows/release.yml` to a version available in the
-[runner image README](https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md).
+The codebase targets a modern Swift toolchain (Swift 6.x region-based
+concurrency). An old pinned Xcode (e.g. 15.4 / Swift 5.10) rejects it. CI uses
+`maxim-lobanov/setup-xcode@v1` with `xcode-version: latest-stable` on the
+`macos-15` runner, so it tracks the newest stable Xcode automatically. If a
+future runner image lags, bump `runs-on` to a newer macOS image.
 
 ### Users report "app is damaged and can't be opened"
 
