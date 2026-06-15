@@ -14,15 +14,17 @@ A native macOS menu bar app built for people who lose track of time. Reads your 
 
 ## Latest Release
 
-Current release: **v2.0.6** (2026-04-24)
+Current release: **v3.0.0** (2026-06-15)
 
-- Restored the Notion pre-call brief flow in the meeting startup pipeline
-- Added a dedicated "Pre-call briefs database ID" field in Settings -> Notion
-- Published a signed and notarized DMG
+- **Busy Light via Shortcuts** — runs a macOS Shortcut (HomeKit bulb, smart plug, anything) automatically when you're in a meeting or your mic is hot, and again when you're free
+- **Process-aware mic detection** — ignores always-on listeners (Superwhisper, dictation) so the busy light isn't pinned on
+- **Availability page** — optional push of a sanitised free/busy snapshot to Supabase for a public "when am I free?" web page
+- **Removed** the Minutes (local transcription) and Obsidian integrations — capture/notes is now Notion-only
+- Signed and notarized DMG (full notes in [CHANGELOG.md](CHANGELOG.md))
 
 Download:
-- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v2.0.6/MeetingReminder-2.0.6.dmg
-- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v2.0.6/MeetingReminder-2.0.6.dmg.sha256
+- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.0.0/MeetingReminder-3.0.0.dmg
+- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.0.0/MeetingReminder-3.0.0.dmg.sha256
 
 ## Credits
 
