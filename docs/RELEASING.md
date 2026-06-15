@@ -157,6 +157,9 @@ concurrency). An old pinned Xcode (e.g. 15.4 / Swift 5.10) rejects it. CI uses
 `macos-15` runner, so it tracks the newest stable Xcode automatically. If a
 future runner image lags, bump `runs-on` to a newer macOS image.
 
+As of the v3.0.0 release (2026-06-15), `latest-stable` resolves to **Xcode 26.3**
+on `macos-15` (local development is on Xcode 26.5).
+
 ### Users report "app is damaged and can't be opened"
 
 This usually means the DMG wasn't stapled or the staple didn't apply. Check:
