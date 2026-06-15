@@ -2,7 +2,9 @@
 
 Native macOS menu bar app (Swift + SwiftUI) with ADHD-focused features. Reads the user's calendar, shows progressive alerts, displays a full-screen blocking overlay before meetings, integrates with Notion for meeting notes, and detects meeting end via Core Audio.
 
-Target: macOS 13+ (Ventura). Swift 5. No external dependencies.
+Target: macOS 13+ (Ventura). Swift (language mode 5), built with a modern Xcode — Xcode 26 locally; CI uses `latest-stable`. No external dependencies — no SwiftPM packages.
+
+> **v3.0.0 (2026-06-15)** removed the **Minutes** (local transcription) and **Obsidian** integrations. Capture/notes is now **Notion-only**. Current integrations: Notion (notes + Calendar sync), **Busy Light** (Shortcuts — see [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md)), and the **Availability page** (Supabase push — see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)).
 
 ---
 
@@ -96,30 +98,43 @@ MeetingReminder/
 ├── Models/
 │   ├── MeetingEvent.swift                # Wraps EKEvent (title, dates, attendees, notes, location)
 │   ├── ChecklistItem.swift               # Pre-meeting checklist data model (Codable)
-│   └── MinutesMeeting.swift              # Parsed `minutes` markdown + YAML frontmatter
+│   └── PreCallBrief.swift                # Notion-fed pre-call brief model
 ├── Services/
 │   ├── CalendarService.swift             # EventKit: access, fetch, filter, meeting stats
-│   ├── MeetingMonitor.swift              # Core orchestrator: timers, alerts, end detection, ad-hoc meetings
+│   ├── MeetingMonitor.swift              # Core orchestrator: timers, alerts, end detection, ad-hoc meetings, mic state
+│   ├── MeetingLauncher.swift             # Opens/join video links
 │   ├── VideoLinkDetector.swift           # Regex detection: Zoom, Meet, Teams, Webex, Slack
 │   ├── AlertTier.swift                   # Progressive alert tier enum + MenuBarUrgency enum
 │   ├── NotificationService.swift         # UNUserNotificationCenter wrapper for banners
 │   ├── ScreenDimmer.swift                # IOKit brightness control (gradual dimming)
+│   ├── DisplayPreferences.swift          # Overlay/display preference helpers
 │   ├── KeychainHelper.swift              # Generic Keychain wrapper (Generic password class)
-│   ├── MinutesService.swift              # Wrapper around the local `minutes` CLI (record, stop, fetch, prep)
-│   └── LiveTranscriptService.swift       # Tails ~/.minutes/live-transcript.jsonl + heuristic in-call coach
+│   ├── AudioProcessMonitor.swift         # Per-process mic-input detection (macOS 14+); busy-light source of truth
+│   ├── BusyLightService.swift            # Shortcuts-driven busy light (meeting/mic state → run a Shortcut)
+│   ├── AvailabilityPushService.swift     # EventKit → Supabase free/busy push for the public availability page
+│   ├── NotionService.swift               # Notion: create meeting page + shared token
+│   ├── PreCallBriefService.swift         # Composes/fetches the Notion-fed pre-call brief
+│   ├── CalendarNotionSyncService.swift   # Calendar → Notion sync orchestrator
+│   ├── CalendarEventMapper.swift         # Pure-data event → Notion row mapping (no EventKit import)
+│   ├── CalendarSyncTypes.swift           # EventLike protocol, EKEvent adapter, logger, constants
+│   ├── CalendarSyncMigrations.swift      # Idempotent Notion schema migrations
+│   ├── RelationLinker.swift              # Auto-link Meeting Notes / Pre-Call Briefings
+│   └── CalendarChangeWatcher.swift       # Reactive .EKEventStoreChanged watcher (opt-in)
 ├── Views/
 │   ├── MenuBarView.swift                 # Window-style popover (event list, meeting load, previews, ad-hoc start)
 │   ├── OverlayWindow.swift               # NSPanel wrappers for meeting + break overlays
 │   ├── OverlayView.swift                 # Full-screen overlay UI (Join/Snooze/Dismiss)
-│   ├── SettingsView.swift                # 7-tab preferences
+│   ├── MinimalAlertView.swift            # Lightweight alert UI
+│   ├── SettingsView.swift                # 10-tab preferences
 │   ├── OnboardingView.swift              # First-launch setup (standalone NSWindow)
-│   ├── ContextPanelView.swift            # Floating meeting context panel (attendees, notes, AI prep brief)
+│   ├── ContextPanelView.swift            # Floating meeting context panel (attendees, notes, pre-call brief)
+│   ├── BriefPanelView.swift              # Pre-call brief panel
+│   ├── BusyLightSettingsView.swift       # Busy Light settings tab
 │   ├── ChecklistView.swift               # Pre-meeting checklist panel
 │   ├── BreakOverlayView.swift            # Soft full-screen break overlay
-│   ├── FloatingPromptView.swift          # Non-blocking context-switch prompt
-│   ├── PostMeetingNudgeView.swift        # Post-meeting nudge with parsed action items + decisions
-│   └── LiveTranscriptView.swift          # Floating live transcript pane + heuristic coach hints
+│   └── FloatingPromptView.swift          # Non-blocking context-switch prompt
 ├── Resources/Assets.xcassets             # App icon
+│   └── Meeting Busy/Free.shortcut        # Bundled one-click starter Shortcuts for the busy light
 ├── Info.plist                            # LSUIElement=true, calendar usage descriptions
 └── MeetingReminder.entitlements          # Network client (sandbox disabled — see Sandbox section)
 ```
@@ -137,18 +152,13 @@ Tracks state via several sets/dicts:
 - `meetingEndedIDs` — events marked as ended (prevents re-firing)
 - `currentMeetingInProgress` — currently active meeting (set on join, on `markMeetingDone`, or via `startAdHocMeeting`)
 
-**Ad-hoc meetings** — `MeetingMonitor.startAdHocMeeting(title:durationMinutes:)` creates a synthetic `MeetingEvent` (id `adhoc-<uuid>`, calendar `"Ad-hoc"`, no video link) and assigns it to `currentMeetingInProgress`. This **deliberately reuses the same publisher** that the OverlayCoordinator subscribes to, so the entire downstream pipeline (start `minutes record`, show context panel, open live transcript pane, fire post-meeting nudge on end) runs identically to a calendar-driven meeting. Default title is `"Ad-hoc meeting · HH:mm"` if none supplied. Default duration is 60 min — only used as the calendar-based fallback for end detection; Core Audio silence still ends the meeting earlier in practice.
+**Ad-hoc meetings** — `MeetingMonitor.startAdHocMeeting(title:durationMinutes:)` creates a synthetic `MeetingEvent` (id `adhoc-<uuid>`, calendar `"Ad-hoc"`, no video link) and assigns it to `currentMeetingInProgress`. This **deliberately reuses the same publisher** that the OverlayCoordinator subscribes to, so the entire downstream pipeline (show context panel, drive busy light, etc.) runs identically to a calendar-driven meeting. Default title is `"Ad-hoc meeting · HH:mm"` if none supplied. Default duration is 60 min — only used as the calendar-based fallback for end detection; Core Audio silence still ends the meeting earlier in practice.
 
-**OverlayCoordinator** (in `MeetingReminderApp.swift`) — owns all NSPanel window controllers and observes `MeetingMonitor` published state via Combine. Holds a `MinutesService` and a `LiveTranscriptService` (passed via init) and uses them to drive recording lifecycle and the live transcript pane. Listens for `NSApplication.willTerminateNotification` to close all panels and stop any active recording on quit.
+**OverlayCoordinator** (in `MeetingReminderApp.swift`) — owns all NSPanel window controllers and observes `MeetingMonitor` published state via Combine. Listens for `NSApplication.willTerminateNotification` to close all panels on quit.
 
-**MinutesService** (`Services/MinutesService.swift`) — wrapper around the local [`silverstein/minutes`](https://github.com/silverstein/minutes) CLI. Spawns `minutes record --title "<title>"` as a detached background process when `currentMeetingInProgress` transitions non-nil. Spawns `minutes stop` on the reverse transition. Polls `~/meetings/<slug>.md` for the parsed markdown, then surfaces `MinutesMeeting` (action items + decisions parsed from YAML frontmatter) to the post-meeting nudge. Also composes a "prep brief" by running `minutes person <name>` per attendee + `minutes research <title>` and feeds it to the context panel. Slug is computed deterministically as `YYYY-MM-DD-{kebab-title}` matching Minutes' filename convention.
+**Busy Light** — `BusyLightService` runs a user-chosen macOS Shortcut when you go busy (in a meeting or mic hot) and another when free, driven by `MeetingMonitor.currentMeetingInProgress` + `MeetingMonitor.micActive`. Mic state comes from `AudioProcessMonitor` (per-process input enumeration, macOS 14+), which ignores always-on listeners (Superwhisper, dictation) so the light isn't pinned to Busy. Full detail: [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md).
 
-**LiveTranscriptService** (`Services/LiveTranscriptService.swift`) — `@MainActor ObservableObject` that polls `~/.minutes/live-transcript.jsonl` every 1.5 seconds during a meeting. The Minutes recording sidecar writes one JSON object per chunk: `{line, ts, offset_ms, duration_ms, text, speaker}`. New lines are appended to a `@Published` array (bounded to 200 entries) and analysed by lightweight pattern detectors that publish `CoachHint` records:
-- **Question detected** — line ends with `?` or starts with `what/when/where/why/how/who/which/could you/can you/would you/do you/does anyone`
-- **Mention** — user's first name or full name appears with word boundaries (defaults to `NSFullUserName()`, overridable in Settings); plays a Tink chime
-- **Commitment** — match against ~19 patterns like `i'll send`, `i'll follow up`, `by friday`, `by eod`
-
-Hints are de-duped (same kind suppressed for 8 seconds) and bounded to the last 5 visible.
+**Availability page** — `AvailabilityPushService` pushes a sanitised free/busy snapshot to Supabase on a timer; a public Vercel/Next.js page (separate repo) reads it. Full detail: [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md).
 
 **Window controllers** — each floating UI element has its own controller class wrapping an `NSPanel`:
 - `OverlayWindowController` — meeting overlay (`.screenSaver` level, all screens)
@@ -156,8 +166,6 @@ Hints are de-duped (same kind suppressed for 8 seconds) and bounded to the last 
 - `ChecklistWindowController` — checklist panel (`.screenSaver - 1` level)
 - `ContextPanelWindowController` — meeting context panel (`.floating`)
 - `FloatingPromptWindowController` — context-switch nudge (`.floating`)
-- `PostMeetingNudgeWindowController` — post-meeting capture nudge
-- `LiveTranscriptWindowController` — live transcript pane (`.floating`)
 - `OnboardingWindowController` — first-launch setup (titled `NSWindow`, `.floating`)
 
 ---
@@ -182,31 +190,14 @@ Hints are de-duped (same kind suppressed for 8 seconds) and bounded to the last 
 2. **30-second debounce** — audio must be inactive for 30+ continuous seconds before triggering "meeting ended". Prevents false positives during screen-share transitions or brief mic drops.
 3. **Video app lifecycle** (secondary) — `NSWorkspace.didTerminateApplicationNotification` for known video bundle IDs (Zoom, Teams, Webex, Slack)
 4. **Calendar end time** (fallback) — `event.endDate` as backstop
-5. **Manual override** — "Done with meeting" button in menu bar dropdown, **and the End Meeting button in the live transcript pane** (only path that works while Minutes is recording)
+5. **Manual override** — "Done with meeting" button in menu bar dropdown (`monitor.markMeetingDone()`)
 
-#### ⚠️ Conflict: `minutes record` holds the mic for the entire meeting
+### Busy Light (Shortcuts) & Availability page
 
-When `MinutesService.startRecording` is active, the mic stays open until `minutes stop` runs. `kAudioDevicePropertyDeviceIsRunningSomewhere` returns `true` continuously, so the silence-debounce in `checkAudioState` can never fire.
+These are the two external-integration features that replaced Minutes/Obsidian in v3.0.0. Both have their own setup docs; the architecture notes live there:
 
-The fix: `MeetingMonitor.externalRecordingActive` is a flag the `OverlayCoordinator` flips to `true` when it spawns a Minutes recording and back to `false` when the meeting ends. While set, `checkAudioState` short-circuits and clears `audioInactiveSince`, so silence detection is paused. In this mode, the **only** end signals are:
-
-- The user clicks **End Meeting** in the live transcript pane (`onEndMeeting` callback → `monitor.markMeetingDone()`)
-- The user clicks **Done with meeting** in the menu bar dropdown
-- The calendar `endDate` is reached (`checkMeetingEnded` fallback — for calendar-driven events only; ad-hoc meetings have a 60-min default duration that's effectively a max length)
-- A known video app (Zoom/Teams/Webex/Slack) terminates (`startVideoAppMonitoring` — only fires if such an app was actually running)
-
-This is a **deliberate trade-off**, not a bug: the value of having a transcript outweighs the loss of automatic mic-silence end detection. Users in real Zoom calls who *also* enable Minutes get both — Zoom holds the mic, Minutes piggybacks on it, and the end signal comes from Zoom terminating, not silence.
-
-### Minutes CLI Integration
-- **Local-first**, no API keys, no network. The user installs the [`silverstein/minutes`](https://github.com/silverstein/minutes) Rust CLI separately via Homebrew (`brew tap silverstein/tap && brew install minutes`). All transcription happens locally via whisper.cpp.
-- **CLI invocation pattern** — every call goes through `MinutesService.runCLI(args:)` which spawns `/bin/sh -lc "<binary> <quoted args>"` on a background DispatchQueue. Login-shell `-l` is critical so Homebrew's `/opt/homebrew/bin` is on PATH inside the spawned subprocess.
-- **Recording is detached, not synchronous** — `startRecording` spawns `minutes record --title "..." >/dev/null 2>&1 &` so the shell forks the recording into the background and exits immediately. The grandchild reparents to launchd. `stopRecording` is a separate process call (`minutes stop`) that signals the running recorder via Minutes' own state file. This means we never hold a long-lived `Process` reference.
-- **Status check before start** — `minutes status` returns JSON with `recording: bool` and `processing: bool`. We parse it (not string-grep — the word "recording" is always in the JSON output as a key) and skip starting if either flag is true.
-- **Filename slug** — Minutes saves meetings as `~/meetings/YYYY-MM-DD-{kebab-title}.md`. We compute the same slug deterministically client-side from the event title and current date so we don't need to scrape `minutes list` to find the file.
-- **Markdown parsing** — `MinutesMeeting.parse(markdownAt:)` reads the YAML frontmatter between `---` fences using a hand-rolled minimal YAML parser (`MinutesYAML` in the same file). It handles top-level scalars, lists of strings, and lists of mappings (for `action_items` and `decisions`). Nested mappings like `entities:` are silently skipped. **No external dependency** — preserves the project's "no SwiftPM packages" promise.
-- **Prep brief composition** — `minutes prep` is a Claude Code plugin command, **not** a CLI subcommand (verified). We compose the equivalent by running `minutes research <title>` once and `minutes person <name>` per attendee (capped at 3 to bound cost). Output is plain text joined into the context panel's prep section. Triggered from `ContextPanelView.onAppear`, not from `joinMeeting`, so it doesn't block the join click.
-- **Live transcript schema** — the Minutes recording sidecar writes JSON lines to `~/.minutes/live-transcript.jsonl` while `minutes record` is active. Each line: `{line: int, ts: ISO8601 with fractional seconds + tz, offset_ms: int, duration_ms: int, text: string, speaker: string?}`. `LiveTranscriptService` polls (not file-watches — simpler) every 1.5s and tracks the last seen `line` number to skip already-processed entries.
-- **Calendar feature must be disabled** in `~/.config/minutes/config.toml` — set `[calendar] enabled = false`. Otherwise `minutes health` shells out to AppleScript trying to talk to Calendar.app, which produces a `Application isn't running. (-600)` warning. We use Meeting Reminder as the calendar source of truth and only feed Minutes the title via `--title`.
+- **Busy Light** — [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md). `BusyLightService` + `AudioProcessMonitor`. Process-aware mic detection (macOS 14+) ignores always-on listeners; extend the ignore set via `busyLightIgnoredAudioBundleIDs`. Bundled starter Shortcuts ship in `Resources/`.
+- **Availability page** — [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md). `AvailabilityPushService` pushes EventKit free/busy to Supabase (service-role key in Keychain); the public Vercel/Next.js frontend lives in its **own repo** (`adamswbrown/availability-page`).
 
 ### Calendar → Notion sync
 
@@ -242,13 +233,14 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
   - No bidirectional sync.
 
 ### Sandbox
-- **App sandbox is disabled** (`ENABLE_APP_SANDBOX = NO` in both Debug and Release configs). This is required because spawning arbitrary user-installed binaries (like `/opt/homebrew/bin/minutes`) is fundamentally incompatible with the macOS sandbox — there's no entitlement that grants execute permission for unsigned third-party binaries. We tried security-scoped bookmarks and they don't help here.
-- The entitlements file still declares `com.apple.security.network.client = true` (harmless leftover, useful for any future HTTP integrations) and explicitly sets `com.apple.security.app-sandbox = false`.
+- **App sandbox is disabled** (`ENABLE_APP_SANDBOX = NO` in both Debug and Release configs). Required because the app shells out to user tooling (e.g. `shortcuts run`, `shortcuts list` for the busy light) and arbitrary binaries — fundamentally incompatible with the macOS sandbox, which grants no execute permission for unsigned third-party processes. Security-scoped bookmarks don't help here.
+- The entitlements file declares `com.apple.security.network.client = true` (used by the Notion + Supabase HTTP integrations) and explicitly sets `com.apple.security.app-sandbox = false`.
+- **Hardened runtime** is enabled for notarized release builds (commit `18040af`); keep it on or notarization fails.
 
 ### Settings & Persistence
 - **`@AppStorage`** for simple preferences
 - **JSON-encoded UserDefaults** for `defaultChecklist` (array of `ChecklistItem`)
-- **Keychain** — `KeychainHelper` (`Services/KeychainHelper.swift`) is a generic Keychain wrapper kept around for future API-token use cases. Currently no secrets are stored.
+- **Keychain** — `KeychainHelper` (`Services/KeychainHelper.swift`) stores secrets: `notionAPIToken` (Notion) and `supabaseServiceRoleKey` (availability push). See Keychain keys table below.
 - **OverlayBackground enum** — stores background choice as string in `@AppStorage("overlayBackground")`, returns `AnyShapeStyle` for use in overlay
 
 ---
@@ -274,12 +266,15 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `breakEnforcementEnabled` | Bool | true | Break overlay between back-to-back meetings |
 | `contextSwitchPromptMinutes` | Int | 3 | Minutes before meeting for context-switch nudge |
 | `defaultChecklist` | Data (JSON) | defaults | Pre-meeting checklist items |
-| `minutesBinaryPath` | String | `/opt/homebrew/bin/minutes` | Path to the `minutes` CLI binary (user-pickable in Settings) |
-| `autoRecordWithMinutes` | Bool | true | Automatically run `minutes record` when a meeting joins |
-| `minutesPrepEnabled` | Bool | true | Generate AI prep brief from past meetings + show in context panel |
-| `liveTranscriptEnabled` | Bool | true | Show floating live transcript pane during meetings |
-| `inCallCoachEnabled` | Bool | true | Run heuristic detectors on the live transcript and surface hints |
-| `coachUserName` | String | "" | Override for mention detection (defaults to `NSFullUserName()` when empty) |
+| `busyLightBusyEnabled` | Bool | true | Run the Busy shortcut on the rising edge (busy) |
+| `busyLightFreeEnabled` | Bool | true | Run the Free shortcut on the falling edge (free) |
+| `busyLightBusyShortcut` | String | "" | Name of the Shortcut to run when busy |
+| `busyLightFreeShortcut` | String | "" | Name of the Shortcut to run when free |
+| `busyLightIgnoredAudioBundleIDs` | [String] | [] | Extra bundle IDs to ignore for mic detection (Superwhisper/dictation covered by default) |
+| `availabilityPushEnabled` | Bool | false | Enable the availability free/busy push to Supabase |
+| `supabaseProjectURL` | String | "" | `https://<ref>.supabase.co` for the availability push |
+| `availabilityPushIntervalMinutes` | Int | 5 | Availability push cadence |
+| `availabilityPushWindowDays` | Int | 14 | Days forward to snapshot for availability |
 | `calendarNotionSyncEnabled` | Bool | false | Enable the daily 06:00 Calendar→Notion sync timer |
 | `calendarNotionSyncLastRunAt` | Date | nil | Timestamp of the last sync attempt (success or failure) |
 | `calendarNotionSyncLastResult` | String | nil | Single-line summary of the last sync (e.g. `created=12 updated=180 skipped=4 failed=0`) |
@@ -295,6 +290,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | Key | Purpose |
 |-----|---------|
 | `notionAPIToken` | Single Notion integration token used by both `NotionService` (create-meeting-page) and `CalendarNotionSyncService` (Cal Sync). The integration must have access to all the relevant databases — including the Operations parent page where Calendar Events + Skip List live. |
+| `supabaseServiceRoleKey` | Supabase service-role key used by `AvailabilityPushService` to write free/busy rows. Write key — bypasses RLS; never reaches the browser. See [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md). |
 
 ---
 
@@ -323,29 +319,9 @@ Call `meetingMonitor.startAdHocMeeting(title:durationMinutes:)` from anywhere in
 - `title` defaults to `"Ad-hoc meeting · HH:mm"`
 - `durationMinutes` defaults to `60`
 
-This creates a synthetic `MeetingEvent` with calendar `"Ad-hoc"`, no video link, and no attendees. Setting `currentMeetingInProgress` triggers the Combine sink in `OverlayCoordinator.startObserving()` which fires the *exact same downstream pipeline* as a calendar-driven meeting:
-
-1. `MinutesService.startRecording(for: event)` spawns `minutes record --title "<adhoc title>"`
-2. `ContextPanelWindowController` opens (prep brief will be empty since there are no attendees and no past meetings on this exact title — this is fine, it just shows the meeting context)
-3. After 1.5s, `LiveTranscriptWindowController` opens
-4. Core Audio silence detection (or `markMeetingDone()`) eventually fires `handleMeetingEnded`, which stops recording, closes panels, and shows the post-meeting nudge with parsed action items
+This creates a synthetic `MeetingEvent` with calendar `"Ad-hoc"`, no video link, and no attendees. Setting `currentMeetingInProgress` triggers the Combine sink in `OverlayCoordinator.startObserving()` which fires the *exact same downstream pipeline* as a calendar-driven meeting (context panel opens, busy light flips to Busy, etc.).
 
 The 60-minute duration is only consumed by the calendar-end-time fallback in `checkMeetingEnded`. In practice the Core Audio 30-second silence debounce ends ad-hoc meetings well before the duration expires.
-
-### Manually verifying the Minutes pipeline
-
-```bash
-# 1. Confirm minutes is on PATH and healthy
-which minutes && minutes --version && minutes health
-
-# 2. Confirm the live transcript file is being written during recording
-nohup minutes record --title "Pipeline test" </dev/null >/tmp/m.log 2>&1 &
-disown
-sleep 8
-minutes transcript --status   # should show {"active": true, "source": "recording-sidecar", ...}
-cat ~/.minutes/live-transcript.jsonl   # should contain JSON lines as soon as whisper has chunks
-minutes stop
-```
 
 ### Testing onboarding
 
@@ -355,15 +331,19 @@ defaults write com.meetingreminder.app hasCompletedOnboarding -bool false
 
 Then click the menu bar icon — onboarding will appear in a standalone window.
 
-### Minutes troubleshooting
+---
 
-Common issues:
+## Releasing & CI
 
-- **`minutes` command not found in app but works in Terminal** — your shell PATH isn't being inherited. `MinutesService` runs commands via `/bin/sh -lc` (login shell) so Homebrew's bin dir gets picked up. If it's still missing, set the binary path manually in Settings → Minutes → Choose binary…
-- **`minutes health` warns about Calendar (-600)** — Minutes' built-in calendar feature uses AppleScript to query Calendar.app. We don't use it. Disable with `[calendar] enabled = false` in `~/.config/minutes/config.toml` (only have one `[calendar]` section — the file rejects duplicates with a TOML parse error).
-- **`failed to symlink meeting.dir, file exists, OS error 17`** — stale recording state from a crashed session. Run `minutes status` to confirm idle, then `pkill -f "minutes record"` and inspect `~/.minutes/` for dangling symlinks or `meeting.dir` files to delete.
-- **Live transcript pane shows "Listening…" forever** — the recording sidecar takes ~5–8s to write its first chunk (whisper needs to buffer enough audio). If it never appears, check `~/.minutes/live-transcript.jsonl` directly: `tail -f ~/.minutes/live-transcript.jsonl` while a recording is running.
-- **Post-meeting nudge says "Transcribing… check Minutes in a moment"** — `MinutesService.fetchMeeting` polls 6 times at 5s intervals (30s max). For long meetings transcription can take longer; the file will appear in `~/meetings/` eventually even if the nudge gives up.
+Full process in [docs/RELEASING.md](docs/RELEASING.md). Key facts (learned the hard way):
+
+- **Releases are CI-driven by a tag push** — `git tag -a vX.Y.Z -m "..." && git push mine vX.Y.Z` triggers `.github/workflows/release.yml` to build → sign → notarize → DMG → publish a GitHub Release. **No local build needed**; do NOT build/upload by hand.
+- **`gh` defaults to the `nilBora` upstream**, not the fork. ALWAYS pass `-R adamswbrown/meeting-reminder` to `gh release`/`gh run`/`gh secret`/`gh pr`.
+- **CI runs on `macos-15` with `maxim-lobanov/setup-xcode@v1` `latest-stable`** (Xcode 26.3 as of v3.0.0). Do NOT pin an old Xcode — the code uses Swift 6.x region-based concurrency that Xcode 15.4 rejects with "reference to captured var 'self'" errors.
+- **6 GitHub secrets** drive signing/notarization on the fork: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD`, `NOTARIZATION_APPLE_ID`, `NOTARIZATION_PWD`, `KEYCHAIN_PASSWORD` (Team ID `NZ87XY99SR` is auto-extracted). Set as of v3.0.0.
+- **The DMG must be notarized before stapling** — the release step submits the DMG to notarytool (not just the `.app`), else `stapler` fails "Record not found / Error 65".
+- **Release notes** come from the matching `## [VERSION]` section of `CHANGELOG.md` (extracted to `RELEASE_NOTES.md` in CI), with GitHub's auto PR-list appended.
+- **Manual pbxproj edits MUST use globally-unique object IDs.** An ID collision between branches (e.g. `A1000052` reused for two files) compiles-fail silently with "cannot find X in scope". Mirror an existing file's 4 entries (PBXBuildFile / PBXFileReference / group children / Sources phase) with a fresh ID.
 
 ---
 
