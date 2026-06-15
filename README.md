@@ -92,7 +92,7 @@ Detects when a meeting has ended using four layered signals, in order of reliabi
 1. **Core Audio monitoring** (primary) — polls `kAudioDevicePropertyDeviceIsRunningSomewhere` every 5 seconds; when the mic has been idle for 30+ continuous seconds, treats the meeting as ended. 30-second debounce prevents false triggers during screen-share transitions or brief mute toggles.
 2. **Video app lifecycle** (secondary) — watches for Zoom, Teams, Webex, or Slack quitting via `NSWorkspace.didTerminateApplicationNotification`.
 3. **Calendar end time** (fallback) — uses the event's scheduled `endDate` as a backstop.
-4. **Manual override** — **"End meeting"** button in the menu bar dropdown. Also required when the Minutes pre-release integration is recording (the mic is held by the external recorder, so silence detection is suppressed).
+4. **Manual override** — **"End meeting"** button in the menu bar dropdown.
 
 ### Notion Integration (primary recording path)
 Meeting Reminder's default story for recording and summarisation is to delegate to Notion. When you join a meeting, the app creates a new page in your configured Notion meeting database and opens it in the Notion desktop app — Notion's own AI Meeting Notes block then handles recording + transcription + summarisation.
@@ -105,48 +105,6 @@ Meeting Reminder's default story for recording and summarisation is to delegate 
 - **Known limitation** — Notion's API explicitly blocks creating `meeting_notes` (AI Meeting Notes transcription) blocks. You need to click "Apply template" once after the page opens to add the AI block. There is no workaround.
 
 ---
-
-## Pre-release integrations (Minutes + Obsidian)
-
-> **Status: pre-release, off by default.** These integrations exist in the codebase but are hidden behind feature flags in Settings → Integrations because they were unreliable in day-to-day use. I tried running Minutes as my daily meeting recorder for ~24 hours and hit enough rough edges to shelve it in favour of Notion's AI Meeting Notes (see below). They're preserved here because the plumbing works when it works, and someone with a different setup may get more mileage out of them.
->
-> **Why I stopped using Minutes as the default:**
-> - Recording silently failed more than once with no user-visible error — the UI showed "Recording" but `~/meetings/` never produced a file. The spawn-failure detection catches some cases but not all (things like whisper model mid-run crashes, or the recording sidecar deciding to skip live transcription because of config drift).
-> - The app's Core Audio silence detection can't run while `minutes record` holds the mic, so automatic "meeting ended" detection falls back to either clicking **End meeting** manually or waiting for the calendar `endDate`. In practice I kept forgetting to click End and ended up with 2-hour recordings of nothing.
-> - `config.toml` drift — stale device names, empty `[live_transcript].model`, duplicate `[calendar]` sections after running `minutes health` — produced cryptic errors that required digging around in `~/.config/minutes/` to fix.
-> - Post-meeting markdown parsing and the Obsidian auto-open flow depended on all of the above working end-to-end. When any link in the chain broke, the post-meeting nudge either never fired or showed "Transcribing…" forever.
->
-> If you want to try them anyway: Settings → Integrations → flip the **Minutes** and/or **Obsidian** switches. The existing UI (status checks, binary picker, health check, dashboard installer, etc.) lives inside the collapsible cards and becomes active the moment you toggle them on.
-
-### State Recovery & Reconnect *(pre-release)*
-- **Status polling** — the app polls `minutes status` every 3 seconds and surfaces it in the menu bar
-- **Reconnect to active recording** — when the app is relaunched mid-call (or a recording was started from the CLI), the menu bar shows "External recording detected" with a **Reconnect** button that adopts the existing session into the app's state.
-- **"Stop external recording"** fallback for when you want to kill a stray recording cleanly without adopting it.
-- **Processing view** — shows the current Minutes processing stage (Transcribing → Generating summary → Saving) when a recording has stopped but is still being finalised.
-
-### Minutes Integration — local transcription *(pre-release)*
-Uses the [`silverstein/minutes`](https://github.com/silverstein/minutes) Rust CLI for fully local transcription with whisper.cpp. No cloud, no API keys.
-
-- **Auto-record** when a meeting becomes in-progress (calendar-joined or ad-hoc) — spawns `minutes record --title "<title>"` in the background
-- **Live transcript pane** — a floating, movable panel that tails `~/.minutes/live-transcript.jsonl` and displays rolling whisper transcription while the meeting is in progress
-- **In-call coach** — lightweight heuristics over the live transcript surface three kinds of hints:
-  - **Question detected** (line ends with `?` or starts with a classic question word)
-  - **You were mentioned** (word-boundary match against your name — plays a Tink chime)
-  - **Commitment** (matches `"i'll send"`, `"i'll follow up"`, `"by friday"`, `"by eod"`, etc. — ~19 patterns)
-- **Pre-meeting AI prep brief** — when the context panel opens, runs `minutes research <title>` and `minutes person <attendee>` for each of the first three attendees, and displays the joined output as a "Prep brief" section
-- **Post-meeting parsed summary** — after the recording is stopped and transcribed, polls for the `~/meetings/<slug>.md` markdown file, parses its YAML frontmatter, and surfaces action items (with assignees and due dates) + decisions in the post-meeting nudge
-- **Live transcript config health check** — if `[live_transcript].model` is empty in `~/.config/minutes/config.toml`, Settings → Integrations → Minutes shows a warning and offers one-click buttons to write any installed whisper model as the active one. Without this, Minutes silently skips live transcription.
-- **Spawn failure detection** — when `minutes record` crashes immediately on start (stale device name in config, missing whisper model, audio I/O failure), the app captures stderr, rolls back the "Recording" UI state, and shows an NSAlert with the real error plus a "Copy error details" button for bug reports. Does not catch failures that happen after the spawn succeeds, which is the bulk of the reliability problem.
-
-### Obsidian Integration *(pre-release — depends on Minutes)*
-Opens the Minutes-generated meeting note in the Obsidian desktop app after a meeting ends. Pointless without the Minutes integration enabled, since there's no note to open.
-
-- **Vault detection** — reads `~/Library/Application Support/obsidian/obsidian.json` to enumerate all vaults registered with the Obsidian desktop app
-- **Auto-open meeting note** — builds an `obsidian://open?vault=<name>&file=<relative-path>` URL and opens the note directly in the Obsidian desktop app (not the browser)
-- **Symlink-aware vault resolution** — Minutes uses a symlink strategy by default (`<vault>/<subdir>/meetings` → `~/meetings`). The app walks the vault looking for any symlink whose target matches the meeting file, so it works transparently with this layout.
-- **"Open in Obsidian"** button in the post-meeting nudge
-- **Vault-not-registered fallback** — if a meeting file can't be mapped to any known vault, the app launches Obsidian standalone so the user can open the note manually
-- **Dataview Meetings Dashboard** — one-click installer drops a pre-built `Meetings Dashboard.md` into your vault (next to your meetings folder). It queries Minutes' YAML frontmatter with Dataview and renders live tables for: this week, today, open action items, recent decisions, people you're meeting most, **people you're losing touch with** (no contact in 30+ days), and monthly stats. Requires the Dataview and Tasks community plugins.
 
 ### Onboarding
 First-launch setup assistant walks through permissions step by step in a standalone window (not a sheet on the menu bar popover):
@@ -178,7 +136,7 @@ Re-runnable any time from Settings → General.
 ## Requirements
 
 - macOS 13 Ventura or later
-- Xcode 15+ (to build)
+- Xcode 16 or later (to build — the code uses a modern Swift 6.x toolchain)
 - Calendar access permission
 - Notification permission (optional, for banner alerts)
 
@@ -186,11 +144,10 @@ Re-runnable any time from Settings → General.
 
 | Tool | Install | Used for | Status |
 |---|---|---|---|
-| [Notion](https://www.notion.so) (desktop app + API integration token) | Download from notion.so + create an internal integration at notion.so/my-integrations | Creating meeting pages on join; Notion's AI Meeting Notes handles recording + summarisation | **Supported** (primary integration) |
-| [Minutes](https://github.com/silverstein/minutes) | `brew tap silverstein/tap && brew install minutes` | Local transcription, live transcript pane, post-meeting action items | **Pre-release** — feature-flagged off, see notes above |
-| [Obsidian](https://obsidian.md) | `brew install --cask obsidian` | Auto-opening Minutes-generated meeting notes | **Pre-release** — feature-flagged off, depends on Minutes |
+| [Notion](https://www.notion.so) (desktop app + API integration token) | Download from notion.so + create an internal integration at notion.so/my-integrations | Creating meeting pages on join; Notion's AI Meeting Notes handles recording + summarisation; Calendar → Notion sync | **Supported** (primary integration) |
+| [Supabase](https://supabase.com) | Create a project at supabase.com | Backing store for the public availability page (see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)) | **Optional** |
 
-All three are optional — the app works without any of them.
+Both are optional — the app works without them.
 
 ---
 
@@ -247,9 +204,8 @@ The menu bar dropdown has a **Preview** section with buttons to preview each UI 
 
 - Meeting Overlay
 - Pre-Meeting Checklist
-- Context Panel (also opens the live transcript pane with seeded sample data)
+- Context Panel
 - In-Call Minimal Alert
-- Live Transcript
 
 ---
 
@@ -266,7 +222,9 @@ Open **Preferences** from the menu bar dropdown:
 | **Checklist** | Add/remove/reorder pre-meeting checklist items |
 | **Calendars** | Select which calendars to monitor |
 | **Notion** | API token (Keychain), database ID, Save & Test button, enable toggle |
-| **Integrations** | Pre-release: master toggles for **Minutes** (CLI status, binary picker, auto-record, prep brief, live transcript, in-call coach, config health check) and **Obsidian** (vault list, auto-open, Dataview dashboard installer) |
+| **Availability** | Supabase URL + service-role key, push interval/window (see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)) |
+| **Cal Sync** | Calendar → Notion sync: enable, Sync Now / Dry Run / Patch, view ID, log |
+| **Busy Light** | Choose Busy/Free Shortcuts + enable toggles (see [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md)) |
 
 ---
 
@@ -278,36 +236,40 @@ MeetingReminder/
 ├── Models/
 │   ├── MeetingEvent.swift                # Meeting data model (attendees, notes, location)
 │   ├── ChecklistItem.swift               # Pre-meeting checklist data model (Codable)
-│   └── MinutesMeeting.swift              # Parsed `minutes` markdown + YAML frontmatter
+│   └── PreCallBrief.swift                # Notion-fed pre-call brief model
 ├── Services/
 │   ├── CalendarService.swift             # EventKit: access, fetch, filter, meeting stats
-│   ├── MeetingMonitor.swift              # Core orchestrator: timers, alerts, end detection, ad-hoc, reconnect
+│   ├── MeetingMonitor.swift              # Core orchestrator: timers, alerts, end detection, ad-hoc, mic state
+│   ├── MeetingLauncher.swift             # Opens/joins video links
 │   ├── VideoLinkDetector.swift           # Regex detection: Zoom, Meet, Teams, Webex, Slack
 │   ├── AlertTier.swift                   # Progressive alert tier enum + MenuBarUrgency enum
 │   ├── NotificationService.swift         # UNUserNotificationCenter wrapper for banners
 │   ├── ScreenDimmer.swift                # IOKit brightness control (gradual dimming)
 │   ├── DisplayPreferences.swift          # Monitor picker resolution (all/primary/specific)
 │   ├── KeychainHelper.swift              # Generic Keychain wrapper
-│   ├── MinutesService.swift              # `minutes` CLI wrapper: record, stop, fetch, status polling, prep brief
-│   ├── LiveTranscriptService.swift       # Tails live-transcript.jsonl + heuristic in-call coach
-│   ├── ObsidianService.swift             # Vault detection, symlink-aware file resolution, obsidian:// URLs (pre-release)
-│   └── NotionService.swift               # Notion API client — primary recording integration
+│   ├── AudioProcessMonitor.swift         # Per-process mic-input detection (macOS 14+); busy-light source
+│   ├── BusyLightService.swift            # Shortcuts-driven busy light (meeting/mic state)
+│   ├── AvailabilityPushService.swift     # EventKit → Supabase free/busy push
+│   ├── NotionService.swift               # Notion API client — primary recording integration
+│   ├── PreCallBriefService.swift         # Composes/fetches the Notion-fed pre-call brief
+│   └── CalendarNotionSyncService.swift   # Calendar → Notion sync (+ Mapper/Types/Migrations/RelationLinker/Watcher)
 ├── Views/
-│   ├── MenuBarView.swift                 # Dropdown: event list, meeting load, recording/reconnect/ad-hoc, previews
+│   ├── MenuBarView.swift                 # Dropdown: event list, meeting load, ad-hoc, previews
 │   ├── OverlayWindow.swift               # NSPanel wrappers for meeting + break overlays
 │   ├── OverlayView.swift                 # Full-screen overlay UI (Join/Snooze/Dismiss, attendees)
-│   ├── SettingsView.swift                # 8-tab preferences (General, Alerts, Display, Appearance, Checklist, Calendars, Notion, Integrations)
+│   ├── SettingsView.swift                # 10-tab preferences (General, Alerts, Display, Appearance, Checklist, Calendars, Notion, Availability, Cal Sync, Busy Light)
 │   ├── OnboardingView.swift              # First-launch setup (standalone NSWindow)
-│   ├── ContextPanelView.swift            # Floating meeting context panel + AI prep brief
+│   ├── ContextPanelView.swift            # Floating meeting context panel + pre-call brief
+│   ├── BriefPanelView.swift              # Pre-call brief panel
+│   ├── BusyLightSettingsView.swift       # Busy Light settings tab
 │   ├── ChecklistView.swift               # Pre-meeting checklist panel
 │   ├── BreakOverlayView.swift            # Soft full-screen break overlay
 │   ├── FloatingPromptView.swift          # Non-blocking context-switch prompt
-│   ├── PostMeetingNudgeView.swift        # Post-meeting nudge (action items, decisions, Obsidian button)
-│   ├── MinimalAlertView.swift            # Compact screen-share-safe in-call alert
-│   └── LiveTranscriptView.swift          # Floating live transcript pane + heuristic coach hints
+│   └── MinimalAlertView.swift            # Compact screen-share-safe in-call alert
+├── availability-page/                    # Next.js public availability page (monorepo; deploy on Vercel, root dir = availability-page)
 ├── Resources/Assets.xcassets             # App icon
 ├── Info.plist                            # LSUIElement=true, calendar usage descriptions
-└── MeetingReminder.entitlements          # Network client (sandbox disabled — required for `minutes` CLI spawn)
+└── MeetingReminder.entitlements          # Network client (sandbox disabled — required for `shortcuts` spawn + HTTP integrations)
 ```
 
 ---

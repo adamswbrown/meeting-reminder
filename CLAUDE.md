@@ -158,7 +158,7 @@ Tracks state via several sets/dicts:
 
 **Busy Light** — `BusyLightService` runs a user-chosen macOS Shortcut when you go busy (in a meeting or mic hot) and another when free, driven by `MeetingMonitor.currentMeetingInProgress` + `MeetingMonitor.micActive`. Mic state comes from `AudioProcessMonitor` (per-process input enumeration, macOS 14+), which ignores always-on listeners (Superwhisper, dictation) so the light isn't pinned to Busy. Full detail: [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md).
 
-**Availability page** — `AvailabilityPushService` pushes a sanitised free/busy snapshot to Supabase on a timer; a public Vercel/Next.js page (separate repo) reads it. Full detail: [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md).
+**Availability page** — `AvailabilityPushService` pushes a sanitised free/busy snapshot to Supabase on a timer; a public Vercel/Next.js page (in this monorepo under `availability-page/`) reads it. Full detail: [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md).
 
 **Window controllers** — each floating UI element has its own controller class wrapping an `NSPanel`:
 - `OverlayWindowController` — meeting overlay (`.screenSaver` level, all screens)
@@ -197,7 +197,7 @@ Tracks state via several sets/dicts:
 These are the two external-integration features that replaced Minutes/Obsidian in v3.0.0. Both have their own setup docs; the architecture notes live there:
 
 - **Busy Light** — [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md). `BusyLightService` + `AudioProcessMonitor`. Process-aware mic detection (macOS 14+) ignores always-on listeners; extend the ignore set via `busyLightIgnoredAudioBundleIDs`. Bundled starter Shortcuts ship in `Resources/`.
-- **Availability page** — [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md). `AvailabilityPushService` pushes EventKit free/busy to Supabase (service-role key in Keychain); the public Vercel/Next.js frontend lives in its **own repo** (`adamswbrown/availability-page`).
+- **Availability page** — [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md). `AvailabilityPushService` pushes EventKit free/busy to Supabase (service-role key in Keychain); the public Vercel/Next.js frontend lives **in this monorepo** under `availability-page/` (deploy on Vercel with Root Directory = `availability-page`).
 
 ### Calendar → Notion sync
 

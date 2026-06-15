@@ -12,17 +12,18 @@ Mac app (AvailabilityPushService)  --service-role write-->  Supabase
 Vercel / Next.js page  <--anon-key read--------------------- ┘
 ```
 
-## Two halves, two repos
+## Two halves, one repo (monorepo)
 
 | Half | Where | What it is |
 |------|-------|-----------|
-| **Push** | this repo — `Services/AvailabilityPushService.swift` | Snapshots EventKit, writes to Supabase on a timer |
-| **Frontend** | separate repo — `adamswbrown/availability-page` (private) | Next.js page deployed to Vercel that reads the sanitised view |
+| **Push** | `MeetingReminder/Services/AvailabilityPushService.swift` | Snapshots EventKit, writes to Supabase on a timer |
+| **Frontend** | `availability-page/` (this repo) | Next.js page deployed to Vercel that reads the sanitised view |
 
-> The Next.js source used to live in `availability-page/` here but was moved out
-> (`b795966 chore: move availability-page to its own repo`). Only a stale
-> `.next/` build dir may remain on disk — it's gitignored. **All frontend work
-> happens in the separate repo.**
+> The Next.js frontend lives **in this repo** under `availability-page/` (it was
+> previously a separate repo, centralised back in as a monorepo). Build output
+> (`.next/`, `node_modules`) is gitignored by `availability-page/.gitignore`.
+> On Vercel, import this repo and set the project's **Root Directory** to
+> `availability-page`. See `availability-page/README.md`.
 
 ---
 
@@ -108,16 +109,18 @@ stays in macOS Keychain and never reaches the browser.
 
 ## 3. Deploy the frontend
 
-In the separate `adamswbrown/availability-page` repo:
+The frontend lives in this repo under `availability-page/`:
 
 ```bash
+cd availability-page
 cp .env.local.example .env.local   # paste Supabase URL + publishable (anon) key
 pnpm install
 pnpm dev                            # http://localhost:3000
 ```
 
-Deploy: import the repo in **Vercel**, set two env vars in Project Settings →
-Environment Variables (both are `NEXT_PUBLIC_*`, safe for the browser):
+Deploy: import `adamswbrown/meeting-reminder` in **Vercel**, set the project's
+**Root Directory** to `availability-page`, and add two env vars in Project
+Settings → Environment Variables (both are `NEXT_PUBLIC_*`, safe for the browser):
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
