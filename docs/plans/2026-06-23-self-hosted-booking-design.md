@@ -1,5 +1,12 @@
 # Self-Hosted Booking ("Cal.com replacement") — Design
 
+> **Update (2026-06-23):** The deployed Supabase table names are
+> **`booking_event_types`** and **`booking_requests`** (the generic `event_types`
+> / `bookings` names below were prefixed with `booking_` to avoid collisions in
+> the shared Supabase project). The overlap-constraint violation surfaces as
+> **HTTP 400 with Postgres code `23P01`**, not 409. The rest of this doc is kept
+> as historical record. See [../BOOKING.md](../BOOKING.md) for the live schema.
+
 **Date:** 2026-06-23
 **Status:** Design agreed, not yet implemented
 **Goal:** Replicate the core Cal.com outcome — let people see Adam's availability
