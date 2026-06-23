@@ -96,6 +96,7 @@ struct MeetingReminderApp: App {
                 notionService: notionService,
                 calendarNotionSync: calendarNotionSync,
                 availabilityPushService: availabilityPushService,
+                bookingPollService: bookingPollService,
                 busyLightService: busyLightService
             )
         }
