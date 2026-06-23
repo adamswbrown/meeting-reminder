@@ -34,3 +34,21 @@ struct PendingBooking: Decodable {
         return try dec.decode([PendingBooking].self, from: data)
     }
 }
+
+// MARK: - B2: Conflict-overlap helper
+
+enum BookingConflict {
+    /// True if `range` intersects any (start,end) in `events`. Adjacent (touching)
+    /// intervals do NOT count as overlap — an event that ends exactly at
+    /// `range.start`, or starts exactly at `range.end`, is allowed.
+    static func overlaps(range: DateInterval, events: [(Date, Date)]) -> Bool {
+        for (start, end) in events {
+            let other = DateInterval(start: start, end: max(start, end))
+            // DateInterval.intersects treats touching endpoints as intersecting.
+            // Exclude the zero-length boundary touch so back-to-back meetings are OK.
+            if other.end <= range.start || other.start >= range.end { continue }
+            if range.intersects(other) { return true }
+        }
+        return false
+    }
+}

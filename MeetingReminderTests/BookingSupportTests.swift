@@ -27,4 +27,39 @@ final class BookingSupportTests: XCTestCase {
         XCTAssertNotNil(expected)
         XCTAssertEqual(rows[0].startUTC, expected)
     }
+
+    // MARK: - B2: BookingConflict.overlaps
+
+    private func d(_ s: String) -> Date {
+        ISO8601DateFormatter().date(from: s)!
+    }
+
+    func testOverlapWithinRange() {
+        let range = DateInterval(start: d("2026-07-01T10:00:00Z"), end: d("2026-07-01T11:00:00Z"))
+        let events = [(d("2026-07-01T10:30:00Z"), d("2026-07-01T10:45:00Z"))]
+        XCTAssertTrue(BookingConflict.overlaps(range: range, events: events))
+    }
+
+    func testAdjacentAfterIsNotOverlap() {
+        let range = DateInterval(start: d("2026-07-01T10:00:00Z"), end: d("2026-07-01T11:00:00Z"))
+        let events = [(d("2026-07-01T11:00:00Z"), d("2026-07-01T12:00:00Z"))]
+        XCTAssertFalse(BookingConflict.overlaps(range: range, events: events))
+    }
+
+    func testAdjacentBeforeIsNotOverlap() {
+        let range = DateInterval(start: d("2026-07-01T10:00:00Z"), end: d("2026-07-01T11:00:00Z"))
+        let events = [(d("2026-07-01T09:00:00Z"), d("2026-07-01T10:00:00Z"))]
+        XCTAssertFalse(BookingConflict.overlaps(range: range, events: events))
+    }
+
+    func testDisjointIsNotOverlap() {
+        let range = DateInterval(start: d("2026-07-01T10:00:00Z"), end: d("2026-07-01T11:00:00Z"))
+        let events = [(d("2026-07-01T09:00:00Z"), d("2026-07-01T09:30:00Z"))]
+        XCTAssertFalse(BookingConflict.overlaps(range: range, events: events))
+    }
+
+    func testEmptyEventsIsNotOverlap() {
+        let range = DateInterval(start: d("2026-07-01T10:00:00Z"), end: d("2026-07-01T11:00:00Z"))
+        XCTAssertFalse(BookingConflict.overlaps(range: range, events: []))
+    }
 }
