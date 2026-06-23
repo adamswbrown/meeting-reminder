@@ -52,3 +52,58 @@ enum BookingConflict {
         return false
     }
 }
+
+// MARK: - B3: ICS invite builder
+
+enum BookingICS {
+    /// RFC-5545 VEVENT (CRLF line endings) for a confirmed booking, sent as an
+    /// invite (METHOD:REQUEST) the attendee can accept. Mirrors the web builder
+    /// at availability-page/lib/booking.ts `buildICSContent` for format consistency.
+    static func build(title: String, start: Date, end: Date,
+                      organizerEmail: String, attendeeEmail: String,
+                      description: String) -> String {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone(identifier: "UTC")
+        fmt.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+
+        let startICS = fmt.string(from: start)
+        let endICS = fmt.string(from: end)
+        // DTSTAMP derived from start (not Date()) so output is deterministic/testable.
+        let stampICS = startICS
+
+        // Stable UID derived from start+end+attendee.
+        let uid = "booking-\(startICS)-\(endICS)-\(attendeeEmail)@adam-booking"
+
+        func esc(_ text: String) -> String {
+            text
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: ",", with: "\\,")
+                .replacingOccurrences(of: ";", with: "\\;")
+                .replacingOccurrences(of: "\r\n", with: "\\n")
+                .replacingOccurrences(of: "\n", with: "\\n")
+        }
+
+        let organizerCN = organizerEmail.split(separator: "@").first.map(String.init) ?? organizerEmail
+
+        let lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Adam Brown Booking//EN",
+            "METHOD:REQUEST",
+            "BEGIN:VEVENT",
+            "UID:\(uid)",
+            "DTSTAMP:\(stampICS)",
+            "DTSTART:\(startICS)",
+            "DTEND:\(endICS)",
+            "SUMMARY:\(esc(title))",
+            "DESCRIPTION:\(esc(description))",
+            "ORGANIZER;CN=\(esc(organizerCN)):MAILTO:\(organizerEmail)",
+            "ATTENDEE;RSVP=TRUE:MAILTO:\(attendeeEmail)",
+            "STATUS:CONFIRMED",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+        return lines.joined(separator: "\r\n")
+    }
+}

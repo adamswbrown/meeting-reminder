@@ -62,4 +62,53 @@ final class BookingSupportTests: XCTestCase {
         let range = DateInterval(start: d("2026-07-01T10:00:00Z"), end: d("2026-07-01T11:00:00Z"))
         XCTAssertFalse(BookingConflict.overlaps(range: range, events: []))
     }
+
+    // MARK: - B3: BookingICS.build
+
+    private func sampleICS(title: String = "Intro call", description: String = "A chat") -> String {
+        BookingICS.build(
+            title: title,
+            start: d("2026-07-01T10:00:00Z"),
+            end: d("2026-07-01T10:30:00Z"),
+            organizerEmail: "adam@askadam.cloud",
+            attendeeEmail: "sam@example.com",
+            description: description
+        )
+    }
+
+    func testICSContainsCoreLines() {
+        let ics = sampleICS()
+        XCTAssertTrue(ics.contains("BEGIN:VEVENT"))
+        XCTAssertTrue(ics.contains("METHOD:REQUEST"))
+        XCTAssertTrue(ics.contains("STATUS:CONFIRMED"))
+    }
+
+    func testICSDTSTARTBasicUTC() {
+        let ics = sampleICS()
+        XCTAssertTrue(ics.contains("DTSTART:20260701T100000Z"), ics)
+        XCTAssertTrue(ics.contains("DTEND:20260701T103000Z"), ics)
+        // DTSTAMP is derived from start for determinism.
+        XCTAssertTrue(ics.contains("DTSTAMP:20260701T100000Z"), ics)
+    }
+
+    func testICSEscapesCommas() {
+        let ics = sampleICS(title: "Intro, with comma", description: "Line one, line two")
+        XCTAssertTrue(ics.contains("SUMMARY:Intro\\, with comma"), ics)
+        XCTAssertTrue(ics.contains("DESCRIPTION:Line one\\, line two"), ics)
+    }
+
+    func testICSUsesCRLF() {
+        let ics = sampleICS()
+        XCTAssertTrue(ics.contains("\r\n"))
+        // No lone \n that isn't preceded by \r.
+        let chars = Array(ics)
+        for i in chars.indices where chars[i] == "\n" {
+            XCTAssertTrue(i > 0 && chars[i - 1] == "\r", "Found a lone \\n at index \(i)")
+        }
+    }
+
+    func testICSContainsAttendeeMailto() {
+        let ics = sampleICS()
+        XCTAssertTrue(ics.contains("MAILTO:sam@example.com"), ics)
+    }
 }
