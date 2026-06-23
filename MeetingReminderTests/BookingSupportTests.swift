@@ -111,4 +111,48 @@ final class BookingSupportTests: XCTestCase {
         let ics = sampleICS()
         XCTAssertTrue(ics.contains("MAILTO:sam@example.com"), ics)
     }
+
+    // MARK: - B4: MailAppleScript.compose
+
+    private func sampleScript(subject: String = "Your booking is confirmed",
+                              body: String = "Hi Sam") -> String {
+        MailAppleScript.compose(
+            senderDisplay: "Adam Brown <adam.brown@altra.cloud>",
+            to: "sam@example.com",
+            subject: subject,
+            body: body,
+            icsPath: "/tmp/invite.ics"
+        )
+    }
+
+    func testScriptPinsSender() {
+        let s = sampleScript()
+        XCTAssertTrue(s.contains("set sender to \"Adam Brown <adam.brown@altra.cloud>\""), s)
+    }
+
+    func testScriptContainsRecipientAndPath() {
+        let s = sampleScript()
+        XCTAssertTrue(s.contains("sam@example.com"), s)
+        XCTAssertTrue(s.contains("/tmp/invite.ics"), s)
+    }
+
+    func testScriptIsInvisibleAndSends() {
+        let s = sampleScript()
+        XCTAssertTrue(s.contains("visible:false"), s)
+        XCTAssertTrue(s.contains("send"), s)
+        XCTAssertTrue(s.hasSuffix("send") || s.contains("send\n") || s.contains("\tsend"), s)
+    }
+
+    func testScriptEscapesDoubleQuotes() {
+        let s = MailAppleScript.compose(
+            senderDisplay: "Adam",
+            to: "sam@example.com",
+            subject: "Say \"hello\"",
+            body: "Body",
+            icsPath: "/tmp/invite.ics"
+        )
+        XCTAssertTrue(s.contains("Say \\\"hello\\\""), s)
+        // The raw, unescaped sequence must not appear in the subject content.
+        XCTAssertFalse(s.contains("subject:\"Say \"hello\""), s)
+    }
 }
