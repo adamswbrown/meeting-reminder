@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { config } from "@/lib/config";
 import { formatDayHeading } from "@/lib/format";
@@ -103,8 +103,24 @@ export function BookingForm({ eventType, slots, ownerTZ }: Props) {
   const [state, setState] = useState<FormState>("idle");
   const [touched, setTouched] = useState(false);
 
+  const detailsRef = useRef<HTMLDivElement>(null);
+
   const days = useMemo(() => groupByDay(slots, ownerTZ), [slots, ownerTZ]);
   const now = useMemo(() => new Date(), []);
+
+  // When a slot is chosen we swap to the details step; bring it into view so
+  // it's obvious what to do next (rather than relying on the user to scroll).
+  useEffect(() => {
+    if (selected) {
+      detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [selected]);
+
+  function clearSelection() {
+    setSelected(null);
+    if (state !== "idle") setState("idle");
+    setTouched(false);
+  }
 
   const emailValid = EMAIL_RE.test(email.trim());
   const canSubmit =
@@ -162,116 +178,51 @@ export function BookingForm({ eventType, slots, ownerTZ }: Props) {
   const visitorTZAbbr = tzAbbreviation(visitorTZ, now);
   const ownerTZAbbr = tzAbbreviation(ownerTZ, now);
 
-  return (
-    <div className="flex flex-col gap-8">
-      <p className="text-xs text-zinc-500 dark:text-zinc-500">
-        {visitorIsOwnerTZ ? (
-          <>
-            Times shown in {visitorTZAbbr} &middot; {prettifyTZName(visitorTZ)}
-          </>
-        ) : (
-          <>
-            Times shown in your local time &middot; {visitorTZAbbr} (
-            {prettifyTZName(visitorTZ)}) &middot; owner is in {ownerTZAbbr}{" "}
-            {prettifyTZName(ownerTZ)}
-          </>
-        )}
-      </p>
+  const errorAlert = state === "error" && (
+    <div
+      role="alert"
+      className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100"
+    >
+      Something went wrong — please try again or email{" "}
+      <a
+        href={`mailto:${config.ownerEmail}`}
+        className="font-medium underline underline-offset-2"
+      >
+        {config.ownerEmail}
+      </a>
+      .
+    </div>
+  );
 
-      {state === "slot_taken" && (
-        <div
-          role="alert"
-          className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+  // ---- Step 2: details (a slot is chosen) --------------------------------
+  if (selected) {
+    const start = new Date(selected.startISO);
+    const end = new Date(selected.endISO);
+    return (
+      <div ref={detailsRef} className="flex flex-col gap-6 scroll-mt-6">
+        <button
+          type="button"
+          onClick={clearSelection}
+          className="inline-flex w-fit items-center gap-1 text-sm font-medium text-zinc-500 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
         >
-          That slot was just taken — please pick another below.
-        </div>
-      )}
-      {state === "error" && (
-        <div
-          role="alert"
-          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100"
-        >
-          Something went wrong — please try again or email{" "}
-          <a
-            href={`mailto:${config.ownerEmail}`}
-            className="font-medium underline underline-offset-2"
-          >
-            {config.ownerEmail}
-          </a>
-          .
-        </div>
-      )}
+          ← Pick a different time
+        </button>
 
-      {/* ---- Slot picker --------------------------------------------------- */}
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
-          Pick a time
-        </h2>
-        {days.length === 0 ? (
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-            Nothing free in the next {config.lookAheadDays} days — email{" "}
-            <a
-              href={`mailto:${config.ownerEmail}`}
-              className="font-medium text-zinc-900 underline underline-offset-2 dark:text-zinc-100"
-            >
-              {config.ownerEmail}
-            </a>{" "}
-            and we&rsquo;ll find a way.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-6">
-            {days.map((day) => (
-              <div key={day.dayStartISO}>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                  {formatDayHeading(new Date(day.dayStartISO), now)}
-                </h3>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {day.slots.map((slot) => {
-                    const start = new Date(slot.startISO);
-                    const end = new Date(slot.endISO);
-                    const label = formatRange(start, end, visitorTZ);
-                    const isSelected =
-                      selected?.startISO === slot.startISO;
-                    return (
-                      <button
-                        key={slot.startISO}
-                        type="button"
-                        onClick={() => {
-                          setSelected(slot);
-                          if (state !== "idle") setState("idle");
-                        }}
-                        aria-pressed={isSelected}
-                        aria-label={`Select ${label} ${visitorTZAbbr}`}
-                        className={`flex flex-col items-start rounded-xl border px-4 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 ${
-                          isSelected
-                            ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                            : "border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-700"
-                        }`}
-                      >
-                        <span className="font-mono text-base font-medium tabular-nums">
-                          {label}
-                        </span>
-                        <span
-                          className={`mt-0.5 text-xs uppercase tracking-wide ${
-                            isSelected
-                              ? "text-zinc-300 dark:text-zinc-600"
-                              : "text-zinc-500 dark:text-zinc-400"
-                          }`}
-                        >
-                          {visitorTZAbbr}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+            Selected time
+          </p>
+          <p className="mt-1 text-base font-medium text-zinc-900 dark:text-zinc-100">
+            {formatDayHeading(start, now)} &middot;{" "}
+            <span className="font-mono tabular-nums">
+              {formatRange(start, end, visitorTZ)}
+            </span>{" "}
+            {visitorTZAbbr}
+          </p>
+        </div>
 
-      {/* ---- Details form -------------------------------------------------- */}
-      {days.length > 0 && (
+        {errorAlert}
+
         <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
             Your details
@@ -290,6 +241,7 @@ export function BookingForm({ eventType, slots, ownerTZ }: Props) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              autoFocus
               autoComplete="name"
               className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-100 dark:focus:ring-zinc-100"
             />
@@ -345,12 +297,6 @@ export function BookingForm({ eventType, slots, ownerTZ }: Props) {
             </div>
           ))}
 
-          {touched && !selected && (
-            <span className="text-xs text-red-600 dark:text-red-400">
-              Pick a time above first.
-            </span>
-          )}
-
           <button
             type="submit"
             disabled={state === "submitting" || (touched && !canSubmit)}
@@ -358,9 +304,7 @@ export function BookingForm({ eventType, slots, ownerTZ }: Props) {
           >
             {state === "submitting"
               ? "Requesting…"
-              : selected
-                ? `Request ${eventType.durationMin} min`
-                : "Request booking"}
+              : `Request ${eventType.durationMin} min`}
           </button>
 
           <p className="text-xs text-zinc-500 dark:text-zinc-500">
@@ -368,7 +312,91 @@ export function BookingForm({ eventType, slots, ownerTZ }: Props) {
             not booked instantly.
           </p>
         </form>
+      </div>
+    );
+  }
+
+  // ---- Step 1: pick a time -----------------------------------------------
+  return (
+    <div className="flex flex-col gap-8">
+      <p className="text-xs text-zinc-500 dark:text-zinc-500">
+        {visitorIsOwnerTZ ? (
+          <>
+            Times shown in {visitorTZAbbr} &middot; {prettifyTZName(visitorTZ)}
+          </>
+        ) : (
+          <>
+            Times shown in your local time &middot; {visitorTZAbbr} (
+            {prettifyTZName(visitorTZ)}) &middot; owner is in {ownerTZAbbr}{" "}
+            {prettifyTZName(ownerTZ)}
+          </>
+        )}
+      </p>
+
+      {state === "slot_taken" && (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+        >
+          That slot was just taken — please pick another below.
+        </div>
       )}
+      {errorAlert}
+
+      {/* ---- Slot picker --------------------------------------------------- */}
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+          Pick a time
+        </h2>
+        {days.length === 0 ? (
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+            Nothing free in the next {config.lookAheadDays} days — email{" "}
+            <a
+              href={`mailto:${config.ownerEmail}`}
+              className="font-medium text-zinc-900 underline underline-offset-2 dark:text-zinc-100"
+            >
+              {config.ownerEmail}
+            </a>{" "}
+            and we&rsquo;ll find a way.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-6">
+            {days.map((day) => (
+              <div key={day.dayStartISO}>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                  {formatDayHeading(new Date(day.dayStartISO), now)}
+                </h3>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {day.slots.map((slot) => {
+                    const start = new Date(slot.startISO);
+                    const end = new Date(slot.endISO);
+                    const label = formatRange(start, end, visitorTZ);
+                    return (
+                      <button
+                        key={slot.startISO}
+                        type="button"
+                        onClick={() => {
+                          setSelected(slot);
+                          if (state !== "idle") setState("idle");
+                        }}
+                        aria-label={`Select ${label} ${visitorTZAbbr}`}
+                        className="flex flex-col items-start rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left text-zinc-900 transition hover:border-zinc-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:ring-zinc-100"
+                      >
+                        <span className="font-mono text-base font-medium tabular-nums">
+                          {label}
+                        </span>
+                        <span className="mt-0.5 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                          {visitorTZAbbr}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
