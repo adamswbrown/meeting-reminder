@@ -12,6 +12,7 @@ struct MeetingReminderApp: App {
     @StateObject private var preCallBriefService: PreCallBriefService
     @StateObject private var calendarNotionSync = CalendarNotionSyncService()
     @StateObject private var availabilityPushService: AvailabilityPushService
+    @StateObject private var bookingPollService: BookingPollService
     @StateObject private var busyLightService = BusyLightService()
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
@@ -30,6 +31,7 @@ struct MeetingReminderApp: App {
         let notion = NotionService()
         let preCallBriefs = PreCallBriefService()
         let availability = AvailabilityPushService()
+        let bookingPoll = BookingPollService()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             notionService: notion,
@@ -41,6 +43,7 @@ struct MeetingReminderApp: App {
         _notionService = StateObject(wrappedValue: notion)
         _preCallBriefService = StateObject(wrappedValue: preCallBriefs)
         _availabilityPushService = StateObject(wrappedValue: availability)
+        _bookingPollService = StateObject(wrappedValue: bookingPoll)
     }
 
     var body: some Scene {
@@ -67,6 +70,7 @@ struct MeetingReminderApp: App {
                     overlayCoordinator.startObserving()
                     calendarNotionSync.startScheduleIfEnabled()
                     availabilityPushService.start()
+                    bookingPollService.start()
                     overlayCoordinator.startBusyLightObserver(busyLightService)
 
                     if !hasCompletedOnboarding {
