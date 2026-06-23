@@ -155,4 +155,17 @@ final class BookingSupportTests: XCTestCase {
         // The raw, unescaped sequence must not appear in the subject content.
         XCTAssertFalse(s.contains("subject:\"Say \"hello\""), s)
     }
+
+    func testScriptMultilineBodyUsesLinefeedConcatenation() {
+        let s = MailAppleScript.compose(
+            senderDisplay: "Adam",
+            to: "sam@example.com",
+            subject: "Confirmed",
+            body: "Hi Sam,\n\nYou're booked.",
+            icsPath: "/tmp/invite.ics"
+        )
+        // Newlines must become AppleScript `linefeed` concatenation, not literal \n.
+        XCTAssertTrue(s.contains("& linefeed &"), s)
+        XCTAssertFalse(s.contains("\\n"), s)
+    }
 }

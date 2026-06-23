@@ -44,10 +44,12 @@ enum BookingConflict {
     static func overlaps(range: DateInterval, events: [(Date, Date)]) -> Bool {
         for (start, end) in events {
             let other = DateInterval(start: start, end: max(start, end))
-            // DateInterval.intersects treats touching endpoints as intersecting.
-            // Exclude the zero-length boundary touch so back-to-back meetings are OK.
+            // Touching endpoints don't count: an event that ends exactly at
+            // range.start, or starts exactly at range.end, is allowed so
+            // back-to-back meetings are OK. Anything that survives this guard
+            // genuinely overlaps.
             if other.end <= range.start || other.start >= range.end { continue }
-            if range.intersects(other) { return true }
+            return true
         }
         return false
     }
@@ -117,21 +119,32 @@ enum MailAppleScript {
     static func compose(senderDisplay: String, to: String, subject: String,
                         body: String, icsPath: String) -> String {
         // Escape backslash first, then double-quote, so generated AppleScript
-        // string literals stay syntactically valid. Newlines in the body become
-        // a literal \n escape, which AppleScript interprets as a linefeed inside
-        // a double-quoted string.
+        // string literals stay syntactically valid. This does NOT touch newlines —
+        // AppleScript does not interpret `\n` inside a double-quoted string, so
+        // multiline bodies are handled separately by escBody below.
         func esc(_ s: String) -> String {
             s
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
-                .replacingOccurrences(of: "\r\n", with: "\\n")
-                .replacingOccurrences(of: "\n", with: "\\n")
+        }
+
+        // Body may be multiline. Split on newline and join the escaped pieces with
+        // the AppleScript `linefeed` constant so the generated script concatenates
+        // string literals separated by real linefeeds (e.g.
+        // `"Hi Sam," & linefeed & "" & linefeed & "You're booked."`). Each piece is
+        // escaped individually, preserving the backslash-then-quote order.
+        func escBody(_ s: String) -> String {
+            let normalised = s.replacingOccurrences(of: "\r\n", with: "\n")
+            return normalised
+                .components(separatedBy: "\n")
+                .map(esc)
+                .joined(separator: "\" & linefeed & \"")
         }
 
         let sender = esc(senderDisplay)
         let recipient = esc(to)
         let subj = esc(subject)
-        let bodyEsc = esc(body)
+        let bodyEsc = escBody(body)
         let path = esc(icsPath)
 
         let lines = [
