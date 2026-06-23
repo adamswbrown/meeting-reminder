@@ -156,6 +156,26 @@ final class BookingSupportTests: XCTestCase {
         XCTAssertFalse(s.contains("subject:\"Say \"hello\""), s)
     }
 
+    func testScriptWithAttachmentIncludesAttachmentLine() {
+        let s = sampleScript()
+        XCTAssertTrue(s.contains("make new attachment"), s)
+    }
+
+    func testScriptNilAttachmentOmitsAttachmentLine() {
+        let s = MailAppleScript.compose(
+            senderDisplay: "Adam",
+            to: "sam@example.com",
+            subject: "That slot just filled",
+            body: "Hi Sam",
+            icsPath: nil
+        )
+        // No attachment line, but the message is still composed and sent.
+        XCTAssertFalse(s.contains("make new attachment"), s)
+        XCTAssertTrue(s.contains("make new outgoing message"), s)
+        XCTAssertTrue(s.contains("send newMessage"), s)
+        XCTAssertTrue(s.contains("sam@example.com"), s)
+    }
+
     func testScriptMultilineBodyUsesLinefeedConcatenation() {
         let s = MailAppleScript.compose(
             senderDisplay: "Adam",

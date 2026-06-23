@@ -19,6 +19,14 @@ import Foundation
 ///   back. On the conflict check we exclude any event whose identifier matches
 ///   the booking's stored `ek_event_id`, so a re-poll of an already-created
 ///   event doesn't self-reject.
+/// - **PATCH-fail recovery (I2)**: every created event is tagged with a
+///   deterministic `[booking-id:<id>]` marker in its notes. At the start of
+///   processing a pending booking we search EventKit for an event already bearing
+///   that marker. If found (a prior attempt saved the event but failed before the
+///   `confirmed` PATCH landed, so `ek_event_id` is still nil), we re-PATCH
+///   `confirmed` against the existing event instead of creating a duplicate or
+///   false-rejecting — and skip the email (the event already exists). The conflict
+///   check also excludes the booking's own event by EITHER `ek_event_id` OR marker.
 /// - **Resilience**: per-booking work is wrapped in do/catch so one bad booking
 ///   doesn't stop the others. The loop never crashes.
 @MainActor
@@ -161,6 +169,17 @@ final class BookingPollService: ObservableObject {
             bufferAfter = 0
         }
 
+        // Recovery path (I2): a previous attempt may have saved the EKEvent but
+        // failed before/while PATCHing `confirmed` (so ek_event_id was never
+        // persisted). Look for an event we already tagged with this booking's
+        // deterministic marker. If found, re-confirm against it instead of
+        // creating a duplicate or false-rejecting against our own event.
+        if let existingID = findOwnEvent(booking: booking, bufferBefore: bufferBefore, bufferAfter: bufferAfter) {
+            NSLog("[BookingPoll] booking \(booking.id) already has a tagged event \(existingID) from a prior attempt — re-confirming, skipping email (event already created)")
+            try await patchConfirmed(bookingID: booking.id, ekEventID: existingID)
+            return true
+        }
+
         // Conflict check: query EventKit across the window (with buffers),
         // excluding the event we may have already created for this booking.
         let conflict = hasConflict(booking: booking, bufferBefore: bufferBefore, bufferAfter: bufferAfter)
@@ -172,6 +191,37 @@ final class BookingPollService: ObservableObject {
             try await confirm(booking, title: title)
             return true
         }
+    }
+
+    // MARK: - Self-marker (I2)
+
+    /// Deterministic marker line appended to an event's notes so a re-poll can
+    /// recognise an event this service already created for a given booking.
+    private static func marker(for bookingID: String) -> String {
+        "[booking-id:\(bookingID)]"
+    }
+
+    /// Search the (buffered) window for an event already bearing this booking's
+    /// marker — i.e. one we created on a prior attempt. Returns its identifier.
+    private func findOwnEvent(booking: PendingBooking, bufferBefore: TimeInterval, bufferAfter: TimeInterval) -> String? {
+        eventStore.refreshSourcesIfNecessary()
+
+        let windowStart = booking.startUTC.addingTimeInterval(-bufferBefore)
+        let windowEnd = booking.endUTC.addingTimeInterval(bufferAfter)
+        guard windowEnd > windowStart else { return nil }
+
+        let calendars = eventStore.calendars(for: .event)
+        let predicate = eventStore.predicateForEvents(
+            withStart: windowStart,
+            end: windowEnd,
+            calendars: calendars.isEmpty ? nil : calendars
+        )
+
+        let marker = Self.marker(for: booking.id)
+        let match = eventStore.events(matching: predicate).first { event in
+            (event.notes?.contains(marker) ?? false)
+        }
+        return match?.eventIdentifier
     }
 
     // MARK: - Conflict detection
@@ -190,19 +240,27 @@ final class BookingPollService: ObservableObject {
             calendars: calendars.isEmpty ? nil : calendars
         )
 
+        let marker = Self.marker(for: booking.id)
         let tuples: [(Date, Date)] = eventStore.events(matching: predicate)
             .filter { event in
                 // Idempotency guard: don't count the event we already created
-                // for this booking as a conflict against itself.
+                // for this booking as a conflict against itself. Exclude it by
+                // the persisted ek_event_id OR by our deterministic marker (the
+                // latter covers a prior attempt whose PATCH never landed).
                 if let ekID = booking.ekEventID, event.eventIdentifier == ekID {
+                    return false
+                }
+                if event.notes?.contains(marker) ?? false {
                     return false
                 }
                 return true
             }
             .map { ($0.startDate, $0.endDate) }
 
+        // C1: test the BUFFERED window (same one used to build the predicate) so
+        // an existing meeting sitting inside a buffer correctly counts as a conflict.
         return BookingConflict.overlaps(
-            range: DateInterval(start: booking.startUTC, end: max(booking.startUTC, booking.endUTC)),
+            range: DateInterval(start: windowStart, end: windowEnd),
             events: tuples
         )
     }
@@ -211,7 +269,10 @@ final class BookingPollService: ObservableObject {
 
     private func confirm(_ booking: PendingBooking, title: String) async throws {
         let eventTitle = "\(title) — \(booking.bookerName)"
-        let notes = "Booked via availability page. Booker: \(booking.bookerName) <\(booking.bookerEmail)>"
+        // Append a deterministic self-marker (I2) so a re-poll after a failed
+        // PATCH can recognise this event and re-confirm it instead of duplicating
+        // or false-rejecting.
+        let notes = "Booked via availability page. Booker: \(booking.bookerName) <\(booking.bookerEmail)>\n\(Self.marker(for: booking.id))"
 
         // 1. Create + save the EKEvent on the default (Exchange) calendar.
         let event = EKEvent(eventStore: eventStore)
@@ -235,7 +296,7 @@ final class BookingPollService: ObservableObject {
         // 3. Build the .ics and send the confirmation email. Email failure is
         //    logged but does NOT roll back the confirmation.
         do {
-            try sendConfirmationEmail(booking: booking, title: eventTitle)
+            try await sendConfirmationEmail(booking: booking, title: eventTitle)
         } catch {
             NSLog("[BookingPoll] confirmation email failed for booking \(booking.id) (booking remains confirmed): \(error.localizedDescription)")
         }
@@ -244,7 +305,7 @@ final class BookingPollService: ObservableObject {
     private func reject(_ booking: PendingBooking) async throws {
         try await patchRejected(bookingID: booking.id, reason: "Slot was no longer free")
         do {
-            try sendRejectionEmail(booking: booking)
+            try await sendRejectionEmail(booking: booking)
         } catch {
             NSLog("[BookingPoll] rejection email failed for booking \(booking.id): \(error.localizedDescription)")
         }
@@ -252,7 +313,7 @@ final class BookingPollService: ObservableObject {
 
     // MARK: - Email
 
-    private func sendConfirmationEmail(booking: PendingBooking, title: String) throws {
+    private func sendConfirmationEmail(booking: PendingBooking, title: String) async throws {
         let description = "Confirmed: \(title)"
         let ics = BookingICS.build(
             title: title,
@@ -287,10 +348,10 @@ final class BookingPollService: ObservableObject {
             body: body,
             icsPath: icsPath
         )
-        try Self.runOsascript(script)
+        try await Self.runOsascript(script)
     }
 
-    private func sendRejectionEmail(booking: PendingBooking) throws {
+    private func sendRejectionEmail(booking: PendingBooking) async throws {
         let body = """
         Hi \(booking.bookerName),
 
@@ -304,17 +365,15 @@ final class BookingPollService: ObservableObject {
         Adam
         """
 
-        // Rejections need no .ics. MailAppleScript.compose always attaches a
-        // file, so write an empty placeholder to keep the script valid — but
-        // since we don't want a stray attachment, use the no-attachment variant
-        // by composing a script without the attachment line.
-        let script = Self.composeMailNoAttachment(
+        // Rejections carry no .ics — pass icsPath: nil to omit the attachment line.
+        let script = MailAppleScript.compose(
             senderDisplay: Self.ownerSenderDisplay,
             to: booking.bookerEmail,
             subject: "That slot just filled — please rebook",
-            body: body
+            body: body,
+            icsPath: nil
         )
-        try Self.runOsascript(script)
+        try await Self.runOsascript(script)
     }
 
     private func formatWhen(start: Date, end: Date) -> String {
@@ -329,59 +388,34 @@ final class BookingPollService: ObservableObject {
         return "\(fmt.string(from: start))–\(endFmt.string(from: end)) (London time)"
     }
 
-    /// Mail compose with no attachment. Mirrors `MailAppleScript.compose` minus
-    /// the attachment line — used for rejection emails which carry no .ics.
-    nonisolated private static func composeMailNoAttachment(senderDisplay: String, to: String, subject: String, body: String) -> String {
-        func esc(_ s: String) -> String {
-            s
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-        }
-        func escBody(_ s: String) -> String {
-            let normalised = s.replacingOccurrences(of: "\r\n", with: "\n")
-            return normalised
-                .components(separatedBy: "\n")
-                .map(esc)
-                .joined(separator: "\" & linefeed & \"")
-        }
-        let sender = esc(senderDisplay)
-        let recipient = esc(to)
-        let subj = esc(subject)
-        let bodyEsc = escBody(body)
-        let lines = [
-            "tell application \"Mail\"",
-            "\tset newMessage to make new outgoing message with properties {subject:\"\(subj)\", content:\"\(bodyEsc)\", visible:false}",
-            "\ttell newMessage",
-            "\t\tset sender to \"\(sender)\"",
-            "\t\tmake new to recipient at end of to recipients with properties {address:\"\(recipient)\"}",
-            "\tend tell",
-            "\tsend newMessage",
-            "end tell",
-        ]
-        return lines.joined(separator: "\n")
-    }
-
     // MARK: - osascript runner
 
     /// Run an AppleScript via `/usr/bin/osascript -e <script>`, same `Process`
     /// pattern as `BusyLightService`. Throws on non-zero exit.
-    nonisolated private static func runOsascript(_ script: String) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
+    ///
+    /// I1: this is the multi-second blocking call. It's `nonisolated` + `async`
+    /// and only ever takes a Sendable `String`, so callers invoke it inside a
+    /// `Task.detached` and the `Process.waitUntilExit()` runs off the MainActor —
+    /// the menu-bar UI no longer freezes during a send.
+    nonisolated private static func runOsascript(_ script: String) async throws {
+        try await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
 
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
-        process.standardOutput = Pipe()
+            let stderrPipe = Pipe()
+            process.standardError = stderrPipe
+            process.standardOutput = Pipe()
 
-        try process.run()
-        process.waitUntilExit()
+            try process.run()
+            process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else {
-            let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let err = String(data: data, encoding: .utf8) ?? "osascript exit \(process.terminationStatus)"
-            throw BookingPollError.osascriptFailed(err.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
+            guard process.terminationStatus == 0 else {
+                let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let err = String(data: data, encoding: .utf8) ?? "osascript exit \(process.terminationStatus)"
+                throw BookingPollError.osascriptFailed(err.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }.value
     }
 
     // MARK: - Supabase REST

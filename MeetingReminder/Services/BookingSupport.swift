@@ -114,10 +114,11 @@ enum BookingICS {
 
 enum MailAppleScript {
     /// Builds an osascript-able AppleScript that composes and sends a mail from a
-    /// specific account, with one recipient and one .ics attachment, without
-    /// showing the compose window. Pure string builder — executes nothing.
+    /// specific account, with one recipient and an optional .ics attachment,
+    /// without showing the compose window. Pass `icsPath: nil` for emails that
+    /// carry no attachment (e.g. rejections). Pure string builder — executes nothing.
     static func compose(senderDisplay: String, to: String, subject: String,
-                        body: String, icsPath: String) -> String {
+                        body: String, icsPath: String?) -> String {
         // Escape backslash first, then double-quote, so generated AppleScript
         // string literals stay syntactically valid. This does NOT touch newlines —
         // AppleScript does not interpret `\n` inside a double-quoted string, so
@@ -145,19 +146,23 @@ enum MailAppleScript {
         let recipient = esc(to)
         let subj = esc(subject)
         let bodyEsc = escBody(body)
-        let path = esc(icsPath)
 
-        let lines = [
+        var lines = [
             "tell application \"Mail\"",
             "\tset newMessage to make new outgoing message with properties {subject:\"\(subj)\", content:\"\(bodyEsc)\", visible:false}",
             "\ttell newMessage",
             "\t\tset sender to \"\(sender)\"",
             "\t\tmake new to recipient at end of to recipients with properties {address:\"\(recipient)\"}",
-            "\t\tmake new attachment with properties {file name:(POSIX file \"\(path)\")} at after the last paragraph",
+        ]
+        if let icsPath {
+            let path = esc(icsPath)
+            lines.append("\t\tmake new attachment with properties {file name:(POSIX file \"\(path)\")} at after the last paragraph")
+        }
+        lines.append(contentsOf: [
             "\tend tell",
             "\tsend newMessage",
             "end tell",
-        ]
+        ])
         return lines.joined(separator: "\n")
     }
 }
