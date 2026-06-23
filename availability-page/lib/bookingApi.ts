@@ -48,17 +48,45 @@ export function buildBookingPayload({
   };
 }
 
+/** Postgres SQLSTATE for exclusion_violation (the no-overlap constraint). */
+const EXCLUSION_VIOLATION_CODE = "23P01";
+const NO_OVERLAP_CONSTRAINT = "booking_requests_no_overlap";
+
 /**
- * Classify the PostgREST insert response. 201 = inserted; 409 = the Postgres
- * exclusion constraint rejected an overlapping slot (someone beat us to it);
- * anything else is an unexpected error.
+ * Detect the two-people-same-slot race in the PostgREST error body. Against the
+ * live stack this surfaces as HTTP 400 (not 409) with Postgres code `23P01`
+ * (exclusion_violation) from the `booking_requests_no_overlap` constraint. The
+ * body may arrive as a parsed object or as a raw JSON string, so handle both.
+ */
+function bodyIndicatesSlotTaken(body: unknown): boolean {
+  if (body && typeof body === "object") {
+    const code = (body as { code?: unknown }).code;
+    if (code === EXCLUSION_VIOLATION_CODE) return true;
+  }
+  if (typeof body === "string") {
+    return (
+      body.includes(EXCLUSION_VIOLATION_CODE) ||
+      body.includes(NO_OVERLAP_CONSTRAINT)
+    );
+  }
+  return false;
+}
+
+/**
+ * Classify the PostgREST insert response. 201 (and 200/204) = inserted; a
+ * Postgres exclusion-violation in the body (`23P01` / `booking_requests_no_overlap`)
+ * means someone beat us to the slot — this is the primary signal and arrives as
+ * HTTP 400, not 409. 409 is kept as a belt-and-braces fallback for PostgREST
+ * versions/configs that return it. Anything else is an unexpected error.
  */
 export function classifyInsertResult(
   httpStatus: number,
-  body: string
+  body: unknown
 ): InsertResult {
-  void body; // classification is status-driven; body kept for caller symmetry/logging
-  if (httpStatus === 201) return "ok";
+  if (httpStatus === 200 || httpStatus === 201 || httpStatus === 204) {
+    return "ok";
+  }
+  if (bodyIndicatesSlotTaken(body)) return "slot_taken";
   if (httpStatus === 409) return "slot_taken";
   return "error";
 }
@@ -77,6 +105,17 @@ export async function createBooking(
     body: JSON.stringify(payload),
   });
 
-  const body = await res.text().catch(() => "");
+  // Success uses `Prefer: return=minimal` (empty body), but FAILURES return the
+  // JSON error body — that's where the `23P01` slot-taken signal lives. Parse
+  // defensively: try JSON, fall back to the raw text.
+  const text = await res.text().catch(() => "");
+  let body: unknown = text;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+  }
   return classifyInsertResult(res.status, body);
 }
