@@ -51,6 +51,13 @@ export interface EventTypeRow {
   active: boolean;
 }
 
+/**
+ * Slug of the catch-all event type backing the availability-view slot picker
+ * (clicking a free block with no named meeting type chosen). It holds the
+ * intake questions for that path but is hidden from the homepage's named list.
+ */
+export const GENERAL_EVENT_SLUG = "general";
+
 const WEEKDAYS: Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 const SELECT =

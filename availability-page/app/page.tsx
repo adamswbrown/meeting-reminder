@@ -6,7 +6,12 @@ import {
   type DayOfDiscreteSlots,
 } from "@/lib/availability";
 import { fetchFreeBusy, fetchSyncState } from "@/lib/supabase";
-import { fetchActiveEventTypes, type EventType } from "@/lib/eventTypes";
+import {
+  fetchActiveEventTypes,
+  fetchEventType,
+  GENERAL_EVENT_SLUG,
+  type EventType,
+} from "@/lib/eventTypes";
 import { BookingPage } from "@/components/BookingPage";
 import { OOOBanner } from "@/components/OOOBanner";
 import { StalenessPill } from "@/components/StalenessPill";
@@ -25,6 +30,8 @@ async function BookACallSection() {
   } catch {
     return null;
   }
+  // The catch-all "general" type backs the slot picker, not a named offering.
+  eventTypes = eventTypes.filter((et) => et.slug !== GENERAL_EVENT_SLUG);
   if (eventTypes.length === 0) return null;
 
   return (
@@ -91,6 +98,19 @@ export default async function Page() {
 
   const oooPeriods = computeOOOPeriods(events, now);
 
+  // Context for the slot-picker booking flow. If the catch-all type is missing
+  // or unreadable, BookingPage falls back to the manual self-serve actions.
+  let bookingContext: { id: string; questions: EventType["questions"] } | null =
+    null;
+  try {
+    const general = await fetchEventType(GENERAL_EVENT_SLUG);
+    if (general) {
+      bookingContext = { id: general.id, questions: general.questions };
+    }
+  } catch {
+    bookingContext = null;
+  }
+
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-12 sm:py-20">
       <header className="mb-8 flex flex-col gap-3">
@@ -98,7 +118,8 @@ export default async function Page() {
           Book a meeting with {config.ownerFirstName}
         </h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Pick a duration, then click a slot to copy a ready-made reply.
+          Pick a duration, then click a slot to request it — you&rsquo;ll get a
+          confirmation email once it&rsquo;s accepted.
         </p>
         <div>
           <StalenessPill lastSyncedAt={lastSyncedAt} now={now} />
@@ -112,6 +133,7 @@ export default async function Page() {
       <BookingPage
         slotsByDuration={slotsByDuration}
         nowISO={now.toISOString()}
+        bookingContext={bookingContext}
       />
 
       <footer className="mt-16 border-t border-zinc-200 pt-6 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
