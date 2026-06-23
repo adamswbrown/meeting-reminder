@@ -42,7 +42,7 @@ export interface SyncState {
   events_in_window: number;
 }
 
-async function rest<T>(path: string): Promise<T> {
+export async function rest<T>(path: string): Promise<T> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
       apikey: SUPABASE_ANON_KEY,
