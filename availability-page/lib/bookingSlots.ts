@@ -8,7 +8,7 @@ import {
 } from "./availability";
 import { config } from "./config";
 import type { EventType, Weekday } from "./eventTypes";
-import type { FreeBusyEvent } from "./supabase";
+import { rest, type FreeBusyEvent } from "./supabase";
 
 /** A bookable slot, ISO strings so it survives the RSC→client boundary. */
 export interface BookingSlot {
@@ -20,6 +20,28 @@ export interface BookingSlot {
 export interface BookedSlot {
   start_utc: string;
   end_utc: string;
+}
+
+/**
+ * Fetch already-taken pending/confirmed booking slots from the
+ * `public_booked_slots` view (start/end only — no booker PII is exposed to
+ * anon). Mirrors `fetchFreeBusy`'s overlap window: any slot that hasn't
+ * ended yet and starts before the look-ahead horizon. Used to carve booked
+ * time out of the generated slot grid.
+ */
+export async function fetchBookedSlots(): Promise<BookedSlot[]> {
+  const now = new Date();
+  const horizon = new Date(now);
+  horizon.setUTCDate(horizon.getUTCDate() + config.lookAheadDays);
+
+  const params = new URLSearchParams({
+    select: "start_utc,end_utc",
+    end_utc: `gte.${now.toISOString()}`,
+    start_utc: `lt.${horizon.toISOString()}`,
+    order: "start_utc.asc",
+  });
+  const query = params.toString().replace(/%2C/g, ",");
+  return rest<BookedSlot[]>(`public_booked_slots?${query}`);
 }
 
 export interface GenerateSlotsArgs {
