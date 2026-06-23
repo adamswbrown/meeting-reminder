@@ -10,3 +10,6 @@ DerivedData/
 
 # Icon generation
 __pycache__/
+
+# git worktrees for isolated feature work
+.worktrees/
