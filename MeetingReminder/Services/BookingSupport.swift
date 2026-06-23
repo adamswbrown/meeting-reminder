@@ -9,6 +9,12 @@ struct PendingBooking: Decodable {
     let bookerEmail: String
     let eventTypeID: String?
     let ekEventID: String?
+    /// Raw intake answers keyed by question id. Tolerantly decoded so a
+    /// non-string value can never fail the whole list decode.
+    let answersRaw: BookingAnswerMap?
+
+    /// The intake answers as a plain `[id: value]` map (empty if none).
+    var answers: [String: String] { answersRaw?.values ?? [:] }
 
     enum CodingKeys: String, CodingKey {
         case id, status
@@ -18,6 +24,7 @@ struct PendingBooking: Decodable {
         case bookerEmail = "booker_email"
         case eventTypeID = "event_type_id"
         case ekEventID = "ek_event_id"
+        case answersRaw = "answers"
     }
 
     static func decodeList(_ data: Data) throws -> [PendingBooking] {
@@ -32,6 +39,71 @@ struct PendingBooking: Decodable {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bad date \(s)"))
         }
         return try dec.decode([PendingBooking].self, from: data)
+    }
+}
+
+// MARK: - Intake answers
+
+/// Tolerant decoder for the `answers` JSONB blob. The booking form only ever
+/// emits string answers, but scalar JSON values (bool/number) are coerced to
+/// String and nulls / nested objects ignored, so decode never throws on an
+/// unexpected shape.
+struct BookingAnswerMap: Decodable {
+    let values: [String: String]
+
+    struct DynamicKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    init(values: [String: String]) { self.values = values }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: DynamicKey.self)
+        var out: [String: String] = [:]
+        for key in c.allKeys {
+            if let s = try? c.decode(String.self, forKey: key) {
+                out[key.stringValue] = s
+            } else if let b = try? c.decode(Bool.self, forKey: key) {
+                out[key.stringValue] = b ? "true" : "false"
+            } else if let i = try? c.decode(Int.self, forKey: key) {
+                out[key.stringValue] = String(i)
+            } else if let d = try? c.decode(Double.self, forKey: key) {
+                out[key.stringValue] = String(d)
+            }
+            // null / arrays / nested objects are intentionally dropped.
+        }
+        values = out
+    }
+}
+
+/// One intake question definition, mirrors `booking_event_types.questions`.
+struct BookingQuestionDef: Decodable {
+    let id: String
+    let label: String
+    let required: Bool
+}
+
+enum BookingAnswers {
+    /// Ordered "Label: value" lines for the non-empty answers. Questions drive
+    /// the order and supply human labels; an answer whose id has no matching
+    /// question falls back to the raw id as its label and sorts after the known
+    /// ones. Blank/whitespace-only answers are skipped.
+    static func format(answers: [String: String], questions: [BookingQuestionDef]) -> [String] {
+        var lines: [String] = []
+        var seen = Set<String>()
+        for q in questions {
+            seen.insert(q.id)
+            let v = (answers[q.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !v.isEmpty { lines.append("\(q.label): \(v)") }
+        }
+        for (k, v) in answers.sorted(by: { $0.key < $1.key }) where !seen.contains(k) {
+            let val = v.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !val.isEmpty { lines.append("\(k): \(val)") }
+        }
+        return lines
     }
 }
 

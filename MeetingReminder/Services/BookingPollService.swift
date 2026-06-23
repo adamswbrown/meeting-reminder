@@ -188,7 +188,7 @@ final class BookingPollService: ObservableObject {
             try await reject(booking)
             return false
         } else {
-            try await confirm(booking, title: title)
+            try await confirm(booking, title: title, questions: eventType?.questions ?? [])
             return true
         }
     }
@@ -267,12 +267,14 @@ final class BookingPollService: ObservableObject {
 
     // MARK: - Confirm / reject
 
-    private func confirm(_ booking: PendingBooking, title: String) async throws {
+    private func confirm(_ booking: PendingBooking, title: String, questions: [BookingQuestionDef]) async throws {
         let eventTitle = "\(title) — \(booking.bookerName)"
         // Append a deterministic self-marker (I2) so a re-poll after a failed
         // PATCH can recognise this event and re-confirm it instead of duplicating
         // or false-rejecting.
-        let notes = "Booked via availability page. Booker: \(booking.bookerName) <\(booking.bookerEmail)>\n\(Self.marker(for: booking.id))"
+        let answerLines = BookingAnswers.format(answers: booking.answers, questions: questions)
+        let answerBlock = answerLines.isEmpty ? "" : "\n\n" + answerLines.joined(separator: "\n")
+        let notes = "Booked via availability page. Booker: \(booking.bookerName) <\(booking.bookerEmail)>\(answerBlock)\n\(Self.marker(for: booking.id))"
 
         // 1. Create + save the EKEvent on the default (Exchange) calendar.
         let event = EKEvent(eventStore: eventStore)
@@ -296,7 +298,7 @@ final class BookingPollService: ObservableObject {
         // 3. Build the .ics and send the confirmation email. Email failure is
         //    logged but does NOT roll back the confirmation.
         do {
-            try await sendConfirmationEmail(booking: booking, title: eventTitle)
+            try await sendConfirmationEmail(booking: booking, title: eventTitle, questions: questions)
         } catch {
             NSLog("[BookingPoll] confirmation email failed for booking \(booking.id) (booking remains confirmed): \(error.localizedDescription)")
         }
@@ -313,7 +315,7 @@ final class BookingPollService: ObservableObject {
 
     // MARK: - Email
 
-    private func sendConfirmationEmail(booking: PendingBooking, title: String) async throws {
+    private func sendConfirmationEmail(booking: PendingBooking, title: String, questions: [BookingQuestionDef]) async throws {
         let description = "Confirmed: \(title)"
         let ics = BookingICS.build(
             title: title,
@@ -328,13 +330,18 @@ final class BookingPollService: ObservableObject {
         try ics.write(toFile: icsPath, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(atPath: icsPath) }
 
+        let answerLines = BookingAnswers.format(answers: booking.answers, questions: questions)
+        let sharedBlock = answerLines.isEmpty
+            ? ""
+            : "\nWhat you shared:\n" + answerLines.joined(separator: "\n") + "\n"
+
         let body = """
         Hi \(booking.bookerName),
 
         You're booked for "\(title)".
 
         \(formatWhen(start: booking.startUTC, end: booking.endUTC))
-
+        \(sharedBlock)
         A calendar invite (.ics) is attached.
 
         Thanks,
@@ -421,7 +428,7 @@ final class BookingPollService: ObservableObject {
     // MARK: - Supabase REST
 
     private func fetchPending() async throws -> [PendingBooking] {
-        let query = "status=eq.pending&select=id,start_utc,end_utc,status,booker_name,booker_email,event_type_id,ek_event_id"
+        let query = "status=eq.pending&select=id,start_utc,end_utc,status,booker_name,booker_email,event_type_id,ek_event_id,answers"
         let url = try restURL(path: "/rest/v1/booking_requests", query: query)
         let request = try authedRequest(url: url, method: "GET")
         let data = try await sendForData(request)
@@ -430,7 +437,7 @@ final class BookingPollService: ObservableObject {
 
     private func fetchEventType(id: String?) async throws -> BookingEventType {
         guard let id, !id.isEmpty else { throw BookingPollError.missingEventTypeID }
-        let query = "id=eq.\(id)&select=slug,title,duration_min,buffer_before,buffer_after"
+        let query = "id=eq.\(id)&select=slug,title,duration_min,buffer_before,buffer_after,questions"
         let url = try restURL(path: "/rest/v1/booking_event_types", query: query)
         let request = try authedRequest(url: url, method: "GET")
         let data = try await sendForData(request)
@@ -510,12 +517,23 @@ struct BookingEventType: Decodable {
     let durationMin: Int
     let bufferBefore: Int
     let bufferAfter: Int
+    let questions: [BookingQuestionDef]
 
     enum CodingKeys: String, CodingKey {
-        case slug, title
+        case slug, title, questions
         case durationMin = "duration_min"
         case bufferBefore = "buffer_before"
         case bufferAfter = "buffer_after"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        slug = try c.decode(String.self, forKey: .slug)
+        title = try c.decode(String.self, forKey: .title)
+        durationMin = try c.decode(Int.self, forKey: .durationMin)
+        bufferBefore = try c.decode(Int.self, forKey: .bufferBefore)
+        bufferAfter = try c.decode(Int.self, forKey: .bufferAfter)
+        questions = (try? c.decode([BookingQuestionDef].self, forKey: .questions)) ?? []
     }
 }
 

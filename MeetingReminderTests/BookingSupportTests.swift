@@ -28,6 +28,106 @@ final class BookingSupportTests: XCTestCase {
         XCTAssertEqual(rows[0].startUTC, expected)
     }
 
+    // MARK: - Intake answers: decode
+
+    func testDecodePendingBookingWithAnswers() throws {
+        let json = """
+        [{"id":"abc","start_utc":"2026-07-01T10:00:00+00:00","end_utc":"2026-07-01T10:30:00+00:00",
+          "status":"pending","booker_name":"Sam","booker_email":"sam@example.com",
+          "answers":{"customer":"Hays","cover":"Scan review"},"event_type_id":"et1","ek_event_id":null}]
+        """.data(using: .utf8)!
+        let rows = try PendingBooking.decodeList(json)
+        XCTAssertEqual(rows[0].answers["customer"], "Hays")
+        XCTAssertEqual(rows[0].answers["cover"], "Scan review")
+    }
+
+    func testDecodePendingBookingEmptyAnswers() throws {
+        let json = """
+        [{"id":"abc","start_utc":"2026-07-01T10:00:00+00:00","end_utc":"2026-07-01T10:30:00+00:00",
+          "status":"pending","booker_name":"Sam","booker_email":"sam@example.com",
+          "answers":{},"event_type_id":"et1","ek_event_id":null}]
+        """.data(using: .utf8)!
+        let rows = try PendingBooking.decodeList(json)
+        XCTAssertTrue(rows[0].answers.isEmpty)
+    }
+
+    func testDecodePendingBookingNonStringAnswerCoerced() throws {
+        // A non-string scalar must not fail the whole decode — it's coerced.
+        let json = """
+        [{"id":"abc","start_utc":"2026-07-01T10:00:00+00:00","end_utc":"2026-07-01T10:30:00+00:00",
+          "status":"pending","booker_name":"Sam","booker_email":"sam@example.com",
+          "answers":{"customer":"Hays","urgent":true,"count":3},"event_type_id":"et1","ek_event_id":null}]
+        """.data(using: .utf8)!
+        let rows = try PendingBooking.decodeList(json)
+        XCTAssertEqual(rows[0].answers["customer"], "Hays")
+        XCTAssertEqual(rows[0].answers["urgent"], "true")
+        XCTAssertEqual(rows[0].answers["count"], "3")
+    }
+
+    // MARK: - Intake answers: format
+
+    private let sampleQuestions = [
+        BookingQuestionDef(id: "customer", label: "Which customer or company is this call about?", required: true),
+        BookingQuestionDef(id: "cover", label: "What would you like to cover?", required: false),
+        BookingQuestionDef(id: "role", label: "Your role and organisation", required: false),
+    ]
+
+    func testFormatAnswersOrderedByQuestions() {
+        let lines = BookingAnswers.format(
+            answers: ["cover": "Scan review", "customer": "Hays"],
+            questions: sampleQuestions
+        )
+        // Order follows the question list, not the dictionary.
+        XCTAssertEqual(lines, [
+            "Which customer or company is this call about?: Hays",
+            "What would you like to cover?: Scan review",
+        ])
+    }
+
+    func testFormatSkipsBlankAndWhitespaceAnswers() {
+        let lines = BookingAnswers.format(
+            answers: ["customer": "Hays", "cover": "   ", "role": ""],
+            questions: sampleQuestions
+        )
+        XCTAssertEqual(lines, ["Which customer or company is this call about?: Hays"])
+    }
+
+    func testFormatUnknownAnswerKeyFallsBackToRawKeyAndSortsLast() {
+        let lines = BookingAnswers.format(
+            answers: ["customer": "Hays", "zzz_extra": "leftover"],
+            questions: sampleQuestions
+        )
+        XCTAssertEqual(lines, [
+            "Which customer or company is this call about?: Hays",
+            "zzz_extra: leftover",
+        ])
+    }
+
+    func testFormatEmptyWhenNoAnswers() {
+        XCTAssertTrue(BookingAnswers.format(answers: [:], questions: sampleQuestions).isEmpty)
+    }
+
+    // MARK: - BookingEventType decode (questions optional/default)
+
+    func testEventTypeDecodesQuestions() throws {
+        let json = """
+        [{"slug":"intro-30","title":"30-min intro","duration_min":30,"buffer_before":0,"buffer_after":10,
+          "questions":[{"id":"customer","label":"Which customer?","required":true}]}]
+        """.data(using: .utf8)!
+        let list = try JSONDecoder().decode([BookingEventType].self, from: json)
+        XCTAssertEqual(list[0].questions.count, 1)
+        XCTAssertEqual(list[0].questions[0].id, "customer")
+        XCTAssertTrue(list[0].questions[0].required)
+    }
+
+    func testEventTypeMissingQuestionsDefaultsEmpty() throws {
+        let json = """
+        [{"slug":"intro-30","title":"30-min intro","duration_min":30,"buffer_before":0,"buffer_after":10}]
+        """.data(using: .utf8)!
+        let list = try JSONDecoder().decode([BookingEventType].self, from: json)
+        XCTAssertTrue(list[0].questions.isEmpty)
+    }
+
     // MARK: - B2: BookingConflict.overlaps
 
     private func d(_ s: String) -> Date {
