@@ -1,5 +1,12 @@
 # Self-Hosted Booking Implementation Plan
 
+> **Update (2026-06-23):** The deployed Supabase table names are
+> **`booking_event_types`** and **`booking_requests`** (the generic `event_types`
+> / `bookings` names below were prefixed with `booking_` to avoid collisions in
+> the shared Supabase project). The overlap-constraint violation surfaces as
+> **HTTP 400 with Postgres code `23P01`**, not 409. The rest of this doc is kept
+> as historical record. See [../BOOKING.md](../BOOKING.md) for the live schema.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add real self-service booking (Cal.com-style) — visitors pick an event-type slot, it lands on Adam's Exchange calendar and they get a confirmation email + `.ics` from `adam.brown@altra.cloud` — reusing the existing Supabase + Mac-app + Mail.app infrastructure, with no Graph, no OAuth, no paid email service.

@@ -19,6 +19,7 @@ struct SettingsView: View {
     @ObservedObject var notionService: NotionService
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @ObservedObject var availabilityPushService: AvailabilityPushService
+    @ObservedObject var bookingPollService: BookingPollService
     @ObservedObject var busyLightService: BusyLightService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
@@ -596,6 +597,40 @@ struct SettingsView: View {
                         .font(.caption.monospaced())
                         .foregroundColor(.orange)
                         .textSelection(.enabled)
+                }
+            }
+
+            Section("Booking") {
+                Text("Polls the booking page's pending requests every 60s, creates a calendar event for each free slot, and emails a confirmation (or a rejection if the slot is no longer free) from your Exchange account via Mail.app. Uses the same Supabase project URL + service-role key as the availability push above. The first send will prompt for Mail automation permission.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("Enable booking confirmations", isOn: $bookingPollService.isEnabled)
+
+                HStack {
+                    if let last = bookingPollService.lastPollDate {
+                        Label("Last checked", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("— \(relativeTimeString(last)) ago\(bookingPollService.lastResult.map { " (\($0))" } ?? "")")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    } else if !bookingPollService.isConfigured {
+                        Label("Not configured", systemImage: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    } else {
+                        Label("Idle", systemImage: "clock")
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+
+                if let error = bookingPollService.lastError {
+                    Text(error)
+                        .font(.caption.monospaced())
+                        .foregroundColor(.red)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

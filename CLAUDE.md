@@ -4,7 +4,7 @@ Native macOS menu bar app (Swift + SwiftUI) with ADHD-focused features. Reads th
 
 Target: macOS 13+ (Ventura). Swift (language mode 5), built with a modern Xcode — Xcode 26 locally; CI uses `latest-stable`. No external dependencies — no SwiftPM packages.
 
-> **v3.0.0 (2026-06-15)** removed the **Minutes** (local transcription) and **Obsidian** integrations. Capture/notes is now **Notion-only**. Current integrations: Notion (notes + Calendar sync), **Busy Light** (Shortcuts — see [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md)), and the **Availability page** (Supabase push — see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)).
+> **v3.0.0 (2026-06-15)** removed the **Minutes** (local transcription) and **Obsidian** integrations. Capture/notes is now **Notion-only**. Current integrations: Notion (notes + Calendar sync), **Busy Light** (Shortcuts — see [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md)), the **Availability page** (Supabase push — see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)), and **self-service Booking** (Supabase + EventKit + Mail.app — see [docs/BOOKING.md](docs/BOOKING.md)).
 
 ---
 
@@ -112,6 +112,8 @@ MeetingReminder/
 │   ├── AudioProcessMonitor.swift         # Per-process mic-input detection (macOS 14+); busy-light source of truth
 │   ├── BusyLightService.swift            # Shortcuts-driven busy light (meeting/mic state → run a Shortcut)
 │   ├── AvailabilityPushService.swift     # EventKit → Supabase free/busy push for the public availability page
+│   ├── BookingPollService.swift          # Polls Supabase booking_requests → live conflict check → EKEvent + confirmation email/.ics via Mail.app
+│   ├── BookingSupport.swift              # Pure booking helpers: PendingBooking decode, overlap test, .ics builder, Mail AppleScript composer
 │   ├── NotionService.swift               # Notion: create meeting page + shared token
 │   ├── PreCallBriefService.swift         # Composes/fetches the Notion-fed pre-call brief
 │   ├── CalendarNotionSyncService.swift   # Calendar → Notion sync orchestrator
@@ -198,6 +200,7 @@ These are the two external-integration features that replaced Minutes/Obsidian i
 
 - **Busy Light** — [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md). `BusyLightService` + `AudioProcessMonitor`. Process-aware mic detection (macOS 14+) ignores always-on listeners; extend the ignore set via `busyLightIgnoredAudioBundleIDs`. Bundled starter Shortcuts ship in `Resources/`.
 - **Availability page** — [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md). `AvailabilityPushService` pushes EventKit free/busy to Supabase (service-role key in Keychain); the public Vercel/Next.js frontend lives **in this monorepo** under `availability-page/` (deploy on Vercel with Root Directory = `availability-page`).
+- **Self-service Booking** — [docs/BOOKING.md](docs/BOOKING.md). A Cal.com-style flow built on the **same** Supabase project + service-role key as the availability push. Two halves, one loop: the Next.js page at `availability-page/app/book/[slug]/` (+ `lib/eventTypes.ts`, `lib/bookingSlots.ts`, `lib/bookingApi.ts`, `components/BookingForm.tsx`) reads event types + free/busy + booked slots, generates slots, and `INSERT`s a `pending` row into Supabase via the anon key. The Mac app's `BookingPollService` polls `booking_requests` for `status=pending` every 60s (gated by `bookingPollEnabled`, default false; toggle in Settings → Availability tab → "Enable booking confirmations"), checks **live EventKit** for conflicts (buffered by the event type), creates an `EKEvent` on the Exchange default calendar, PATCHes the row to `confirmed` with `ek_event_id`, then sends a confirmation email + `.ics` from `adam.brown@altra.cloud` via Mail.app/`osascript`. On conflict it rejects + emails a rebook note. Two-phase model (instant `pending` → Mac confirms within ~a minute) + the `booking_requests_no_overlap` GiST constraint (surfaces as **HTTP 400 / code `23P01`**, not 409) + the live conflict check kill both double-booking races. Idempotency: created events are tagged `[booking-id:<id>]` in notes so a failed PATCH recovers without duplicating. First send triggers a one-time "control Mail" Automation prompt. Supabase: `booking_event_types` + `booking_requests` tables + the `public_booked_slots` anon-readable view. **No event-type management UI yet** — managed via SQL/Supabase dashboard.
 
 ### Calendar → Notion sync
 
@@ -275,6 +278,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `supabaseProjectURL` | String | "" | `https://<ref>.supabase.co` for the availability push |
 | `availabilityPushIntervalMinutes` | Int | 5 | Availability push cadence |
 | `availabilityPushWindowDays` | Int | 14 | Days forward to snapshot for availability |
+| `bookingPollEnabled` | Bool | false | Enable the 60s booking-confirmation poll loop (`BookingPollService`). Reuses `supabaseProjectURL` + `supabaseServiceRoleKey`. Toggle in Settings → Availability tab |
 | `calendarNotionSyncEnabled` | Bool | false | Enable the daily 06:00 Calendar→Notion sync timer |
 | `calendarNotionSyncLastRunAt` | Date | nil | Timestamp of the last sync attempt (success or failure) |
 | `calendarNotionSyncLastResult` | String | nil | Single-line summary of the last sync (e.g. `created=12 updated=180 skipped=4 failed=0`) |
@@ -290,7 +294,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | Key | Purpose |
 |-----|---------|
 | `notionAPIToken` | Single Notion integration token used by both `NotionService` (create-meeting-page) and `CalendarNotionSyncService` (Cal Sync). The integration must have access to all the relevant databases — including the Operations parent page where Calendar Events + Skip List live. |
-| `supabaseServiceRoleKey` | Supabase service-role key used by `AvailabilityPushService` to write free/busy rows. Write key — bypasses RLS; never reaches the browser. See [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md). |
+| `supabaseServiceRoleKey` | Supabase service-role key. Shared by `AvailabilityPushService` (writes free/busy rows) **and** `BookingPollService` (reads/PATCHes `booking_requests`). Write key — bypasses RLS; never reaches the browser. See [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md) and [docs/BOOKING.md](docs/BOOKING.md). |
 
 ---
 

@@ -42,12 +42,20 @@ export interface SyncState {
   events_in_window: number;
 }
 
-async function rest<T>(path: string): Promise<T> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
+/** Base PostgREST endpoint, e.g. `https://<ref>.supabase.co/rest/v1`. */
+export const REST_BASE = `${SUPABASE_URL}/rest/v1`;
+
+/** Anon auth headers shared by every PostgREST call. */
+export function anonHeaders(): Record<string, string> {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  };
+}
+
+export async function rest<T>(path: string): Promise<T> {
+  const res = await fetch(`${REST_BASE}/${path}`, {
+    headers: anonHeaders(),
     next: { revalidate: config.revalidateSeconds },
   });
 

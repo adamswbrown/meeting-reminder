@@ -36,6 +36,8 @@
 		A1000033 /* PreCallBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000033 /* PreCallBriefService.swift */; };
 		A1000034 /* BriefPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000034 /* BriefPanelView.swift */; };
 		A1000035 /* AvailabilityPushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000035 /* AvailabilityPushService.swift */; };
+		A1000070 /* BookingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000070 /* BookingSupport.swift */; };
+		A1000071 /* BookingPollService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000071 /* BookingPollService.swift */; };
 		A1000050 /* BusyLightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000050 /* BusyLightService.swift */; };
 		AABB0001 /* AudioProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABB0002 /* AudioProcessMonitor.swift */; };
 		A1000051 /* BusyLightSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000051 /* BusyLightSettingsView.swift */; };
@@ -47,6 +49,7 @@
 		A1000044 /* RelationLinker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000044 /* RelationLinker.swift */; };
 		A1000052 /* CalendarChangeWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000052 /* CalendarChangeWatcher.swift */; };
 		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
+		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
@@ -97,6 +100,8 @@
 		B1000033 /* PreCallBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefService.swift; sourceTree = "<group>"; };
 		B1000034 /* BriefPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefPanelView.swift; sourceTree = "<group>"; };
 		B1000035 /* AvailabilityPushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityPushService.swift; sourceTree = "<group>"; };
+		B1000070 /* BookingSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupport.swift; sourceTree = "<group>"; };
+		B1000071 /* BookingPollService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingPollService.swift; sourceTree = "<group>"; };
 		B1000050 /* BusyLightService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightService.swift; sourceTree = "<group>"; };
 		AABB0002 /* AudioProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProcessMonitor.swift; sourceTree = "<group>"; };
 		B1000051 /* BusyLightSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightSettingsView.swift; sourceTree = "<group>"; };
@@ -108,6 +113,7 @@
 		B1000044 /* RelationLinker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationLinker.swift; sourceTree = "<group>"; };
 		B1000052 /* CalendarChangeWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarChangeWatcher.swift; sourceTree = "<group>"; };
 		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
+		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
@@ -182,6 +188,8 @@
 				B1000031 /* NotionService.swift */,
 				B1000033 /* PreCallBriefService.swift */,
 				B1000035 /* AvailabilityPushService.swift */,
+				B1000070 /* BookingSupport.swift */,
+				B1000071 /* BookingPollService.swift */,
 				B1000050 /* BusyLightService.swift */,
 				AABB0002 /* AudioProcessMonitor.swift */,
 				B1000040 /* CalendarSyncTypes.swift */,
@@ -241,6 +249,7 @@
 				T1000004 /* ClampedExtensionTests.swift */,
 				T1000005 /* CalendarEventMapperTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
+				T1000007 /* BookingSupportTests.swift */,
 			);
 			path = MeetingReminderTests;
 			sourceTree = "<group>";
@@ -356,6 +365,8 @@
 				A1000033 /* PreCallBriefService.swift in Sources */,
 				A1000034 /* BriefPanelView.swift in Sources */,
 				A1000035 /* AvailabilityPushService.swift in Sources */,
+				A1000070 /* BookingSupport.swift in Sources */,
+				A1000071 /* BookingPollService.swift in Sources */,
 				A1000050 /* BusyLightService.swift in Sources */,
 				AABB0001 /* AudioProcessMonitor.swift in Sources */,
 				A1000051 /* BusyLightSettingsView.swift in Sources */,
@@ -378,6 +389,7 @@
 				T2000004 /* ClampedExtensionTests.swift in Sources */,
 				T2000005 /* CalendarEventMapperTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
+				T2000007 /* BookingSupportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
