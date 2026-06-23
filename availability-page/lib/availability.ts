@@ -35,14 +35,14 @@ export interface OOOPeriod {
   lastDayISO: string;
 }
 
-interface Interval {
+export interface Interval {
   start: Date;
   end: Date;
 }
 
 const ownerTZ = tz(config.timezone);
 
-function atOwnerTime(day: Date, hours: number, minutes: number): Date {
+export function atOwnerTime(day: Date, hours: number, minutes: number): Date {
   let d = setHours(day, hours, { in: ownerTZ });
   d = setMinutes(d, minutes, { in: ownerTZ });
   d = setSeconds(d, 0, { in: ownerTZ });
@@ -68,7 +68,7 @@ function lunchFor(day: Date): Interval {
  * Subtract busy intervals from a window, returning the free fragments.
  * Inputs can overlap and arrive unsorted.
  */
-function subtractBusy(window: Interval, busy: Interval[]): Interval[] {
+export function subtractBusy(window: Interval, busy: Interval[]): Interval[] {
   const clamped = busy
     .map((b) => ({
       start: max([b.start, window.start]),
@@ -101,7 +101,7 @@ function subtractBusy(window: Interval, busy: Interval[]): Interval[] {
   return free;
 }
 
-function weekdayNumber(d: Date): number {
+export function weekdayNumber(d: Date): number {
   const short = new Intl.DateTimeFormat("en-US", {
     weekday: "short",
     timeZone: config.timezone,
