@@ -8,7 +8,6 @@ import {
 import { fetchFreeBusy, fetchSyncState } from "@/lib/supabase";
 import {
   fetchActiveEventTypes,
-  fetchEventType,
   GENERAL_EVENT_SLUG,
   type EventType,
 } from "@/lib/eventTypes";
@@ -40,37 +39,35 @@ async function BookACallSection() {
         Book a call
       </h2>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        Pick a meeting type to see open times and book.
+        Pick a meeting type and I&rsquo;ll send a calendar invite once it&rsquo;s
+        confirmed.
       </p>
-      <ul className="mt-4 flex flex-col gap-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {eventTypes.map((et) => (
-          <li key={et.id}>
-            <Link
-              href={`/book/${et.slug}`}
-              className="group flex items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 transition hover:border-zinc-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:focus:ring-zinc-100"
-            >
-              <span className="flex flex-col gap-0.5">
-                <span className="flex items-baseline gap-2">
-                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                    {et.title}
-                  </span>
-                  <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                    {et.durationMin} min
-                  </span>
-                </span>
-                {et.description && (
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                    {et.description}
-                  </span>
-                )}
+          <Link
+            key={et.id}
+            href={`/book/${et.slug}`}
+            className="group flex h-full flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:focus:ring-zinc-100"
+          >
+            <span className="flex items-baseline justify-between gap-2">
+              <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                {et.title}
               </span>
-              <span className="shrink-0 text-sm font-medium text-zinc-500 transition group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-zinc-100">
-                Book &rarr;
+              <span className="shrink-0 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                {et.durationMin} min
               </span>
-            </Link>
-          </li>
+            </span>
+            {et.description && (
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                {et.description}
+              </span>
+            )}
+            <span className="mt-auto pt-1 text-sm font-medium text-zinc-500 transition group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-zinc-100">
+              Book &rarr;
+            </span>
+          </Link>
         ))}
-      </ul>
+      </div>
     </section>
   );
 }
@@ -98,19 +95,6 @@ export default async function Page() {
 
   const oooPeriods = computeOOOPeriods(events, now);
 
-  // Context for the slot-picker booking flow. If the catch-all type is missing
-  // or unreadable, BookingPage falls back to the manual self-serve actions.
-  let bookingContext: { id: string; questions: EventType["questions"] } | null =
-    null;
-  try {
-    const general = await fetchEventType(GENERAL_EVENT_SLUG);
-    if (general) {
-      bookingContext = { id: general.id, questions: general.questions };
-    }
-  } catch {
-    bookingContext = null;
-  }
-
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-12 sm:py-20">
       <header className="mb-8 flex flex-col gap-3">
@@ -118,8 +102,8 @@ export default async function Page() {
           Book a meeting with {config.ownerFirstName}
         </h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Pick a duration, then click a slot to request it — you&rsquo;ll get a
-          confirmation email once it&rsquo;s accepted.
+          Book a call directly below, or scroll down to just see when I&rsquo;m
+          free and book it your side.
         </p>
         <div>
           <StalenessPill lastSyncedAt={lastSyncedAt} now={now} />
@@ -130,11 +114,22 @@ export default async function Page() {
 
       <BookACallSection />
 
-      <BookingPage
-        slotsByDuration={slotsByDuration}
-        nowISO={now.toISOString()}
-        bookingContext={bookingContext}
-      />
+      <section className="mt-12 border-t border-zinc-200 pt-10 dark:border-zinc-800">
+        <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          Or just see when I&rsquo;m free
+        </h2>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Prefer to own the invite? Browse my open times below, then add one to
+          your own calendar or email me — nothing here books automatically, you
+          send the invite.
+        </p>
+        <div className="mt-6">
+          <BookingPage
+            slotsByDuration={slotsByDuration}
+            nowISO={now.toISOString()}
+          />
+        </div>
+      </section>
 
       <footer className="mt-16 border-t border-zinc-200 pt-6 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
         Pick a slot and send it back, or email{" "}
