@@ -82,11 +82,15 @@ final class BookingPollService: ObservableObject {
     // MARK: - Internals
 
     private let eventStore: EKEventStore
+    private let graph: GraphMailService
     private var timer: Timer?
     private var isPolling = false
+    /// Debounces the "Exchange sign-in expired" notification to once per outage.
+    private var graphReauthNotified = false
 
-    init(eventStore: EKEventStore = EKEventStore()) {
+    init(eventStore: EKEventStore = EKEventStore(), graph: GraphMailService) {
         self.eventStore = eventStore
+        self.graph = graph
         self.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
     }
 
@@ -326,10 +330,6 @@ final class BookingPollService: ObservableObject {
             description: description
         )
 
-        let icsPath = NSTemporaryDirectory() + "booking-\(booking.id).ics"
-        try ics.write(toFile: icsPath, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(atPath: icsPath) }
-
         let answerLines = BookingAnswers.format(answers: booking.answers, questions: questions)
         let sharedBlock = answerLines.isEmpty
             ? ""
@@ -348,14 +348,12 @@ final class BookingPollService: ObservableObject {
         Adam
         """
 
-        let script = MailAppleScript.compose(
-            senderDisplay: Self.ownerSenderDisplay,
+        try await sendEmail(
             to: booking.bookerEmail,
             subject: "Booking confirmed: \(title)",
             body: body,
-            icsPath: icsPath
+            icsContent: ics
         )
-        try await Self.runOsascript(script)
     }
 
     private func sendRejectionEmail(booking: PendingBooking) async throws {
@@ -372,13 +370,52 @@ final class BookingPollService: ObservableObject {
         Adam
         """
 
-        // Rejections carry no .ics — pass icsPath: nil to omit the attachment line.
-        let script = MailAppleScript.compose(
-            senderDisplay: Self.ownerSenderDisplay,
+        try await sendEmail(
             to: booking.bookerEmail,
             subject: "That slot just filled — please rebook",
             body: body,
-            icsPath: nil
+            icsContent: nil
+        )
+    }
+
+    /// Unified send: Microsoft Graph first (sends from Exchange, no Mail.app
+    /// needed). On any Graph failure, fall back to Mail.app — which the composer
+    /// forces through the Exchange account and ERRORS rather than ever sending
+    /// from iCloud. A dead Graph sign-in is surfaced once via a notification so
+    /// the user knows to reconnect.
+    private func sendEmail(to: String, subject: String, body: String, icsContent: String?) async throws {
+        do {
+            try await graph.sendMail(to: to, subject: subject, body: body, icsContent: icsContent)
+            graphReauthNotified = false
+            return
+        } catch {
+            if case GraphMailError.needsReauth = error, !graphReauthNotified {
+                NotificationService.shared.postIntegrationFailure(
+                    integration: "Exchange sending",
+                    detail: "Sign-in expired — reconnect in Settings → Availability. Falling back to Mail.app meanwhile."
+                )
+                graphReauthNotified = true
+            }
+            NSLog("[BookingPoll] Graph send failed (\(error.localizedDescription)); trying Mail.app Exchange fallback")
+        }
+
+        // Fallback path. The composed script asserts the Exchange account is
+        // enabled in Mail and throws otherwise — so we never send from iCloud.
+        var icsPath: String?
+        if let ics = icsContent {
+            let path = NSTemporaryDirectory() + "booking-fallback-\(UUID().uuidString).ics"
+            try ics.write(toFile: path, atomically: true, encoding: .utf8)
+            icsPath = path
+        }
+        defer { if let p = icsPath { try? FileManager.default.removeItem(atPath: p) } }
+
+        let script = MailAppleScript.compose(
+            senderDisplay: Self.ownerSenderDisplay,
+            senderEmail: Self.ownerOrganizerEmail,
+            to: to,
+            subject: subject,
+            body: body,
+            icsPath: icsPath
         )
         try await Self.runOsascript(script)
     }

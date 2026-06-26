@@ -12,6 +12,7 @@ struct MeetingReminderApp: App {
     @StateObject private var preCallBriefService: PreCallBriefService
     @StateObject private var calendarNotionSync = CalendarNotionSyncService()
     @StateObject private var availabilityPushService: AvailabilityPushService
+    @StateObject private var graphMailService: GraphMailService
     @StateObject private var bookingPollService: BookingPollService
     @StateObject private var busyLightService = BusyLightService()
 
@@ -31,7 +32,8 @@ struct MeetingReminderApp: App {
         let notion = NotionService()
         let preCallBriefs = PreCallBriefService()
         let availability = AvailabilityPushService()
-        let bookingPoll = BookingPollService()
+        let graphMail = GraphMailService()
+        let bookingPoll = BookingPollService(graph: graphMail)
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             notionService: notion,
@@ -43,6 +45,7 @@ struct MeetingReminderApp: App {
         _notionService = StateObject(wrappedValue: notion)
         _preCallBriefService = StateObject(wrappedValue: preCallBriefs)
         _availabilityPushService = StateObject(wrappedValue: availability)
+        _graphMailService = StateObject(wrappedValue: graphMail)
         _bookingPollService = StateObject(wrappedValue: bookingPoll)
     }
 
@@ -96,6 +99,7 @@ struct MeetingReminderApp: App {
                 notionService: notionService,
                 calendarNotionSync: calendarNotionSync,
                 availabilityPushService: availabilityPushService,
+                graphMailService: graphMailService,
                 bookingPollService: bookingPollService,
                 busyLightService: busyLightService
             )

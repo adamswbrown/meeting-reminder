@@ -189,7 +189,14 @@ enum MailAppleScript {
     /// specific account, with one recipient and an optional .ics attachment,
     /// without showing the compose window. Pass `icsPath: nil` for emails that
     /// carry no attachment (e.g. rejections). Pure string builder — executes nothing.
-    static func compose(senderDisplay: String, to: String, subject: String,
+    ///
+    /// `senderEmail` is the address that MUST belong to an **enabled** Mail
+    /// account for the send to proceed; the generated script `error`s (non-zero
+    /// osascript exit) if no enabled account owns it. This is the guard that
+    /// stops Mail silently falling back to another account (e.g. iCloud) when the
+    /// intended Exchange account is disabled — booking mail only ever leaves from
+    /// the Exchange address or not at all.
+    static func compose(senderDisplay: String, senderEmail: String, to: String, subject: String,
                         body: String, icsPath: String?) -> String {
         // Escape backslash first, then double-quote, so generated AppleScript
         // string literals stay syntactically valid. This does NOT touch newlines —
@@ -215,12 +222,20 @@ enum MailAppleScript {
         }
 
         let sender = esc(senderDisplay)
+        let senderAddr = esc(senderEmail)
         let recipient = esc(to)
         let subj = esc(subject)
         let bodyEsc = escBody(body)
 
         var lines = [
             "tell application \"Mail\"",
+            // Guard: refuse to send unless an ENABLED account owns the sender
+            // address. Without this, Mail silently uses the default account.
+            "\tset okAccount to false",
+            "\trepeat with anAccount in accounts",
+            "\t\tif (enabled of anAccount is true) and ((email addresses of anAccount) contains \"\(senderAddr)\") then set okAccount to true",
+            "\tend repeat",
+            "\tif okAccount is false then error \"Sender account \(senderAddr) is not enabled in Mail — refusing to send from another account\"",
             "\tset newMessage to make new outgoing message with properties {subject:\"\(subj)\", content:\"\(bodyEsc)\", visible:false}",
             "\ttell newMessage",
             "\t\tset sender to \"\(sender)\"",

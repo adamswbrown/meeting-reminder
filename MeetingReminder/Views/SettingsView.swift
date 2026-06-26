@@ -19,6 +19,7 @@ struct SettingsView: View {
     @ObservedObject var notionService: NotionService
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @ObservedObject var availabilityPushService: AvailabilityPushService
+    @ObservedObject var graphMailService: GraphMailService
     @ObservedObject var bookingPollService: BookingPollService
     @ObservedObject var busyLightService: BusyLightService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
@@ -600,8 +601,70 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Exchange sending") {
+                HStack {
+                    if graphMailService.isConnected {
+                        Label("Connected", systemImage: "checkmark.seal.fill")
+                            .foregroundColor(.green)
+                        if let email = graphMailService.connectedEmail {
+                            Text("— \(email)")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        Label("Not connected", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                    }
+                    Spacer()
+                }
+
+                Text("Booking emails send from your Exchange account via Microsoft Graph — no Mail.app, no admin, works while this Mac is awake. If the sign-in lapses, the app falls back to Mail.app (which needs the Exchange account enabled there) and never sends from another account.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if graphMailService.isConnecting {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small).scaleEffect(0.7)
+                            Text("Waiting for sign-in…").foregroundColor(.secondary)
+                        }
+                        if let code = graphMailService.deviceCodeUserCode {
+                            Text("Go to \(graphMailService.deviceCodeVerificationURI ?? "https://login.microsoft.com/device") and enter:")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(code)
+                                .font(.title3.monospaced().bold())
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button(graphMailService.isConnected ? "Reconnect" : "Connect Exchange") {
+                        Task { await graphMailService.connect() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(graphMailService.isConnecting)
+
+                    if graphMailService.isConnected {
+                        Spacer()
+                        Button("Disconnect") { graphMailService.disconnect() }
+                            .foregroundColor(.red)
+                    }
+                }
+
+                if let error = graphMailService.lastAuthError {
+                    Text(error)
+                        .font(.caption.monospaced())
+                        .foregroundColor(.orange)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Section("Booking") {
-                Text("Polls the booking page's pending requests every 60s, creates a calendar event for each free slot, and emails a confirmation (or a rejection if the slot is no longer free) from your Exchange account via Mail.app. Uses the same Supabase project URL + service-role key as the availability push above. The first send will prompt for Mail automation permission.")
+                Text("Polls the booking page's pending requests every 60s, creates a calendar event for each free slot, and emails a confirmation (or a rejection if the slot is no longer free). Sending uses the Exchange connection above. Uses the same Supabase project URL + service-role key as the availability push.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
