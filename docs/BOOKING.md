@@ -4,8 +4,22 @@ A **Cal.com-style booking flow** — visitors pick a slot, it lands on Adam's
 Exchange calendar, and they get a confirmation email + `.ics` from
 `adam.brown@altra.cloud`. Built entirely on infrastructure this project already
 ships: the **same Supabase project** as the availability page, the **Mac app's**
-EventKit write access, and **Mail.app** for sending. No Cal.com, no Microsoft
-Graph, no OAuth, no paid email service.
+EventKit write access, and **Microsoft Graph** for sending from the Exchange
+account (with **Mail.app** as a fallback). No Cal.com, no admin, no paid email
+service.
+
+> **Email sending (updated 2026-06-26).** Confirmation/rejection emails now send
+> from `adam.brown@altra.cloud` via **Microsoft Graph** (`GraphMailService` →
+> `POST /me/sendMail`), authenticated with the **OAuth device-code flow** —
+> delegated `Mail.Send`, no admin, no app registration (piggybacks on the public
+> "Graph Command Line Tools" client). The refresh token lives in the Keychain
+> (`msGraphRefreshToken`); connect once via **Settings → Availability → "Exchange
+> sending" → Connect**. Graph needs no local app and works while the Mac is
+> awake. If a Graph send fails, the app **falls back to Mail.app** — whose
+> AppleScript asserts the Exchange account is enabled and **errors rather than
+> sending from any other account (e.g. iCloud)**. A dead/expired Graph sign-in
+> surfaces a macOS notification prompting reconnect. The older "Mail.app-only"
+> details below describe the fallback path.
 
 ```
                     ┌─────────── Supabase (Postgres) ───────────┐
