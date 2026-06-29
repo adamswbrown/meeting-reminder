@@ -6,7 +6,6 @@ import { formatDayDate, formatDayHeading } from "@/lib/format";
 import type { SlotDescriptor } from "@/lib/booking";
 import { SlotCard } from "./SlotCard";
 import { SlotActionsDialog } from "./SlotActionsDialog";
-import { SlotBookingDialog, type BookingContext } from "./SlotBookingDialog";
 
 interface Slot {
   startISO: string;
@@ -19,12 +18,6 @@ interface Day {
 interface Props {
   slotsByDuration: Record<number, Day[]>;
   nowISO: string;
-  /**
-   * Event-type context for the full booking flow (questions + pending row).
-   * When present, clicking a slot opens the booking form; when null we fall
-   * back to the manual self-serve actions dialog.
-   */
-  bookingContext?: BookingContext | null;
 }
 
 // useSyncExternalStore pattern: SSR returns London (so the static shell
@@ -77,7 +70,7 @@ function prettifyTZName(tzName: string): string {
   return last.replace(/_/g, " ");
 }
 
-export function BookingPage({ slotsByDuration, nowISO, bookingContext }: Props) {
+export function BookingPage({ slotsByDuration, nowISO }: Props) {
   const [duration, setDuration] = useState<number>(config.defaultSlotMinutes);
   const [showAll, setShowAll] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<SlotDescriptor | null>(null);
@@ -232,18 +225,10 @@ export function BookingPage({ slotsByDuration, nowISO, bookingContext }: Props) 
         </div>
       )}
 
-      {bookingContext ? (
-        <SlotBookingDialog
-          slot={selectedSlot}
-          eventType={bookingContext}
-          onClose={() => setSelectedSlot(null)}
-        />
-      ) : (
-        <SlotActionsDialog
-          slot={selectedSlot}
-          onClose={() => setSelectedSlot(null)}
-        />
-      )}
+      <SlotActionsDialog
+        slot={selectedSlot}
+        onClose={() => setSelectedSlot(null)}
+      />
     </>
   );
 }

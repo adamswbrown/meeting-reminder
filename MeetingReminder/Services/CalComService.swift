@@ -93,6 +93,18 @@ final class CalComService: ObservableObject {
         _ = try await deleteRequest(path: "/bookings/\(uid)", version: Self.bookingVersion, body: body)
     }
 
+    func rescheduleBooking(uid: String, newStart: Date, reason: String? = nil) async throws -> CalComBooking {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime]
+        var payload: [String: String] = ["start": fmt.string(from: newStart)]
+        if let reason { payload["reschedulingReason"] = reason }
+        let body = try JSONEncoder().encode(payload)
+        let data = try await post(path: "/bookings/\(uid)/reschedule", version: Self.bookingVersion, body: body)
+        let resp = try decode(CalComSingleResponse<CalComBooking>.self, from: data)
+        guard let booking = resp.data else { throw CalComError.decodingError("no data in response") }
+        return booking
+    }
+
     // MARK: - Connection test
 
     func testConnection() async throws -> String {
@@ -117,6 +129,18 @@ final class CalComService: ObservableObject {
         guard let url = URL(string: Self.baseURL + path) else { throw CalComError.invalidURL }
         var req = URLRequest(url: url)
         req.httpMethod = "PATCH"
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue(version, forHTTPHeaderField: "cal-api-version")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        return try await send(req)
+    }
+
+    private func post(path: String, version: String, body: Data) async throws -> Data {
+        guard let key = apiKey else { throw CalComError.missingAPIKey }
+        guard let url = URL(string: Self.baseURL + path) else { throw CalComError.invalidURL }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue(version, forHTTPHeaderField: "cal-api-version")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

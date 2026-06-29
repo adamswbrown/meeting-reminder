@@ -18,6 +18,9 @@ struct CalComSettingsView: View {
     @State private var upcomingBookings: [CalComBooking] = []
     @State private var isLoadingBookings = false
     @State private var cancellingUID: String?
+    @State private var reschedulingBooking: CalComBooking? = nil
+    @State private var rescheduleDate: Date = Date()
+    @State private var isRescheduling = false
 
     var body: some View {
         ScrollView {
@@ -36,6 +39,25 @@ struct CalComSettingsView: View {
             apiKeyDraft = calComService.apiKey ?? ""
             if calComService.isConfigured { loadAll() }
         }
+        .sheet(item: $reschedulingBooking) { booking in
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Reschedule").font(.headline)
+                Text(booking.title ?? "Meeting").foregroundStyle(.secondary)
+                DatePicker("New time", selection: $rescheduleDate, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                    .datePickerStyle(.graphical)
+                HStack {
+                    Button("Cancel") { reschedulingBooking = nil }
+                    Spacer()
+                    Button(isRescheduling ? "Saving…" : "Confirm") {
+                        Task { await rescheduleBooking(uid: booking.uid, newStart: rescheduleDate) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isRescheduling)
+                }
+            }
+            .padding()
+            .frame(minWidth: 380)
+        }
     }
 
     // MARK: - Connection
@@ -44,7 +66,7 @@ struct CalComSettingsView: View {
         GroupBox("Cal.com Connection") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    SecureField("API key  (cal_live_...)", text: $apiKeyDraft)
+                    TextField("API key  (cal_live_...)", text: $apiKeyDraft)
                         .textFieldStyle(.roundedBorder)
                     Button("Save") { saveKey() }
                         .disabled(apiKeyDraft.isEmpty)
@@ -196,6 +218,11 @@ struct CalComSettingsView: View {
                                 }
                             }
                             Spacer()
+                            Button("Reschedule") {
+                                rescheduleDate = booking.startDate ?? Date()
+                                reschedulingBooking = booking
+                            }
+                            .controlSize(.small)
                             Button("Cancel") { Task { await cancelBooking(uid: booking.uid) } }
                                 .controlSize(.small)
                                 .disabled(cancellingUID == booking.uid)
@@ -280,6 +307,20 @@ struct CalComSettingsView: View {
             upcomingBookings.removeAll { $0.uid == uid }
         } catch {
             NSLog("[CalComSettings] cancel \(uid) error: \(error)")
+        }
+    }
+
+    private func rescheduleBooking(uid: String, newStart: Date) async {
+        isRescheduling = true
+        defer { isRescheduling = false }
+        do {
+            let updated = try await calComService.rescheduleBooking(uid: uid, newStart: newStart)
+            if let idx = upcomingBookings.firstIndex(where: { $0.uid == uid }) {
+                upcomingBookings[idx] = updated
+            }
+            reschedulingBooking = nil
+        } catch {
+            NSLog("[CalComSettings] reschedule \(uid) error: \(error)")
         }
     }
 }
