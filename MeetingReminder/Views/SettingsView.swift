@@ -22,6 +22,8 @@ struct SettingsView: View {
     @ObservedObject var graphMailService: GraphMailService
     @ObservedObject var bookingPollService: BookingPollService
     @ObservedObject var busyLightService: BusyLightService
+    @ObservedObject var calComService: CalComService
+    @ObservedObject var calComSyncService: CalComSyncService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
     @State private var launchAtLogin = false
@@ -69,6 +71,9 @@ struct SettingsView: View {
 
             BusyLightSettingsView(service: busyLightService)
                 .tabItem { Label("Busy Light", systemImage: "lightbulb.fill") }
+
+            CalComSettingsView(calComService: calComService, calComSyncService: calComSyncService)
+                .tabItem { Label("Cal.com", systemImage: "calendar.badge.clock") }
         }
         .frame(width: 720, height: 520)
         .onAppear {

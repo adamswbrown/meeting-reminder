@@ -15,6 +15,8 @@ struct MeetingReminderApp: App {
     @StateObject private var graphMailService: GraphMailService
     @StateObject private var bookingPollService: BookingPollService
     @StateObject private var busyLightService = BusyLightService()
+    @StateObject private var calComService: CalComService
+    @StateObject private var calComSyncService: CalComSyncService
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -34,6 +36,8 @@ struct MeetingReminderApp: App {
         let availability = AvailabilityPushService()
         let graphMail = GraphMailService()
         let bookingPoll = BookingPollService(graph: graphMail)
+        let calCom = CalComService()
+        let calComSync = CalComSyncService(calCom: calCom)
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             notionService: notion,
@@ -47,6 +51,8 @@ struct MeetingReminderApp: App {
         _availabilityPushService = StateObject(wrappedValue: availability)
         _graphMailService = StateObject(wrappedValue: graphMail)
         _bookingPollService = StateObject(wrappedValue: bookingPoll)
+        _calComService = StateObject(wrappedValue: calCom)
+        _calComSyncService = StateObject(wrappedValue: calComSync)
     }
 
     var body: some Scene {
@@ -74,6 +80,7 @@ struct MeetingReminderApp: App {
                     calendarNotionSync.startScheduleIfEnabled()
                     availabilityPushService.start()
                     bookingPollService.start()
+                    calComSyncService.startIfEnabled()
                     overlayCoordinator.startBusyLightObserver(busyLightService)
 
                     if !hasCompletedOnboarding {
@@ -101,7 +108,9 @@ struct MeetingReminderApp: App {
                 availabilityPushService: availabilityPushService,
                 graphMailService: graphMailService,
                 bookingPollService: bookingPollService,
-                busyLightService: busyLightService
+                busyLightService: busyLightService,
+                calComService: calComService,
+                calComSyncService: calComSyncService
             )
         }
     }

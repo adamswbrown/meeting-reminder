@@ -97,6 +97,8 @@ final class BookingPollService: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        // Legacy Supabase poll — disabled when Cal.com API key is configured.
+        guard KeychainHelper.read(key: CalComService.keychainKey) == nil else { return }
         stop()
         guard isEnabled, isConfigured else { return }
 

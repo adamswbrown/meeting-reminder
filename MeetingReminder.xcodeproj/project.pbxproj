@@ -49,6 +49,10 @@
 		A1000043 /* CalendarSyncMigrations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000043 /* CalendarSyncMigrations.swift */; };
 		A1000044 /* RelationLinker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000044 /* RelationLinker.swift */; };
 		A1000052 /* CalendarChangeWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000052 /* CalendarChangeWatcher.swift */; };
+		A1000080 /* CalComModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000080 /* CalComModels.swift */; };
+		A1000081 /* CalComService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000081 /* CalComService.swift */; };
+		A1000082 /* CalComSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000082 /* CalComSyncService.swift */; };
+		A1000083 /* CalComSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000083 /* CalComSettingsView.swift */; };
 		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
@@ -114,6 +118,10 @@
 		B1000043 /* CalendarSyncMigrations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncMigrations.swift; sourceTree = "<group>"; };
 		B1000044 /* RelationLinker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationLinker.swift; sourceTree = "<group>"; };
 		B1000052 /* CalendarChangeWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarChangeWatcher.swift; sourceTree = "<group>"; };
+		B1000080 /* CalComModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComModels.swift; sourceTree = "<group>"; };
+		B1000081 /* CalComService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComService.swift; sourceTree = "<group>"; };
+		B1000082 /* CalComSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComSyncService.swift; sourceTree = "<group>"; };
+		B1000083 /* CalComSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComSettingsView.swift; sourceTree = "<group>"; };
 		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
@@ -171,6 +179,7 @@
 				B1000002 /* MeetingEvent.swift */,
 				B1000010 /* ChecklistItem.swift */,
 				B1000032 /* PreCallBrief.swift */,
+				B1000080 /* CalComModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -201,6 +210,8 @@
 				B1000043 /* CalendarSyncMigrations.swift */,
 				B1000044 /* RelationLinker.swift */,
 				B1000052 /* CalendarChangeWatcher.swift */,
+				B1000081 /* CalComService.swift */,
+				B1000082 /* CalComSyncService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -220,6 +231,7 @@
 				B100001A /* MinimalAlertView.swift */,
 				B1000034 /* BriefPanelView.swift */,
 				B1000051 /* BusyLightSettingsView.swift */,
+				B1000083 /* CalComSettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -380,6 +392,10 @@
 				A1000043 /* CalendarSyncMigrations.swift in Sources */,
 				A1000044 /* RelationLinker.swift in Sources */,
 				A1000052 /* CalendarChangeWatcher.swift in Sources */,
+				A1000080 /* CalComModels.swift in Sources */,
+				A1000081 /* CalComService.swift in Sources */,
+				A1000082 /* CalComSyncService.swift in Sources */,
+				A1000083 /* CalComSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
