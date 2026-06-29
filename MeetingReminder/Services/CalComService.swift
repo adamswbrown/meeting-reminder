@@ -73,6 +73,19 @@ final class CalComService: ObservableObject {
         return resp.data ?? []
     }
 
+    func fetchCancelledBookings(after: Date? = nil) async throws -> [CalComBooking] {
+        var query = "status[]=cancelled&take=100"
+        if let after {
+            let fmt = ISO8601DateFormatter()
+            fmt.formatOptions = [.withInternetDateTime]
+            let iso = fmt.string(from: after)
+            query += "&afterStart=\(iso.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? iso)"
+        }
+        let data = try await get(path: "/bookings?\(query)", version: Self.bookingVersion)
+        let resp = try decode(CalComListResponse<CalComBooking>.self, from: data)
+        return resp.data ?? []
+    }
+
     func cancelBooking(uid: String, reason: String? = nil) async throws {
         var payload: [String: String] = [:]
         if let reason { payload["cancellationReason"] = reason }

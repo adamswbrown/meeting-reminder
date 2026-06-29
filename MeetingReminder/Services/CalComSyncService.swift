@@ -85,20 +85,32 @@ final class CalComSyncService: ObservableObject {
         // Look back 1h to catch bookings made while Mac was asleep.
         let lookback = Date().addingTimeInterval(-3600)
         let after = (lastSyncedAt.map { min($0, lookback) }) ?? lookback
+        // Look back 30 days for cancellations of previously-upcoming meetings.
+        let cancelLookback = Date().addingTimeInterval(-30 * 24 * 3600)
 
         do {
             let bookings = try await calCom.fetchUpcomingBookings(after: after)
-            var synced = 0
+            var created = 0
+            var tagged = 0
             var skipped = 0
 
             for booking in bookings {
-                let created = await createEKEventIfNeeded(for: booking)
-                if created { synced += 1 } else { skipped += 1 }
+                switch await syncBooking(booking) {
+                case .created: created += 1
+                case .tagged:  tagged += 1
+                case .skipped: skipped += 1
+                }
             }
+
+            let cancelled = await syncCancellations(after: cancelLookback)
 
             lastSyncedAt = Date()
             UserDefaults.standard.set(lastSyncedAt, forKey: Self.lastSyncKey)
-            lastSyncResult = "synced=\(synced) skipped=\(skipped)"
+            var parts = ["created=\(created)"]
+            if tagged > 0   { parts.append("tagged=\(tagged)") }
+            if skipped > 0  { parts.append("skipped=\(skipped)") }
+            if cancelled > 0 { parts.append("cancelled=\(cancelled)") }
+            lastSyncResult = parts.joined(separator: " ")
             lastError = nil
 
         } catch {
@@ -107,15 +119,26 @@ final class CalComSyncService: ObservableObject {
         }
     }
 
-    // MARK: - EKEvent creation
+    private enum BookingSyncResult { case created, tagged, skipped }
 
-    /// Returns true if a new EKEvent was created, false if already present.
-    private func createEKEventIfNeeded(for booking: CalComBooking) async -> Bool {
-        guard let start = booking.startDate, let end = booking.endDate else { return false }
+    // MARK: - Upcoming bookings
+
+    private func syncBooking(_ booking: CalComBooking) async -> BookingSyncResult {
+        guard let start = booking.startDate, let end = booking.endDate else { return .skipped }
         let marker = "[calcom-booking-id:\(booking.uid)]"
 
-        if findTaggedEvent(marker: marker, near: start) != nil { return false }
+        // Already tagged (idempotency).
+        if findTaggedEvent(marker: marker, near: start) != nil { return .skipped }
 
+        // Cal.com's Office365 integration already created an Exchange calendar event.
+        // If we find one at the same time with a matching title, tag it instead of
+        // creating a duplicate.
+        if let existing = findExchangeEvent(matching: booking.title ?? "", near: start) {
+            appendMarker(marker, to: existing)
+            return .tagged
+        }
+
+        // No existing event — create one (e.g. for calendars not connected to Exchange).
         let attendeeLine = booking.attendees?.map { "\($0.name) <\($0.email)>" }.joined(separator: ", ") ?? ""
         let notes = [
             "Booked via Cal.com.",
@@ -124,7 +147,7 @@ final class CalComSyncService: ObservableObject {
             marker
         ].compactMap { $0 }.joined(separator: "\n")
 
-        guard let calendar = eventStore.defaultCalendarForNewEvents else { return false }
+        guard let calendar = eventStore.defaultCalendarForNewEvents else { return .skipped }
 
         let event = EKEvent(eventStore: eventStore)
         event.title = booking.title ?? "Meeting"
@@ -135,18 +158,67 @@ final class CalComSyncService: ObservableObject {
 
         do {
             try eventStore.save(event, span: .thisEvent, commit: true)
-            return true
+            return .created
         } catch {
             NSLog("[CalComSync] save failed for \(booking.uid): \(error.localizedDescription)")
-            return false
+            return .skipped
+        }
+    }
+
+    // MARK: - Cancellations
+
+    private func syncCancellations(after: Date) async -> Int {
+        do {
+            let cancelled = try await calCom.fetchCancelledBookings(after: after)
+            var removed = 0
+            for booking in cancelled {
+                guard let start = booking.startDate else { continue }
+                let marker = "[calcom-booking-id:\(booking.uid)]"
+                if let event = findTaggedEvent(marker: marker, near: start) {
+                    try? eventStore.remove(event, span: .thisEvent, commit: true)
+                    removed += 1
+                }
+            }
+            return removed
+        } catch {
+            NSLog("[CalComSync] cancellation sync failed: \(error.localizedDescription)")
+            return 0
+        }
+    }
+
+    // MARK: - EventKit helpers
+
+    /// Finds an EKEvent near `date` whose title overlaps with `title` (case-insensitive substring match).
+    /// Uses a ±15 min window to absorb minor Exchange sync timing drift.
+    private func findExchangeEvent(matching title: String, near date: Date) -> EKEvent? {
+        eventStore.refreshSourcesIfNecessary()
+        let windowStart = date.addingTimeInterval(-900)
+        let windowEnd   = date.addingTimeInterval(900)
+        let pred = eventStore.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: nil)
+        let calTitle = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return eventStore.events(matching: pred).first { event in
+            guard let ekTitle = event.title?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+            // Match if either title contains the other — handles Cal.com appending " between X and Y"
+            return ekTitle.contains(calTitle) || calTitle.contains(ekTitle)
         }
     }
 
     private func findTaggedEvent(marker: String, near date: Date) -> EKEvent? {
         eventStore.refreshSourcesIfNecessary()
-        let start = date.addingTimeInterval(-300)
-        let end = date.addingTimeInterval(300)
-        let pred = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
+        let pred = eventStore.predicateForEvents(
+            withStart: date.addingTimeInterval(-900),
+            end: date.addingTimeInterval(900),
+            calendars: nil
+        )
         return eventStore.events(matching: pred).first { $0.notes?.contains(marker) == true }
+    }
+
+    private func appendMarker(_ marker: String, to event: EKEvent) {
+        var notes = event.notes ?? ""
+        guard !notes.contains(marker) else { return }
+        if !notes.isEmpty { notes += "\n" }
+        notes += marker
+        event.notes = notes
+        try? eventStore.save(event, span: .thisEvent, commit: true)
     }
 }
