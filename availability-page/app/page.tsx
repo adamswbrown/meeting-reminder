@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { config } from "@/lib/config";
 import {
   computeAvailabilityForDuration,
@@ -15,6 +14,8 @@ import { BookingPage } from "@/components/BookingPage";
 import { OOOBanner } from "@/components/OOOBanner";
 import { StalenessPill } from "@/components/StalenessPill";
 
+const CAL_COM_USERNAME = "adamswbrown";
+
 export const revalidate = 300;
 
 /**
@@ -30,7 +31,9 @@ async function BookACallSection() {
     return null;
   }
   // The catch-all "general" type backs the slot picker, not a named offering.
-  eventTypes = eventTypes.filter((et) => et.slug !== GENERAL_EVENT_SLUG);
+  // White Glove sessions are partner-facing direct links, not on the public grid.
+  const HIDDEN_SLUGS = new Set([GENERAL_EVENT_SLUG, "white-glove", "white-glove-session"]);
+  eventTypes = eventTypes.filter((et) => !HIDDEN_SLUGS.has(et.slug));
   if (eventTypes.length === 0) return null;
 
   return (
@@ -39,14 +42,16 @@ async function BookACallSection() {
         Book a call
       </h2>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        Pick a meeting type and I&rsquo;ll send a calendar invite once it&rsquo;s
-        confirmed.
+        Pick a meeting type — you&rsquo;ll get an instant confirmation with a
+        Teams link, no waiting for me to approve.
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {eventTypes.map((et) => (
-          <Link
+          <a
             key={et.id}
-            href={`/book/${et.slug}`}
+            href={`https://cal.com/${CAL_COM_USERNAME}/${et.slug}`}
+            target="_blank"
+            rel="noopener noreferrer"
             className="group flex h-full flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:focus:ring-zinc-100"
           >
             <span className="flex items-baseline justify-between gap-2">
@@ -65,7 +70,7 @@ async function BookACallSection() {
             <span className="mt-auto pt-1 text-sm font-medium text-zinc-500 transition group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-zinc-100">
               Book &rarr;
             </span>
-          </Link>
+          </a>
         ))}
       </div>
     </section>
