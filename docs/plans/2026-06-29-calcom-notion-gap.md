@@ -1,7 +1,7 @@
 # Cal.com → Notion Gap: Design
 
 **Date:** 2026-06-29  
-**Status:** Design — ready for implementation
+**Status:** Implemented — 2026-06-29
 
 ---
 

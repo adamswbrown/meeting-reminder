@@ -115,6 +115,9 @@ MeetingReminder/
 │   ├── BookingPollService.swift          # Polls Supabase booking_requests → live conflict check → EKEvent + confirmation email/.ics via Microsoft Graph (Mail.app fallback)
 │   ├── GraphMailService.swift            # Sends booking email from Exchange via Graph /me/sendMail; OAuth device-code auth, refresh token in Keychain
 │   ├── BookingSupport.swift              # Pure booking helpers: PendingBooking decode, overlap test, .ics builder, Mail AppleScript composer (Exchange-account-asserted)
+│   ├── CalComService.swift               # Cal.com v2 REST wrapper: event types, schedules, bookings, cancel, reschedule. API key in Keychain as `calComAPIKey`
+│   ├── CalComSyncService.swift           # Polls Cal.com every 5 min + on wake; creates/tags EKEvents (`[calcom-booking-id:<uid>]`); cancellation sweep
+│   ├── CalComNotionBridge.swift          # On CalComSyncService .created, fires NotionService.createMeetingPage() so a meeting-notes page exists before the 06:00 CalendarNotionSyncService run
 │   ├── NotionService.swift               # Notion: create meeting page + shared token
 │   ├── PreCallBriefService.swift         # Composes/fetches the Notion-fed pre-call brief
 │   ├── CalendarNotionSyncService.swift   # Calendar → Notion sync orchestrator
@@ -133,6 +136,7 @@ MeetingReminder/
 │   ├── ContextPanelView.swift            # Floating meeting context panel (attendees, notes, pre-call brief)
 │   ├── BriefPanelView.swift              # Pre-call brief panel
 │   ├── BusyLightSettingsView.swift       # Busy Light settings tab
+│   ├── CalComSettingsView.swift          # Cal.com tab: connection, event types, schedules, upcoming bookings with cancel + reschedule
 │   ├── ChecklistView.swift               # Pre-meeting checklist panel
 │   ├── BreakOverlayView.swift            # Soft full-screen break overlay
 │   └── FloatingPromptView.swift          # Non-blocking context-switch prompt
