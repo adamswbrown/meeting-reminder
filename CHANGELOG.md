@@ -14,8 +14,15 @@ All notable changes to Meeting Reminder will be documented in this file.
   - Cal.com webhook automation updated: Sandra Murray added to all bookings; Luke Lloyd & Joey Undis added for `white-glove` bookings.
 - `calComSyncEnabled`, `calComLastSyncedAt`, `calComLastSyncResult` UserDefaults keys.
 
+- **Cal.com → Notion bridge** (`CalComNotionBridge`) — when `CalComSyncService` creates a new EKEvent for a booking, it immediately fires `NotionService.createMeetingPage()` so a meeting-notes page exists before the next 06:00 `CalendarNotionSyncService` run. Deduped by `"calcom-<uid>"` event ID.
+- **Reschedule action** in Settings → Cal.com — "Reschedule" button per booking opens a `DatePicker` sheet; confirms via `POST /v2/bookings/{uid}/reschedule` and updates the row in place.
+- **White Glove Working Session email template** — intro email now has a single "Working Sessions" section with the `white-glove-session` booking link and a bulleted list of all session types (Deployment, Workshop 1 & 2, Post-Workshop Coaching, Delivery Validation).
+
 ### Changed
 - `BookingPollService.start()` is now gated — skips entirely when `calComAPIKey` is present in Keychain. The Supabase pending-loop is preserved as a legacy fallback for setups without a Cal.com key.
+
+### Removed
+- Dead Supabase booking frontend: `BookingForm.tsx`, `SlotBookingDialog.tsx`, `bookingApi.ts`, `bookingSlots.ts` and their tests. `BookingPage` simplified to always render `SlotActionsDialog` (view-only actions — Outlook/Google/ICS/email/copy).
 
 ## [3.0.0] - 2026-06-15
 
