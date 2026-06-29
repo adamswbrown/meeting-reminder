@@ -2,6 +2,21 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [Unreleased] - 2026-06-29
+
+### Added
+- **Cal.com integration** — Cal.com is now the source of truth for all new bookings. Bookers get an instant calendar invite + Teams link with no Mac involvement in the critical path; availability is read directly from the Exchange calendar by Cal.com.
+  - `CalComService` — REST wrapper around the Cal.com v2 API (event types, schedules, bookings, cancel). API key stored in Keychain as `calComAPIKey`.
+  - `CalComSyncService` — polls Cal.com every 5 minutes + on wake to create local EKEvents tagged `[calcom-booking-id:<uid>]`. Detects Exchange-synced duplicates (title + ±15 min window) and tags them rather than duplicating. Cancellation sweep removes tagged events for cancelled bookings (30-day lookback).
+  - **Settings → Cal.com** — new tab for connection, event type list, schedule viewer, and upcoming bookings with cancel action.
+  - **Availability page** — "Book a call" cards now link directly to `cal.com/adamswbrown/<slug>` (instant confirmation copy); `/book/<slug>` redirects to Cal.com for old bookmarks. White Glove slugs hidden from the public grid.
+  - **White Glove Working Session** (`white-glove-session`) — new Cal.com event type for post-kickoff engagement stages (Deployment Validation, Workshop 1 & 2, Post-Workshop Coaching, Delivery Validation). Accessible via direct link; partner name and session-type selector built in.
+  - Cal.com webhook automation updated: Sandra Murray added to all bookings; Luke Lloyd & Joey Undis added for `white-glove` bookings.
+- `calComSyncEnabled`, `calComLastSyncedAt`, `calComLastSyncResult` UserDefaults keys.
+
+### Changed
+- `BookingPollService.start()` is now gated — skips entirely when `calComAPIKey` is present in Keychain. The Supabase pending-loop is preserved as a legacy fallback for setups without a Cal.com key.
+
 ## [3.0.0] - 2026-06-15
 
 ### Added
