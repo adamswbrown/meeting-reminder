@@ -37,7 +37,8 @@ struct MeetingReminderApp: App {
         let graphMail = GraphMailService()
         let bookingPoll = BookingPollService(graph: graphMail)
         let calCom = CalComService()
-        let calComSync = CalComSyncService(calCom: calCom)
+        let calComNotionBridge = CalComNotionBridge(notion: notion)
+        let calComSync = CalComSyncService(calCom: calCom, notionBridge: calComNotionBridge)
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             notionService: notion,

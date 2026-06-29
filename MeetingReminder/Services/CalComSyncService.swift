@@ -25,13 +25,15 @@ final class CalComSyncService: ObservableObject {
 
     private let calCom: CalComService
     private let eventStore: EKEventStore
+    private let notionBridge: CalComNotionBridge?
     private var timer: Timer?
     private var wakeObserver: Any?
     private var isSyncing = false
 
-    init(calCom: CalComService, eventStore: EKEventStore = EKEventStore()) {
+    init(calCom: CalComService, eventStore: EKEventStore = EKEventStore(), notionBridge: CalComNotionBridge? = nil) {
         self.calCom = calCom
         self.eventStore = eventStore
+        self.notionBridge = notionBridge
         self.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         self.lastSyncedAt = UserDefaults.standard.object(forKey: Self.lastSyncKey) as? Date
     }
@@ -158,11 +160,18 @@ final class CalComSyncService: ObservableObject {
 
         do {
             try eventStore.save(event, span: .thisEvent, commit: true)
-            return .created
         } catch {
             NSLog("[CalComSync] save failed for \(booking.uid): \(error.localizedDescription)")
             return .skipped
         }
+
+        // Side-effect: create a Notion meeting-notes page for new bookings so
+        // the pre-call brief pipeline has something to link to before the next
+        // CalendarNotionSyncService run.
+        if let bridge = notionBridge {
+            Task { await bridge.createPageIfNeeded(for: booking) }
+        }
+        return .created
     }
 
     // MARK: - Cancellations

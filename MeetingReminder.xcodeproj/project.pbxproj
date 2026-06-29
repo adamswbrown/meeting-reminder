@@ -53,6 +53,7 @@
 		A1000081 /* CalComService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000081 /* CalComService.swift */; };
 		A1000082 /* CalComSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000082 /* CalComSyncService.swift */; };
 		A1000083 /* CalComSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000083 /* CalComSettingsView.swift */; };
+		A1000084 /* CalComNotionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000084 /* CalComNotionBridge.swift */; };
 		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
@@ -122,6 +123,7 @@
 		B1000081 /* CalComService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComService.swift; sourceTree = "<group>"; };
 		B1000082 /* CalComSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComSyncService.swift; sourceTree = "<group>"; };
 		B1000083 /* CalComSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComSettingsView.swift; sourceTree = "<group>"; };
+		B1000084 /* CalComNotionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComNotionBridge.swift; sourceTree = "<group>"; };
 		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
@@ -212,6 +214,7 @@
 				B1000052 /* CalendarChangeWatcher.swift */,
 				B1000081 /* CalComService.swift */,
 				B1000082 /* CalComSyncService.swift */,
+				B1000084 /* CalComNotionBridge.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -396,6 +399,7 @@
 				A1000081 /* CalComService.swift in Sources */,
 				A1000082 /* CalComSyncService.swift in Sources */,
 				A1000083 /* CalComSettingsView.swift in Sources */,
+				A1000084 /* CalComNotionBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
