@@ -110,7 +110,10 @@ SIGNING_IDENTITY="$SIGNING_IDENTITY" "$SCRIPT_DIR/create-dmg.sh" "$APP_PATH" "$V
 
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
     echo "==> Stapling DMG"
-    xcrun stapler staple "$ROOT_DIR/dist/MeetingReminder-${VERSION}.dmg"
+    DMG_OUT="$ROOT_DIR/dist/MeetingReminder-${VERSION}.dmg"
+    xcrun stapler staple "$DMG_OUT"
+    # Stapling modifies the DMG, so regenerate the checksum from final bytes.
+    shasum -a 256 "$DMG_OUT" | awk '{print $1}' > "${DMG_OUT}.sha256"
 fi
 
 echo
