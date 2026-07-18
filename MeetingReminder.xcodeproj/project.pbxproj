@@ -21,6 +21,7 @@
 		A1000061 /* Meeting Free.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B1000061 /* Meeting Free.shortcut */; };
 		A100000B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000E /* OnboardingView.swift */; };
 		A100000C /* AlertTier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000F /* AlertTier.swift */; };
+		A1000090 /* SnoozeUntilThreshold.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000090 /* SnoozeUntilThreshold.swift */; };
 		A100000D /* ChecklistItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000010 /* ChecklistItem.swift */; };
 		A100000E /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000011 /* NotificationService.swift */; };
 		A100000F /* ScreenDimmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000012 /* ScreenDimmer.swift */; };
@@ -63,6 +64,7 @@
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
 		T2000003 /* OverlayBackgroundTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000003 /* OverlayBackgroundTests.swift */; };
 		T2000004 /* ClampedExtensionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000004 /* ClampedExtensionTests.swift */; };
+		T2000010 /* SnoozeUntilThresholdTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000010 /* SnoozeUntilThresholdTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,6 +95,7 @@
 		B100000D /* MeetingReminder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetingReminder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B100000E /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		B100000F /* AlertTier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertTier.swift; sourceTree = "<group>"; };
+		B1000090 /* SnoozeUntilThreshold.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozeUntilThreshold.swift; sourceTree = "<group>"; };
 		B1000010 /* ChecklistItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistItem.swift; sourceTree = "<group>"; };
 		B1000011 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		B1000012 /* ScreenDimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenDimmer.swift; sourceTree = "<group>"; };
@@ -135,6 +138,7 @@
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
 		T1000003 /* OverlayBackgroundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayBackgroundTests.swift; sourceTree = "<group>"; };
 		T1000004 /* ClampedExtensionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClampedExtensionTests.swift; sourceTree = "<group>"; };
+		T1000010 /* SnoozeUntilThresholdTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozeUntilThresholdTests.swift; sourceTree = "<group>"; };
 		T3000001 /* MeetingReminderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetingReminderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -198,6 +202,7 @@
 				B1000005 /* VideoLinkDetector.swift */,
 				B1000099 /* MeetingLauncher.swift */,
 				B100000F /* AlertTier.swift */,
+				B1000090 /* SnoozeUntilThreshold.swift */,
 				B1000011 /* NotificationService.swift */,
 				B1000012 /* ScreenDimmer.swift */,
 				B1000019 /* DisplayPreferences.swift */,
@@ -274,6 +279,7 @@
 				T1000005 /* CalendarEventMapperTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
 				T1000007 /* BookingSupportTests.swift */,
+				T1000010 /* SnoozeUntilThresholdTests.swift */,
 			);
 			path = MeetingReminderTests;
 			sourceTree = "<group>";
@@ -374,6 +380,7 @@
 				A1000009 /* SettingsView.swift in Sources */,
 				A100000B /* OnboardingView.swift in Sources */,
 				A100000C /* AlertTier.swift in Sources */,
+				A1000090 /* SnoozeUntilThreshold.swift in Sources */,
 				A100000D /* ChecklistItem.swift in Sources */,
 				A100000E /* NotificationService.swift in Sources */,
 				A100000F /* ScreenDimmer.swift in Sources */,
@@ -419,6 +426,7 @@
 				T2000002 /* MeetingEventTests.swift in Sources */,
 				T2000003 /* OverlayBackgroundTests.swift in Sources */,
 				T2000004 /* ClampedExtensionTests.swift in Sources */,
+				T2000010 /* SnoozeUntilThresholdTests.swift in Sources */,
 				T2000005 /* CalendarEventMapperTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
 				T2000007 /* BookingSupportTests.swift in Sources */,
