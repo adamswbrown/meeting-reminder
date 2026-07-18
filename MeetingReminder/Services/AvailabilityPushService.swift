@@ -338,6 +338,7 @@ struct PushEvent {
     let endUTC: Date
     let isAllDay: Bool
     let isTentative: Bool
+    let isOOO: Bool
     let status: String
     let calendarName: String
     let hasVideoLink: Bool
@@ -356,6 +357,16 @@ struct PushEvent {
 
         let myStatus = ekEvent.attendees?.first(where: { $0.isCurrentUser })?.participantStatus
         self.isTentative = (myStatus == .tentative)
+
+        // OOO if Exchange explicitly says so, OR the title reads like leave.
+        // Availability alone isn't enough: Outlook marks bank holidays / leave
+        // as "Free", and the Exchange bridge often drops the OOO bit entirely,
+        // so the title heuristic must run unconditionally here — unlike the
+        // Notion mapper, where it's only a fallback for unsupported availability.
+        // The banner further requires is_all_day, so a timed "holiday planning"
+        // meeting won't trigger a false "away" banner.
+        self.isOOO = CalendarEventMapper.availabilityName(for: ekEvent) == "OOO"
+            || CalendarEventMapper.looksLikeOOO(title: ekEvent.title ?? "")
 
         switch ekEvent.status {
         case .canceled:
@@ -376,6 +387,7 @@ struct PushEvent {
             "end_utc": iso.string(from: endUTC),
             "is_all_day": isAllDay,
             "is_tentative": isTentative,
+            "is_ooo": isOOO,
             "status": status,
             "calendar_name": String(calendarName.prefix(200)),
             "has_video_link": hasVideoLink,
