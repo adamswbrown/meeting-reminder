@@ -67,8 +67,15 @@ struct CalComBooking: Codable, Identifiable {
     let eventTypeId: Int?
     var id: String { uid }
 
-    var startDate: Date? { ISO8601DateFormatter().date(from: start) }
-    var endDate: Date? { ISO8601DateFormatter().date(from: end) }
+    var startDate: Date? { Self.parseISO(start) }
+    var endDate: Date? { Self.parseISO(end) }
+
+    private static func parseISO(_ s: String) -> Date? {
+        let withMs = ISO8601DateFormatter()
+        withMs.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withMs.date(from: s) { return d }
+        return ISO8601DateFormatter().date(from: s)
+    }
 }
 
 struct CalComAttendee: Codable {
