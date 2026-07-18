@@ -218,6 +218,7 @@ final class BookingSupportTests: XCTestCase {
                               body: String = "Hi Sam") -> String {
         MailAppleScript.compose(
             senderDisplay: "Adam Brown <adam.brown@altra.cloud>",
+            senderEmail: "adam.brown@altra.cloud",
             to: "sam@example.com",
             subject: subject,
             body: body,
@@ -246,6 +247,7 @@ final class BookingSupportTests: XCTestCase {
     func testScriptEscapesDoubleQuotes() {
         let s = MailAppleScript.compose(
             senderDisplay: "Adam",
+            senderEmail: "adam@example.com",
             to: "sam@example.com",
             subject: "Say \"hello\"",
             body: "Body",
@@ -264,6 +266,7 @@ final class BookingSupportTests: XCTestCase {
     func testScriptNilAttachmentOmitsAttachmentLine() {
         let s = MailAppleScript.compose(
             senderDisplay: "Adam",
+            senderEmail: "adam@example.com",
             to: "sam@example.com",
             subject: "That slot just filled",
             body: "Hi Sam",
@@ -279,6 +282,7 @@ final class BookingSupportTests: XCTestCase {
     func testScriptMultilineBodyUsesLinefeedConcatenation() {
         let s = MailAppleScript.compose(
             senderDisplay: "Adam",
+            senderEmail: "adam@example.com",
             to: "sam@example.com",
             subject: "Confirmed",
             body: "Hi Sam,\n\nYou're booked.",
