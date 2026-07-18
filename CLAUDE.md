@@ -132,7 +132,7 @@ MeetingReminder/
 │   ├── OverlayWindow.swift               # NSPanel wrappers for meeting + break overlays
 │   ├── OverlayView.swift                 # Full-screen overlay UI (Join/Snooze/Dismiss)
 │   ├── MinimalAlertView.swift            # Lightweight alert UI
-│   ├── SettingsView.swift                # 10-tab preferences
+│   ├── SettingsView.swift                # 7-tab preferences (General, Alerts, Appearance, Checklist, Calendars, Notion, Integrations). Appearance folds in the old Display tab; Notion has a "Notes"/"Calendar Sync" segmented sub-tab (Cal Sync lives here now); Integrations has an "Availability"/"Busy Light"/"Cal.com" segmented sub-tab. Calendars tab is a two-column table: "Monitor" (enabledCalendarIDs) + "→ Notion" (calendarNotionSyncEnabledCalendarIDs)
 │   ├── OnboardingView.swift              # First-launch setup (standalone NSWindow)
 │   ├── ContextPanelView.swift            # Floating meeting context panel (attendees, notes, pre-call brief)
 │   ├── BriefPanelView.swift              # Pre-call brief panel

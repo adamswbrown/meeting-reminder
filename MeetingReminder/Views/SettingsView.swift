@@ -41,6 +41,8 @@ struct SettingsView: View {
     @State private var calendarSyncEnabledCalendarIDs: Set<String> = []
     @State private var supabaseURLDraft: String = ""
     @State private var supabaseKeyDraft: String = ""
+    @State private var notionSubtab: Int = 0
+    @State private var integrationsSubtab: Int = 0
 
     var body: some View {
         TabView {
@@ -49,9 +51,6 @@ struct SettingsView: View {
 
             alertsTab
                 .tabItem { Label("Alerts", systemImage: "bell.badge") }
-
-            displayTab
-                .tabItem { Label("Display", systemImage: "display") }
 
             appearanceTab
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
@@ -65,19 +64,11 @@ struct SettingsView: View {
             notionTab
                 .tabItem { Label("Notion", systemImage: "square.and.pencil") }
 
-            availabilityTab
-                .tabItem { Label("Availability", systemImage: "globe") }
-
-            calendarSyncTab
-                .tabItem { Label("Cal Sync", systemImage: "arrow.triangle.2.circlepath") }
-
-            BusyLightSettingsView(service: busyLightService)
-                .tabItem { Label("Busy Light", systemImage: "lightbulb.fill") }
-
-            CalComSettingsView(calComService: calComService, calComSyncService: calComSyncService)
-                .tabItem { Label("Cal.com", systemImage: "calendar.badge.clock") }
+            integrationsTab
+                .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
         }
-        .frame(width: 720, height: 520)
+        .frame(minWidth: 720, idealWidth: 720, maxWidth: 960,
+               minHeight: 560, idealHeight: 640, maxHeight: 1000)
         .onAppear {
             loadSettings()
         }
@@ -190,10 +181,46 @@ struct SettingsView: View {
         .padding()
     }
 
-    // MARK: - Display Tab
+    // MARK: - Appearance Tab
 
-    private var displayTab: some View {
+    private func screenLabel(_ screen: NSScreen) -> String {
+        let size = screen.frame.size
+        return "\(screen.localizedName) (\(Int(size.width))×\(Int(size.height)))"
+    }
+
+    private var appearanceTab: some View {
         Form {
+            Section("Overlay Background") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 12) {
+                    ForEach(OverlayBackground.allCases) { bg in
+                        Button {
+                            overlayBackground = bg.rawValue
+                        } label: {
+                            VStack(spacing: 6) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(bg.previewGradient)
+                                    .frame(height: 70)
+                                    .overlay(
+                                        Text("Aa")
+                                            .font(.title2.bold())
+                                            .foregroundColor(.white)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(overlayBackground == bg.rawValue ? Color.accentColor : Color.clear, lineWidth: 3)
+                                    )
+
+                                Text(bg.displayName)
+                                    .font(.caption)
+                                    .foregroundColor(overlayBackground == bg.rawValue ? .accentColor : .secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
             Section("Show overlay on") {
                 Picker("Display:", selection: $overlayMonitorModeRaw) {
                     ForEach(DisplayMode.allCases) { mode in
@@ -238,51 +265,6 @@ struct SettingsView: View {
         .onAppear {
             availableScreens = NSScreen.screens
         }
-    }
-
-    private func screenLabel(_ screen: NSScreen) -> String {
-        let size = screen.frame.size
-        return "\(screen.localizedName) (\(Int(size.width))×\(Int(size.height)))"
-    }
-
-    // MARK: - Appearance Tab
-
-    private var appearanceTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Overlay Background")
-                .font(.headline)
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 12) {
-                ForEach(OverlayBackground.allCases) { bg in
-                    Button {
-                        overlayBackground = bg.rawValue
-                    } label: {
-                        VStack(spacing: 6) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(bg.previewGradient)
-                                .frame(height: 70)
-                                .overlay(
-                                    Text("Aa")
-                                        .font(.title2.bold())
-                                        .foregroundColor(.white)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(overlayBackground == bg.rawValue ? Color.accentColor : Color.clear, lineWidth: 3)
-                                )
-
-                            Text(bg.displayName)
-                                .font(.caption)
-                                .foregroundColor(overlayBackground == bg.rawValue ? .accentColor : .secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            Spacer()
-        }
-        .padding()
     }
 
     // MARK: - Checklist Tab
@@ -339,7 +321,7 @@ struct SettingsView: View {
 
     private var calendarsTab: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Select which calendars to monitor:")
+            Text("Choose which calendars to monitor, and which to sync to Notion:")
                 .font(.headline)
 
             if calendarService.availableCalendars.isEmpty {
@@ -347,30 +329,85 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                HStack(spacing: 8) {
+                    Text("Calendar")
+                    Spacer()
+                    Text(enabledCalendarIDs.isEmpty ? "Monitor (all)" : "Monitor")
+                        .frame(width: 96, alignment: .center)
+                    Text(calendarSyncEnabledCalendarIDs.isEmpty ? "→ Notion (Exchange)" : "→ Notion")
+                        .frame(width: 132, alignment: .center)
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+
                 List {
                     ForEach(calendarService.availableCalendars, id: \.calendarIdentifier) { calendar in
-                        Toggle(isOn: calendarBinding(for: calendar.calendarIdentifier)) {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(Color(cgColor: calendar.cgColor))
-                                    .frame(width: 10, height: 10)
-                                Text(calendar.title)
-                            }
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color(cgColor: calendar.cgColor))
+                                .frame(width: 10, height: 10)
+                            Text(calendar.title)
+                            Spacer()
+                            Toggle("", isOn: calendarBinding(for: calendar.calendarIdentifier))
+                                .labelsHidden()
+                                .frame(width: 96, alignment: .center)
+                            Toggle("", isOn: syncCalendarBinding(for: calendar.calendarIdentifier))
+                                .labelsHidden()
+                                .frame(width: 132, alignment: .center)
                         }
                     }
                 }
             }
 
-            Text("If none selected, all calendars are monitored.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("**Monitor** drives overlays, alerts, the busy light and the menu-bar countdown. When none are ticked, all calendars are monitored.")
+                Text("**→ Notion** pushes the calendar into the Notion Calendar Events database. Enable and schedule the sync under the Notion tab → Calendar Sync. When none are ticked, only the Exchange “Calendar” is synced.")
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
         }
         .padding()
+    }
+
+    private func syncCalendarBinding(for calendarID: String) -> Binding<Bool> {
+        Binding(
+            get: { calendarSyncEnabledCalendarIDs.contains(calendarID) },
+            set: { enabled in
+                if enabled {
+                    calendarSyncEnabledCalendarIDs.insert(calendarID)
+                } else {
+                    calendarSyncEnabledCalendarIDs.remove(calendarID)
+                }
+                UserDefaults.standard.set(
+                    Array(calendarSyncEnabledCalendarIDs),
+                    forKey: CalendarSyncConstants.prefEnabledCalendarIDsKey
+                )
+            }
+        )
     }
 
     // MARK: - Notion Tab
 
     private var notionTab: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $notionSubtab) {
+                Text("Notes").tag(0)
+                Text("Calendar Sync").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding([.horizontal, .top])
+
+            if notionSubtab == 0 {
+                notionNotesForm
+            } else {
+                calendarSyncForm
+            }
+        }
+    }
+
+    private var notionNotesForm: some View {
         Form {
             Section("Connection") {
                 HStack {
@@ -399,6 +436,10 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
+                    Button("Test Connection") {
+                        Task { await notionService.testConnection() }
+                    }
+                    .disabled(!notionService.isConfigured || notionService.isTesting)
                 }
 
                 Text("Meeting Reminder creates a new page in your Notion database the moment you join a meeting, then opens it in the Notion desktop app. Notion's own AI Meeting Notes block handles recording and summarisation. The integration is active whenever both credentials below are set — there is no separate on/off toggle.")
@@ -542,6 +583,30 @@ struct SettingsView: View {
                     Task { await notionService.testConnection() }
                     calendarNotionSync.startScheduleIfEnabled()
                 }
+            }
+        }
+    }
+
+    // MARK: - Integrations Tab
+
+    private var integrationsTab: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $integrationsSubtab) {
+                Text("Availability").tag(0)
+                Text("Busy Light").tag(1)
+                Text("Cal.com").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding([.horizontal, .top])
+
+            switch integrationsSubtab {
+            case 0:
+                availabilityTab
+            case 1:
+                BusyLightSettingsView(service: busyLightService)
+            default:
+                CalComSettingsView(calComService: calComService, calComSyncService: calComSyncService)
             }
         }
     }
@@ -915,20 +980,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Calendar → Notion Sync Tab
-
-    private var calendarSyncTab: some View {
-        calendarSyncForm
-            .onAppear {
-                // Re-pull every time the tab appears so a defaults-write or a
-                // change from another window is reflected in the field.
-                rollingWeekViewDraft = calendarNotionSync.rollingWeekViewID
-                calendarSyncEnabledDraft = calendarNotionSync.isEnabled
-                calendarSyncEnabledCalendarIDs = Set(
-                    UserDefaults.standard.stringArray(forKey: CalendarSyncConstants.prefEnabledCalendarIDsKey) ?? []
-                )
-            }
-    }
+    // MARK: - Calendar → Notion Sync (Notion tab · Calendar Sync segment)
 
     private var calendarSyncForm: some View {
         Form {
@@ -952,67 +1004,22 @@ struct SettingsView: View {
             }
 
             Section {
-                HStack {
-                    Image(systemName: calendarNotionSync.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundStyle(calendarNotionSync.isConfigured ? .green : .orange)
-                    Text(calendarNotionSync.isConfigured
-                         ? "Using the Notion token from the Notion tab."
-                         : "No Notion token set. Add one in the Notion tab first.")
-                }
-            } header: {
-                Text("Notion Token")
-            } footer: {
-                Text("This sync reuses the token from the Notion tab. Make sure that integration has access to the Operations parent page in Notion (the Calendar Events and Skip List databases live under it).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
                 Toggle("Run daily at 06:00", isOn: $calendarSyncEnabledDraft)
                     .onChange(of: calendarSyncEnabledDraft) { newValue in
                         calendarNotionSync.isEnabled = newValue
                     }
             } header: {
                 Text("Schedule")
-            }
-
-            Section {
-                if calendarService.availableCalendars.isEmpty {
-                    Text("Grant Calendar access first (Calendars tab) to choose calendars to sync.")
+            } footer: {
+                if calendarNotionSync.isConfigured {
+                    Text("Choose which calendars to sync in the Calendars tab (the “→ Notion” column). The integration must have access to the Operations parent page in Notion, where the Calendar Events and Skip List databases live.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(calendarService.availableCalendars, id: \.calendarIdentifier) { cal in
-                        Toggle(isOn: Binding(
-                            get: { calendarSyncEnabledCalendarIDs.contains(cal.calendarIdentifier) },
-                            set: { isOn in
-                                if isOn {
-                                    calendarSyncEnabledCalendarIDs.insert(cal.calendarIdentifier)
-                                } else {
-                                    calendarSyncEnabledCalendarIDs.remove(cal.calendarIdentifier)
-                                }
-                                UserDefaults.standard.set(
-                                    Array(calendarSyncEnabledCalendarIDs),
-                                    forKey: CalendarSyncConstants.prefEnabledCalendarIDsKey
-                                )
-                            }
-                        )) {
-                            HStack {
-                                Text(cal.title)
-                                Spacer()
-                                Text(cal.source.title)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    Text("No Notion token set. Add one under the Notes segment first — this sync reuses it. Then pick calendars to sync in the Calendars tab (the “→ Notion” column).")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
-            } header: {
-                Text("Calendars to Sync")
-            } footer: {
-                Text("Tick each calendar to include in the Notion sync. When nothing is ticked, the sync falls back to the single Exchange calendar (v1 behaviour).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -1104,6 +1111,13 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            // Re-pull each time the segment appears so a defaults-write or a
+            // change from another window is reflected in the fields.
+            rollingWeekViewDraft = calendarNotionSync.rollingWeekViewID
+            calendarSyncEnabledDraft = calendarNotionSync.isEnabled
+        }
     }
 
     private func saveCalendarSelection() {
