@@ -34,6 +34,8 @@ struct SettingsView: View {
     @State private var notionTokenDraft: String = ""
     @State private var notionDatabaseDraft: String = ""
     @State private var preCallBriefDatabaseDraft: String = ""
+    @State private var showNotionWizard = false
+    @State private var showNotionAdvanced = false
     @State private var calendarSyncEnabledDraft: Bool = false
     @State private var rollingWeekViewDraft: String = ""
     @State private var calendarSyncEnabledCalendarIDs: Set<String> = []
@@ -405,7 +407,56 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section("Credentials") {
+            Section("Guided setup") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("New to Notion, or setting up a fresh workspace? Let Meeting Reminder create every database it needs with the correct schema — you only paste a token and share one page.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        showNotionWizard = true
+                    } label: {
+                        Label("Set up Notion automatically…", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+
+            DisclosureGroup("Advanced — enter IDs manually", isExpanded: $showNotionAdvanced) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Currently in use")
+                        .font(.caption).bold()
+                        .foregroundColor(.secondary)
+                    Text("The IDs the app is pointed at right now. “Default” means the built-in value; “Custom” means set by the setup wizard or entered below.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    idReferenceRow("Meeting Notes (page creation)",
+                                   id: notionService.databaseID,
+                                   isCustom: !notionService.databaseID.isEmpty)
+                    idReferenceRow("Pre-Call Briefings (brief panel)",
+                                   id: effectivePreCallBriefsDatabaseID,
+                                   isCustom: !preCallBriefsDatabaseID.isEmpty)
+                    idReferenceRow("Calendar Events (sync)",
+                                   id: CalendarSyncConstants.calendarEventsDataSourceID,
+                                   isCustom: hasOverride(CalendarSyncConstants.overrideCalendarEventsDSKey))
+                    idReferenceRow("Meeting Notes (sync link)",
+                                   id: CalendarSyncConstants.meetingNotesDataSourceID,
+                                   isCustom: hasOverride(CalendarSyncConstants.overrideMeetingNotesDSKey))
+                    idReferenceRow("Pre-Call Briefings (sync link)",
+                                   id: CalendarSyncConstants.preCallBriefingsDataSourceID,
+                                   isCustom: hasOverride(CalendarSyncConstants.overridePreCallBriefingsDSKey))
+                    idReferenceRow("Skip List",
+                                   id: CalendarSyncConstants.skipListDataSourceID,
+                                   isCustom: hasOverride(CalendarSyncConstants.overrideSkipListDSKey))
+                    idReferenceRow("Cal Sync Migrations",
+                                   id: CalendarSyncConstants.migrationsDataSourceID,
+                                   isCustom: hasOverride(CalendarSyncConstants.overrideMigrationsDSKey))
+
+                    Divider().padding(.vertical, 4)
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Internal integration token")
                         .font(.caption)
@@ -478,6 +529,20 @@ struct SettingsView: View {
             preCallBriefDatabaseDraft = preCallBriefsDatabaseID.isEmpty ? PreCallBriefService.defaultDatabaseID : preCallBriefsDatabaseID
             // Don't pre-populate the token field — it's in Keychain and we want
             // to keep it opaque. Empty field = "leave existing token alone".
+        }
+        .sheet(isPresented: $showNotionWizard) {
+            NotionSetupWizardView { provisioned in
+                showNotionWizard = false
+                if provisioned {
+                    // The wizard wrote token + IDs straight to Keychain/UserDefaults.
+                    // Refresh the visible drafts and re-test so the Connection row
+                    // and Cal Sync scheduler pick them up without a relaunch.
+                    notionDatabaseDraft = notionService.databaseID
+                    preCallBriefDatabaseDraft = preCallBriefsDatabaseID.isEmpty ? PreCallBriefService.defaultDatabaseID : preCallBriefsDatabaseID
+                    Task { await notionService.testConnection() }
+                    calendarNotionSync.startScheduleIfEnabled()
+                }
+            }
         }
     }
 
@@ -739,6 +804,49 @@ struct SettingsView: View {
     /// Save the Notion token + database ID drafts (if present), then immediately
     /// test the connection. This is the single-button UX: the user enters fields
     /// and clicks once.
+    /// The Pre-Call Briefings database ID the app actually reads, mirroring
+    /// `PreCallBriefService.databaseID` (stored value, or the built-in default).
+    private var effectivePreCallBriefsDatabaseID: String {
+        preCallBriefsDatabaseID.isEmpty ? PreCallBriefService.defaultDatabaseID : preCallBriefsDatabaseID
+    }
+
+    /// True when a per-user override has been provisioned for `key`.
+    private func hasOverride(_ key: String) -> Bool {
+        !(UserDefaults.standard.string(forKey: key) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// One read-only labelled ID row with a copy button, so the user can see
+    /// exactly which database each purpose is pointed at.
+    private func idReferenceRow(_ label: String, id: String, isCustom: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(label).font(.caption).foregroundColor(.primary)
+                Text(isCustom ? "Custom" : "Default")
+                    .font(.caption2)
+                    .foregroundColor(isCustom ? .accentColor : .secondary)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background((isCustom ? Color.accentColor : Color.secondary).opacity(0.15))
+                    .cornerRadius(4)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(id, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc").font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .help("Copy ID")
+                .disabled(id.isEmpty)
+            }
+            Text(id.isEmpty ? "— not set —" : id)
+                .font(.caption2.monospaced())
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
     private func saveAndTestNotion() {
         let trimmedToken = notionTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedDB = notionDatabaseDraft

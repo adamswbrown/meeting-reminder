@@ -54,6 +54,8 @@
 		A1000082 /* CalComSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000082 /* CalComSyncService.swift */; };
 		A1000083 /* CalComSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000083 /* CalComSettingsView.swift */; };
 		A1000084 /* CalComNotionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000084 /* CalComNotionBridge.swift */; };
+		A1000085 /* NotionProvisioningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000085 /* NotionProvisioningService.swift */; };
+		A1000086 /* NotionSetupWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000086 /* NotionSetupWizardView.swift */; };
 		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
@@ -124,6 +126,8 @@
 		B1000082 /* CalComSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComSyncService.swift; sourceTree = "<group>"; };
 		B1000083 /* CalComSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComSettingsView.swift; sourceTree = "<group>"; };
 		B1000084 /* CalComNotionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalComNotionBridge.swift; sourceTree = "<group>"; };
+		B1000085 /* NotionProvisioningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionProvisioningService.swift; sourceTree = "<group>"; };
+		B1000086 /* NotionSetupWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionSetupWizardView.swift; sourceTree = "<group>"; };
 		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
@@ -215,6 +219,7 @@
 				B1000081 /* CalComService.swift */,
 				B1000082 /* CalComSyncService.swift */,
 				B1000084 /* CalComNotionBridge.swift */,
+				B1000085 /* NotionProvisioningService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -235,6 +240,7 @@
 				B1000034 /* BriefPanelView.swift */,
 				B1000051 /* BusyLightSettingsView.swift */,
 				B1000083 /* CalComSettingsView.swift */,
+				B1000086 /* NotionSetupWizardView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -400,6 +406,8 @@
 				A1000082 /* CalComSyncService.swift in Sources */,
 				A1000083 /* CalComSettingsView.swift in Sources */,
 				A1000084 /* CalComNotionBridge.swift in Sources */,
+				A1000085 /* NotionProvisioningService.swift in Sources */,
+				A1000086 /* NotionSetupWizardView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

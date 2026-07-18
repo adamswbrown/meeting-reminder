@@ -2,9 +2,15 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
-## [Unreleased] - 2026-06-29
+## [3.1.0] - 2026-07-18
 
 ### Added
+- **Guided Notion setup — works out of the box** — a new wizard creates every Notion database the app needs, so you no longer have to hand-build databases or copy IDs. **Settings → Notion → "Set up Notion automatically…"** (also an optional step in first-launch onboarding).
+  - You do two things by hand — create a Notion integration and share one page with it — then the app builds five databases under that page with the exact schemas it expects: **Meeting Notes**, **Pre-Call Briefings**, **Calendar Events** (with two-way relations to the first two), **Skip List**, and **Cal Sync Migrations**. On success the wizard links straight to each new database.
+  - `NotionProvisioningService` creates the databases via the Notion `2025-09-03` API and wires the app to them; `NotionSetupWizardView` is the shared UI, reused by Settings and onboarding.
+  - The five Notion data source IDs are now **per-user** — provisioned installs use their own databases, while existing installs fall back to their current IDs unchanged (no re-provisioning, nothing overwritten). A guard warns before repointing an already-connected workspace.
+  - **Settings → Notion → Advanced** now shows a read-only **"Currently in use"** panel listing every ID the app is pointed at, each labelled by purpose with a Default/Custom badge and a copy button.
+  - New reference doc: [docs/NOTION-SETUP.md](docs/NOTION-SETUP.md).
 - **Cal.com integration** — Cal.com is now the source of truth for all new bookings. Bookers get an instant calendar invite + Teams link with no Mac involvement in the critical path; availability is read directly from the Exchange calendar by Cal.com.
   - `CalComService` — REST wrapper around the Cal.com v2 API (event types, schedules, bookings, cancel). API key stored in Keychain as `calComAPIKey`.
   - `CalComSyncService` — polls Cal.com every 5 minutes + on wake to create local EKEvents tagged `[calcom-booking-id:<uid>]`. Detects Exchange-synced duplicates (title + ±15 min window) and tags them rather than duplicating. Cancellation sweep removes tagged events for cancelled bookings (30-day lookback).

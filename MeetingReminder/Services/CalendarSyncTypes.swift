@@ -5,14 +5,45 @@ import Foundation
 
 /// Hardcoded identifiers and tuning knobs for the Calendar → Notion sync feature.
 ///
-/// The Notion data source IDs are *live* — they point to real production
-/// databases under the user's Operations parent page in Notion. They are not
-/// user-configurable; bind them at compile time so a misconfiguration in
-/// UserDefaults can't accidentally write to the wrong place.
+/// The five Notion data source IDs below resolve per-user: `NotionSetupWizard`
+/// (via `NotionProvisioningService`) creates a fresh set of databases in the
+/// user's own workspace and writes the resulting data source IDs into the
+/// `override*DSKey` UserDefaults entries. When an override is empty we fall
+/// back to the original *default* IDs — the live databases under Adam's
+/// Operations page — so existing installs keep working untouched with no
+/// re-provisioning.
 enum CalendarSyncConstants {
-    static let calendarEventsDataSourceID = "1d605620-3b70-47f1-96d8-465e57fd0bdd"
-    static let skipListDataSourceID = "77164bfd-8536-4c3a-ba3d-701fe64fc9b3"
-    static let migrationsDataSourceID = "7590658a-f038-45c1-b6ca-d50b2421b0c4"
+    // Default (fallback) data source IDs — the original production databases.
+    // Used verbatim when no per-user override has been provisioned.
+    static let defaultCalendarEventsDataSourceID = "1d605620-3b70-47f1-96d8-465e57fd0bdd"
+    static let defaultSkipListDataSourceID = "77164bfd-8536-4c3a-ba3d-701fe64fc9b3"
+    static let defaultMigrationsDataSourceID = "7590658a-f038-45c1-b6ca-d50b2421b0c4"
+    static let defaultMeetingNotesDataSourceID = "1f2ef850-f293-80ba-a763-000bb894d2c0"
+    static let defaultPreCallBriefingsDataSourceID = "656b2eff-7ea3-4730-91fe-104ff647f4e3"
+
+    // UserDefaults keys holding the per-user data source IDs written by the
+    // guided Notion setup wizard. Empty ⇒ use the matching default above.
+    static let overrideCalendarEventsDSKey = "notionCalendarEventsDataSourceID"
+    static let overrideSkipListDSKey = "notionSkipListDataSourceID"
+    static let overrideMigrationsDSKey = "notionMigrationsDataSourceID"
+    static let overrideMeetingNotesDSKey = "notionMeetingNotesDataSourceID"
+    static let overridePreCallBriefingsDSKey = "notionPreCallBriefingsDataSourceID"
+
+    /// Returns the UserDefaults override for `key`, or `fallback` when unset/empty.
+    private static func resolve(_ key: String, fallback: String) -> String {
+        let v = (UserDefaults.standard.string(forKey: key) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return v.isEmpty ? fallback : v
+    }
+
+    static var calendarEventsDataSourceID: String {
+        resolve(overrideCalendarEventsDSKey, fallback: defaultCalendarEventsDataSourceID)
+    }
+    static var skipListDataSourceID: String {
+        resolve(overrideSkipListDSKey, fallback: defaultSkipListDataSourceID)
+    }
+    static var migrationsDataSourceID: String {
+        resolve(overrideMigrationsDSKey, fallback: defaultMigrationsDataSourceID)
+    }
     static let notionVersion = "2025-09-03"
     /// Reuses the same Keychain entry as `NotionService` — the user has scoped
     /// their Notion integration to cover both the create-meeting-page flow and
@@ -68,8 +99,14 @@ enum CalendarSyncConstants {
     static let prefReactiveEnabledKey = "calendarNotionSyncReactiveEnabled"
 
     /// Notion data source IDs and property names for B1 auto-linking.
-    static let meetingNotesDataSourceID = "1f2ef850-f293-80ba-a763-000bb894d2c0"
-    static let preCallBriefingsDataSourceID = "656b2eff-7ea3-4730-91fe-104ff647f4e3"
+    /// Both resolve per-user (see the override keys above) and fall back to the
+    /// original production databases when no override has been provisioned.
+    static var meetingNotesDataSourceID: String {
+        resolve(overrideMeetingNotesDSKey, fallback: defaultMeetingNotesDataSourceID)
+    }
+    static var preCallBriefingsDataSourceID: String {
+        resolve(overridePreCallBriefingsDSKey, fallback: defaultPreCallBriefingsDataSourceID)
+    }
     static let meetingNotesTitleProperty = "Title"
     static let meetingNotesDateProperty = "Start"
     static let preCallBriefingsTitleProperty = "Meeting Title"

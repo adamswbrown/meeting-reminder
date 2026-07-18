@@ -119,6 +119,7 @@ MeetingReminder/
 │   ├── CalComSyncService.swift           # Polls Cal.com every 5 min + on wake; creates/tags EKEvents (`[calcom-booking-id:<uid>]`); cancellation sweep
 │   ├── CalComNotionBridge.swift          # On CalComSyncService .created, fires NotionService.createMeetingPage() so a meeting-notes page exists before the 06:00 CalendarNotionSyncService run
 │   ├── NotionService.swift               # Notion: create meeting page + shared token
+│   ├── NotionProvisioningService.swift   # OOTB guided setup: creates the 5 Notion DBs (Meeting Notes, Pre-Call Briefings, Calendar Events + relations, Skip List, Migrations) under a user-chosen page via the 2025-09-03 API; writes their data source IDs to UserDefaults overrides
 │   ├── PreCallBriefService.swift         # Composes/fetches the Notion-fed pre-call brief
 │   ├── CalendarNotionSyncService.swift   # Calendar → Notion sync orchestrator
 │   ├── CalendarEventMapper.swift         # Pure-data event → Notion row mapping (no EventKit import)
@@ -137,6 +138,7 @@ MeetingReminder/
 │   ├── BriefPanelView.swift              # Pre-call brief panel
 │   ├── BusyLightSettingsView.swift       # Busy Light settings tab
 │   ├── CalComSettingsView.swift          # Cal.com tab: connection, event types, schedules, upcoming bookings with cancel + reschedule
+│   ├── NotionSetupWizardView.swift       # Guided Notion setup wizard (intro → token → share page → provision); shared by Settings → Notion and onboarding
 │   ├── ChecklistView.swift               # Pre-meeting checklist panel
 │   ├── BreakOverlayView.swift            # Soft full-screen break overlay
 │   └── FloatingPromptView.swift          # Non-blocking context-switch prompt
@@ -217,6 +219,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
   - Recurring occurrences: `<external_id>_<YYYY-MM-DD>` where the date is the occurrence's start time rendered in **Europe/London** local time (so a 23:30 BST meeting doesn't get tagged with tomorrow's UTC date).
   - Synthetic series-master rows: bare `<external_id>` (no date suffix). Emitted once per recurring series so Notion has a single row representing the series definition alongside one row per occurrence in the window. Mapper code: `CalendarEventMapper.expandToRows`.
 - **Shared Notion token with `NotionService`** — both use the same Keychain entry `notionAPIToken`. Token management UI lives in the Notion tab; the Cal Sync tab is a consumer that just shows whether a token is set. Originally planned as two separate tokens but collapsed once the user extended their existing integration's permissions to cover the Operations subtree (Calendar Events + Skip List) in addition to the create-meeting-page database.
+- **Per-user data source IDs (OOTB, v3.1.0)** — the five Notion data source IDs (`calendarEvents`, `skipList`, `migrations`, `meetingNotes`, `preCallBriefings`) in `CalendarSyncConstants` are now computed vars that resolve a UserDefaults override (`notion*DataSourceID` keys), falling back to the original hardcoded production IDs when unset. `NotionProvisioningService` (driven by `NotionSetupWizardView`) creates a fresh set of databases in any workspace and writes those overrides, so the app works out of the box for anyone — while Adam's existing install, with no overrides set, is byte-for-byte unchanged. See [docs/NOTION-SETUP.md](docs/NOTION-SETUP.md). Settings → Notion → Advanced surfaces a read-only "Currently in use" panel of every resolved ID with Default/Custom badges.
 - **Trigger paths**:
   - Daily timer at 06:00 local — scheduled when the app launches if the Settings toggle is on. Single-shot `Timer.scheduledTimer` that re-arms after each fire (no launchd needed; the menu bar app is always running).
   - Menu bar dropdown row "Sync calendar to Notion now" — appears once a token is configured.
@@ -293,6 +296,11 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `calendarNotionSyncSkipFreeAndOOO` | Bool | false | Opt-in: drop `.free` and OOO events before upsert |
 | `calendarNotionSyncAutoLinkRelations` | Bool | false | Opt-in: auto-link Meeting Notes & Pre-Call Briefings on unambiguous title+day match (B1) |
 | `calendarNotionSyncReactiveEnabled` | Bool | false | Opt-in: watch the calendar stream and reactively sync changed events (now→+30d window) within ~2 min, in addition to the 06:00 full run |
+| `notionCalendarEventsDataSourceID` | String | "" | Per-user Calendar Events data source ID (set by guided setup). Empty ⇒ fall back to built-in default |
+| `notionSkipListDataSourceID` | String | "" | Per-user Skip List data source ID. Empty ⇒ built-in default |
+| `notionMigrationsDataSourceID` | String | "" | Per-user Cal Sync Migrations data source ID. Empty ⇒ built-in default |
+| `notionMeetingNotesDataSourceID` | String | "" | Per-user Meeting Notes data source ID (sync auto-link). Empty ⇒ built-in default |
+| `notionPreCallBriefingsDataSourceID` | String | "" | Per-user Pre-Call Briefings data source ID (sync auto-link). Empty ⇒ built-in default |
 | `msGraphConnectedEmail` | String | nil | Display-only email of the connected Exchange account for booking email (set after a successful `GraphMailService` device-code sign-in) |
 
 ### Keychain keys

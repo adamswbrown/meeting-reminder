@@ -10,8 +10,10 @@ struct OnboardingView: View {
     @State private var calendarGranted = false
     @State private var notificationsGranted = false
     @State private var notificationsDenied = false
+    @State private var showNotionWizard = false
+    @State private var notionConfigured = false
 
-    private let totalSteps = 4
+    private let totalSteps = 5
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +33,8 @@ struct OnboardingView: View {
                 case 0: welcomeStep
                 case 1: calendarStep
                 case 2: notificationStep
-                case 3: doneStep
+                case 3: notionStep
+                case 4: doneStep
                 default: doneStep
                 }
             }
@@ -40,6 +43,12 @@ struct OnboardingView: View {
         .frame(width: 520, height: 440)
         .onAppear {
             updatePermissionStates()
+        }
+        .sheet(isPresented: $showNotionWizard) {
+            NotionSetupWizardView { provisioned in
+                showNotionWizard = false
+                if provisioned { notionConfigured = true }
+            }
         }
     }
 
@@ -170,7 +179,44 @@ struct OnboardingView: View {
         .padding(30)
     }
 
-    // MARK: - Step 4: Done
+    // MARK: - Step 4: Notion (optional)
+
+    private var notionStep: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            permissionIcon(granted: notionConfigured, systemImage: "note.text")
+
+            Text("Notion (Optional)")
+                .font(.title2.bold())
+
+            Text("Connect Notion to get a notes page for every meeting and a synced Calendar Events database. Meeting Reminder can set the whole thing up for you — or you can skip and do it later in Settings.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            if notionConfigured {
+                permissionBadge(text: "Notion Connected", color: .green)
+            } else {
+                Button("Set Up Notion") {
+                    showNotionWizard = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+
+            Spacer()
+
+            navigationButtons(
+                backEnabled: true,
+                nextLabel: notionConfigured ? "Continue" : "Skip for Now"
+            )
+        }
+        .padding(30)
+    }
+
+    // MARK: - Step 5: Done
 
     private var doneStep: some View {
         VStack(spacing: 20) {
@@ -186,6 +232,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 10) {
                 statusRow(icon: "calendar", text: "Calendar access", granted: calendarGranted)
                 statusRow(icon: "bell.badge", text: "Notifications", granted: notificationsGranted)
+                statusRow(icon: "note.text", text: "Notion", granted: notionConfigured)
             }
             .padding(20)
             .background(Color.secondary.opacity(0.08))
