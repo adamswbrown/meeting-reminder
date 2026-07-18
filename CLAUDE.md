@@ -261,7 +261,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `hasCompletedOnboarding` | Bool | false | Onboarding finished — skip on next launch |
-| `reminderMinutes` | Int | 5 | Minutes before meeting to show overlay |
+| `reminderMinutes` | Int | 5 | Minutes before meeting to show the full-screen overlay (1/2/3/5/10/15). Configured in **Alerts** tab → "Full-Screen Overlay" |
 | `soundEnabled` | Bool | true | Play alert sound with overlay |
 | `colorBlindMode` | Bool | false | Use colour-blind friendly menu bar palette |
 | `overlayBackground` | String | "dark" | Background theme (9 options) |
@@ -273,6 +273,10 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `alertTierUrgentEnabled` | Bool | true | 5-min menu bar orange + chime |
 | `alertTierBlockingEnabled` | Bool | true | 2-3 min full-screen overlay |
 | `alertTierLastChanceEnabled` | Bool | true | 0-min overlay re-fire |
+| `snoozeUntil10Enabled` | Bool | false | Show "10 min before" snooze-until button on the overlay (issue #13) |
+| `snoozeUntil5Enabled` | Bool | true | Show "5 min before" snooze-until button |
+| `snoozeUntil2Enabled` | Bool | true | Show "2 min before" snooze-until button |
+| `snoozeUntil0Enabled` | Bool | true | Show "Until start" snooze-until button |
 | `screenDimmingEnabled` | Bool | false | Gradual brightness reduction (off by default) |
 | `breakEnforcementEnabled` | Bool | true | Break overlay between back-to-back meetings |
 | `contextSwitchPromptMinutes` | Int | 3 | Minutes before meeting for context-switch nudge |

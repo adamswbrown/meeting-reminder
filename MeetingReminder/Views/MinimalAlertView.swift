@@ -19,6 +19,17 @@ struct MinimalAlertView: View {
         return VideoLinkDetector.serviceName(for: url)
     }
 
+    /// Snooze-until thresholds currently offerable for this meeting (issue #13).
+    private var snoozeUntilOptions: [SnoozeUntilThreshold] {
+        SnoozeUntilThreshold.available(secondsUntilStart: event.startDate.timeIntervalSinceNow)
+    }
+
+    private func snoozeUntil(_ threshold: SnoozeUntilThreshold) {
+        if let seconds = threshold.snoozeSeconds(secondsUntilStart: event.startDate.timeIntervalSinceNow) {
+            onSnooze(seconds)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
@@ -98,6 +109,27 @@ struct MinimalAlertView: View {
                         .cornerRadius(7)
                 }
                 .buttonStyle(.plain)
+            }
+
+            // Snooze-until-before-start row (issue #13) — screen-share-safe compact buttons.
+            if !snoozeUntilOptions.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Until")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.5))
+                    ForEach(snoozeUntilOptions) { threshold in
+                        Button { snoozeUntil(threshold) } label: {
+                            Text(threshold.buttonLabel)
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.white.opacity(0.12))
+                                .foregroundColor(.white)
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
         .padding(16)
