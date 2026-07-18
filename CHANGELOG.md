@@ -2,6 +2,20 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.2.0] - 2026-07-18
+
+### Added
+- **Customizable full-screen overlay timing** ([#13](https://github.com/adamswbrown/meeting-reminder/issues/13)) — the overlay lead time now lives in **Settings → Alerts → "Full-Screen Overlay"** and offers **1 / 2 / 3 / 5 / 10 / 15 minutes** before the meeting. Previously it was capped at 10 minutes and tucked away in the General tab labelled "Remind me before meetings". Same `reminderMinutes` setting — nothing to migrate.
+- **Snooze until a set time before the meeting** ([#13](https://github.com/adamswbrown/meeting-reminder/issues/13)) — the full-screen overlay and the in-call minimal alert now offer **"Snooze until"** buttons (`10 min` / `5 min` / `2 min` before, or `Start`) alongside the existing 30s / 1 min quick-snooze. Each button holds the overlay until that point relative to the meeting start and re-fires there — so you can snooze to *2 minutes before*, then snooze again to *the start*. Buttons only appear while they're still in the future and drop off as the meeting approaches.
+  - Choose which buttons appear in **Settings → Alerts → "Snooze"** — `5 min`, `2 min`, and `Start` are on by default; `10 min` is off.
+  - New `SnoozeUntilThreshold` model (unit-tested) reuses the existing snooze plumbing; new `snoozeUntil10Enabled` / `snoozeUntil5Enabled` / `snoozeUntil2Enabled` / `snoozeUntil0Enabled` UserDefaults keys.
+
+### Changed
+- **Settings consolidated from 11 tabs to 7** — General, Alerts, Appearance, Checklist, Calendars, Notion, Integrations. Appearance folds in the old Display tab; Calendar Sync moves under a **Notion** "Notes / Calendar Sync" sub-tab; **Availability**, **Busy Light**, and **Cal.com** now share a single **Integrations** tab. The **Calendars** tab is a two-column table — "Monitor" and "→ Notion" — replacing the separate pickers.
+
+### Fixed
+- Repaired the test target build — `BookingSupportTests` still called `MailAppleScript.compose()` without the `senderEmail:` argument that the production signature now requires.
+
 ## [3.1.0] - 2026-07-18
 
 ### Added

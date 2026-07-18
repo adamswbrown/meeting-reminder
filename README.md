@@ -14,17 +14,16 @@ A native macOS menu bar app built for people who lose track of time. Reads your 
 
 ## Latest Release
 
-Current release: **v3.0.0** (2026-06-15)
+Current release: **v3.2.0** (2026-07-18)
 
-- **Busy Light via Shortcuts** — runs a macOS Shortcut (HomeKit bulb, smart plug, anything) automatically when you're in a meeting or your mic is hot, and again when you're free
-- **Process-aware mic detection** — ignores always-on listeners (Superwhisper, dictation) so the busy light isn't pinned on
-- **Availability page** — optional push of a sanitised free/busy snapshot to Supabase for a public "when am I free?" web page
-- **Removed** the Minutes (local transcription) and Obsidian integrations — capture/notes is now Notion-only
+- **Customizable overlay timing** — choose when the full-screen overlay appears (1–15 min before), now in Settings → Alerts
+- **Snooze until a set time before the meeting** — "Snooze until" buttons (10/5/2 min before, or Start) hold the overlay and re-fire at that point, on top of the existing 30s / 1 min quick-snooze
+- **Settings streamlined** — consolidated from 11 tabs to 7, with a single Integrations tab and a two-column Calendars table
 - Signed and notarized DMG (full notes in [CHANGELOG.md](CHANGELOG.md))
 
 Download:
-- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.0.0/MeetingReminder-3.0.0.dmg
-- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.0.0/MeetingReminder-3.0.0.dmg.sha256
+- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.2.0/MeetingReminder-3.2.0.dmg
+- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.2.0/MeetingReminder-3.2.0.dmg.sha256
 
 ## Credits
 
@@ -62,7 +61,9 @@ Instead of a single reminder, alerts escalate with increasing urgency:
 | 2–3 min | Blocking | Full-screen overlay (must interact) |
 | 0 min | Last chance | Overlay re-fires if not dismissed |
 
-Each tier is independently configurable in Settings.
+Each tier is independently configurable in Settings. The full-screen overlay's lead time (1–15 min before) is set separately in **Settings → Alerts → Full-Screen Overlay**.
+
+When the overlay appears you can snooze it two ways: the fixed **30s / 1 min** quick-snooze, or **"Snooze until"** a point relative to the meeting — `10 min` / `5 min` / `2 min` before, or `Start`. Snooze to *2 min before*, then again to *the start*. The buttons only show while they're still ahead of you and are toggled in **Settings → Alerts → Snooze**.
 
 ### Multi-Monitor & In-Call Safety
 - **Monitor picker** — choose which display the overlay appears on: all screens, primary only, or a specific connected monitor by name
@@ -215,16 +216,13 @@ Open **Preferences** from the menu bar dropdown:
 
 | Tab | Settings |
 |-----|----------|
-| **General** | Reminder time (1–10 min), sound, colour-blind mode, launch at login, re-run setup assistant |
-| **Alerts** | Progressive alert tiers (toggle each), wrap-up threshold, context-switch prompt timing, break enforcement, screen dimming |
-| **Display** | Overlay monitor (all / primary / specific), in-call minimal alert toggle |
-| **Appearance** | 9 overlay background themes |
+| **General** | Sound, colour-blind mode, launch at login, calendar access, re-run setup assistant |
+| **Alerts** | Full-screen overlay lead time (1–15 min), snooze-until buttons, progressive alert tiers (toggle each), wrap-up threshold, context-switch prompt timing, break enforcement, screen dimming |
+| **Appearance** | 9 overlay background themes, overlay monitor (all / primary / specific), in-call minimal alert toggle |
 | **Checklist** | Add/remove/reorder pre-meeting checklist items |
-| **Calendars** | Select which calendars to monitor |
-| **Notion** | API token (Keychain), database ID, Save & Test button, enable toggle |
-| **Availability** | Supabase URL + service-role key, push interval/window (see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)) |
-| **Cal Sync** | Calendar → Notion sync: enable, Sync Now / Dry Run / Patch, view ID, log |
-| **Busy Light** | Choose Busy/Free Shortcuts + enable toggles (see [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md)) |
+| **Calendars** | Two-column table — "Monitor" (which calendars drive alerts) and "→ Notion" (which sync to Notion) |
+| **Notion** | "Notes / Calendar Sync" sub-tabs: API token (Keychain), guided setup wizard, database IDs; Calendar → Notion sync (Sync Now / Dry Run / Patch, log) |
+| **Integrations** | "Availability / Busy Light / Cal.com" sub-tabs (see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md), [docs/BUSY-LIGHT.md](docs/BUSY-LIGHT.md)) |
 
 ---
 

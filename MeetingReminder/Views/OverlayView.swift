@@ -58,6 +58,7 @@ struct OverlayView: View {
                 Spacer()
 
                 // Action buttons
+                VStack(spacing: 14) {
                 HStack(spacing: 16) {
                     if event.videoLink != nil {
                         Button(action: onJoin) {
@@ -122,6 +123,30 @@ struct OverlayView: View {
                     .keyboardShortcut(.escape, modifiers: [])
                 }
 
+                // Snooze-until-before-start row (issue #13). Only shows thresholds
+                // that are enabled AND still in the future; recomputed each second
+                // via the countdown timer, so buttons drop off as the meeting nears.
+                if !snoozeUntilOptions.isEmpty {
+                    HStack(spacing: 10) {
+                        Text("Snooze until")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.5))
+                        ForEach(snoozeUntilOptions) { threshold in
+                            Button { snoozeUntil(threshold) } label: {
+                                Text(threshold.buttonLabel)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(Color.white.opacity(0.14))
+                                    .cornerRadius(10)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                }
+
                 Spacer()
                     .frame(height: 80)
             }
@@ -153,6 +178,19 @@ struct OverlayView: View {
     private var videoServiceName: String {
         guard let url = event.videoLink else { return "Meeting" }
         return VideoLinkDetector.serviceName(for: url)
+    }
+
+    /// Snooze-until thresholds currently offerable for this meeting.
+    private var snoozeUntilOptions: [SnoozeUntilThreshold] {
+        SnoozeUntilThreshold.available(secondsUntilStart: event.startDate.timeIntervalSinceNow)
+    }
+
+    /// Reuse the existing seconds-based snooze plumbing: a snooze-until is just a
+    /// fixed-duration snooze computed from the live time-until-start at tap time.
+    private func snoozeUntil(_ threshold: SnoozeUntilThreshold) {
+        if let seconds = threshold.snoozeSeconds(secondsUntilStart: event.startDate.timeIntervalSinceNow) {
+            onSnooze(seconds)
+        }
     }
 
     private func updateCountdown() {

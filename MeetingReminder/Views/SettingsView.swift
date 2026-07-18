@@ -79,17 +79,6 @@ struct SettingsView: View {
     private var generalTab: some View {
         Form {
             Section {
-                Picker("Remind me before meetings:", selection: $reminderMinutes) {
-                    Text("1 minute").tag(1)
-                    Text("2 minutes").tag(2)
-                    Text("3 minutes").tag(3)
-                    Text("5 minutes").tag(5)
-                    Text("10 minutes").tag(10)
-                }
-                .pickerStyle(.menu)
-            }
-
-            Section {
                 Toggle("Play sound with reminder", isOn: $soundEnabled)
                 Toggle("Colour-blind friendly mode", isOn: $colorBlindMode)
             }
@@ -132,6 +121,30 @@ struct SettingsView: View {
 
     private var alertsTab: some View {
         Form {
+            Section("Full-Screen Overlay") {
+                Picker("Show overlay:", selection: $reminderMinutes) {
+                    Text("1 minute before").tag(1)
+                    Text("2 minutes before").tag(2)
+                    Text("3 minutes before").tag(3)
+                    Text("5 minutes before").tag(5)
+                    Text("10 minutes before").tag(10)
+                    Text("15 minutes before").tag(15)
+                }
+                .pickerStyle(.menu)
+            }
+
+            Section("Snooze") {
+                Text("Quick-snooze (30s / 1 min) is always available on the overlay. Enable extra “snooze until” buttons that hold the overlay until a set time before the meeting starts.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                ForEach(SnoozeUntilThreshold.allCases) { threshold in
+                    Toggle(isOn: snoozeUntilBinding(for: threshold)) {
+                        Text("“\(threshold.buttonLabel)” — snooze \(threshold.displayName.lowercased())")
+                    }
+                }
+            }
+
             Section("Progressive Alerts") {
                 Toggle("Enable progressive alerts", isOn: $progressiveAlertsEnabled)
 
@@ -948,6 +961,13 @@ struct SettingsView: View {
         Binding(
             get: { tier.isEnabled },
             set: { UserDefaults.standard.set($0, forKey: tier.settingsKey) }
+        )
+    }
+
+    private func snoozeUntilBinding(for threshold: SnoozeUntilThreshold) -> Binding<Bool> {
+        Binding(
+            get: { threshold.isEnabled },
+            set: { UserDefaults.standard.set($0, forKey: threshold.settingsKey) }
         )
     }
 
