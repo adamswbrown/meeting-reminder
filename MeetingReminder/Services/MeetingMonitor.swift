@@ -170,6 +170,12 @@ final class MeetingMonitor: ObservableObject {
     // MARK: - User Actions
 
     func dismiss() {
+        // Dismissed without joining — restore any brightness we pulled down for
+        // this meeting so the screen doesn't stay dim if the user never joins.
+        if currentMeetingInProgress == nil {
+            screenDimmer.restore()
+            dimmingStartedFor = nil
+        }
         shouldShowOverlay = false
         shouldShowMinimalAlert = false
         activeOverlayEvent = nil
@@ -300,7 +306,10 @@ final class MeetingMonitor: ObservableObject {
         // and a calendar-driven in-progress meeting getting cancelled mid-call is
         // rare enough that we'd rather keep recording than rip the session out.
         let liveIDs = Set(calendarService.events.map { $0.id })
-        if let active = activeOverlayEvent, !liveIDs.contains(active.id) {
+        if let active = activeOverlayEvent,
+           !active.id.hasPrefix("test-"),
+           !active.id.hasPrefix("adhoc-"),
+           !liveIDs.contains(active.id) {
             activeOverlayEvent = nil
             shouldShowOverlay = false
             shouldShowMinimalAlert = false
@@ -341,13 +350,23 @@ final class MeetingMonitor: ObservableObject {
     private func checkUpcomingMeetings() {
         let now = Date()
 
-        // Daily cleanup
+        // Daily cleanup. Only wipe tracking for events that aren't currently
+        // within the alert window — clearing an active event's state at the
+        // first tick after midnight would let a dismissed overlay re-fire.
         if !Calendar.current.isDate(now, inSameDayAs: lastCleanupDate) {
-            shownEventIDs.removeAll()
-            snoozedEvents.removeAll()
-            firedAlertTiers.removeAll()
-            contextSwitchPromptShown.removeAll()
-            meetingEndedIDs.removeAll()
+            let activeIDs = Set(
+                calendarService.events
+                    .filter { event in
+                        let delta = event.startDate.timeIntervalSince(now)
+                        return delta <= 3600 && delta >= -3600
+                    }
+                    .map { $0.id }
+            )
+            shownEventIDs = shownEventIDs.filter { activeIDs.contains($0) }
+            snoozedEvents = snoozedEvents.filter { activeIDs.contains($0.key) }
+            firedAlertTiers = firedAlertTiers.filter { activeIDs.contains($0.key) }
+            contextSwitchPromptShown = contextSwitchPromptShown.filter { activeIDs.contains($0) }
+            meetingEndedIDs = meetingEndedIDs.filter { activeIDs.contains($0) }
             lastCleanupDate = now
         }
 
@@ -356,6 +375,16 @@ final class MeetingMonitor: ObservableObject {
 
         // Check for meetings that just ended (calendar-based fallback)
         checkMeetingEnded()
+
+        // Backstop: if we dimmed for a meeting the user never joined and it's
+        // now more than 2 min past its start, restore brightness so a skipped
+        // meeting doesn't leave the screen dark.
+        if let dimmedID = dimmingStartedFor, currentMeetingInProgress == nil,
+           let dimmedEvent = calendarService.events.first(where: { $0.id == dimmedID }),
+           now.timeIntervalSince(dimmedEvent.startDate) > 120 {
+            screenDimmer.restore()
+            dimmingStartedFor = nil
+        }
 
         for event in calendarService.events {
             let minutesUntil = event.timeUntilStart / 60.0
@@ -397,7 +426,28 @@ final class MeetingMonitor: ObservableObject {
             let reminderSeconds = TimeInterval(reminderMinutes * 60)
             let timeUntil = event.timeUntilStart
 
-            if !shownEventIDs.contains(event.id) {
+            // When progressive alerts are on, the full-screen overlay is the
+            // "blocking" tier and is gated by its toggle. With progressive
+            // alerts off, the overlay always fires at reminderMinutes.
+            let blockingAllowed = !progressiveAlertsEnabled ||
+                AlertTier.blocking.isEnabled
+
+            // A snooze that expired after the meeting already slipped past the
+            // -60s window would otherwise never bring the overlay back. If an
+            // expired snooze entry still exists for a recently-started, not-yet-
+            // joined/ended meeting, re-fire regardless of the normal windows.
+            if let snoozeUntil = snoozedEvents[event.id], snoozeUntil <= now,
+               timeUntil <= 0 && timeUntil > -600,
+               currentMeetingInProgress?.id != event.id,
+               !shownEventIDs.contains(event.id) {
+                snoozedEvents[event.id] = nil
+                if blockingAllowed {
+                    triggerOverlay(for: event)
+                    return
+                }
+            }
+
+            if !shownEventIDs.contains(event.id) && blockingAllowed {
                 if timeUntil > 0 && timeUntil <= reminderSeconds {
                     triggerOverlay(for: event)
                     return
@@ -405,6 +455,26 @@ final class MeetingMonitor: ObservableObject {
 
                 // Also trigger for events that just started (within 60 seconds)
                 if timeUntil <= 0 && timeUntil > -60 {
+                    triggerOverlay(for: event)
+                    return
+                }
+            }
+
+            // Last-chance tier: the overlay fired earlier and was dismissed, but
+            // the user never joined. Re-fire it once as the meeting starts.
+            if progressiveAlertsEnabled && AlertTier.lastChance.isEnabled &&
+               timeUntil <= 0 && timeUntil > -60 &&
+               shownEventIDs.contains(event.id) &&
+               !shouldShowOverlay && !shouldShowMinimalAlert &&
+               snoozedEvents[event.id] == nil &&
+               !meetingEndedIDs.contains(event.id) &&
+               currentMeetingInProgress?.id != event.id {
+                let fired = firedAlertTiers[event.id] ?? []
+                if !fired.contains(AlertTier.lastChance.rawValue) {
+                    var updated = fired
+                    updated.insert(AlertTier.lastChance.rawValue)
+                    firedAlertTiers[event.id] = updated
+                    shownEventIDs.remove(event.id)
                     triggerOverlay(for: event)
                     return
                 }
@@ -594,7 +664,6 @@ final class MeetingMonitor: ObservableObject {
                     "us.zoom.xos",           // Zoom
                     "com.microsoft.teams",    // Teams (old)
                     "com.microsoft.teams2",   // Teams (new)
-                    "com.google.Chrome",      // Chrome (for Meet) — too broad, skip
                     "com.cisco.webexmeetingsapp", // Webex
                     "com.tinyspeck.slackmacgap",  // Slack
                 ]

@@ -87,10 +87,13 @@ final class CalComService: ObservableObject {
     }
 
     func cancelBooking(uid: String, reason: String? = nil) async throws {
+        // Cal.com API v2 (2024-08-13) cancels via POST .../cancel with an optional
+        // cancellationReason body — not DELETE on the booking itself (compare
+        // rescheduleBooking which similarly POSTs to .../reschedule).
         var payload: [String: String] = [:]
         if let reason { payload["cancellationReason"] = reason }
         let body = try JSONEncoder().encode(payload)
-        _ = try await deleteRequest(path: "/bookings/\(uid)", version: Self.bookingVersion, body: body)
+        _ = try await post(path: "/bookings/\(uid)/cancel", version: Self.bookingVersion, body: body)
     }
 
     func rescheduleBooking(uid: String, newStart: Date, reason: String? = nil) async throws -> CalComBooking {

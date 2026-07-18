@@ -112,10 +112,31 @@ final class NotificationService {
 
     func removeNotifications(for eventID: String) {
         let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [
-            "meeting-banner-\(eventID)",
+
+        // Banners are posted with a per-minute suffix ("meeting-banner-<id>-<n>"),
+        // so an exact-identifier removal misses them. Match by prefix instead,
+        // across both pending and already-delivered notifications.
+        let bannerPrefix = "meeting-banner-\(eventID)"
+        let exactIDs = [
             "meeting-wrapup-\(eventID)",
             "meeting-post-\(eventID)",
-        ])
+        ]
+
+        center.removePendingNotificationRequests(withIdentifiers: exactIDs)
+        center.removeDeliveredNotifications(withIdentifiers: exactIDs)
+
+        center.getPendingNotificationRequests { requests in
+            let ids = requests.map(\.identifier).filter { $0.hasPrefix(bannerPrefix) }
+            if !ids.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+        }
+
+        center.getDeliveredNotifications { notifications in
+            let ids = notifications.map(\.request.identifier).filter { $0.hasPrefix(bannerPrefix) }
+            if !ids.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: ids)
+            }
+        }
     }
 }

@@ -157,31 +157,42 @@ final class RelationLinker {
                                  dateProperty: String,
                                  titleNeedle: String,
                                  day: String) async throws -> [Candidate] {
-        let body: [String: Any] = [
-            "page_size": 25,
-            "filter": [
-                "and": [
-                    ["property": titleProperty,
-                     "title": ["contains": titleNeedle]],
-                    ["property": dateProperty,
-                     "date": ["on_or_after": day]],
-                    ["property": dateProperty,
-                     "date": ["on_or_before": day]],
+        // Page through results. The exact-title ambiguity guard depends on
+        // seeing *every* candidate — a truncated first page could hide a second
+        // exact match and let an ambiguous link slip through. Capped at 10
+        // pages to bound a pathological loop.
+        var out: [Candidate] = []
+        var cursor: String? = nil
+        var page = 0
+        repeat {
+            var body: [String: Any] = [
+                "page_size": 100,
+                "filter": [
+                    "and": [
+                        ["property": titleProperty,
+                         "title": ["contains": titleNeedle]],
+                        ["property": dateProperty,
+                         "date": ["on_or_after": day]],
+                        ["property": dateProperty,
+                         "date": ["on_or_before": day]],
+                    ]
                 ]
             ]
-        ]
-        let resp = try await client.post(
-            path: "/data_sources/\(dataSourceID)/query",
-            body: body)
-        let results = resp["results"] as? [[String: Any]] ?? []
-        var out: [Candidate] = []
-        for row in results {
-            guard let id = row["id"] as? String,
-                  let props = row["properties"] as? [String: Any],
-                  let title = extractTitle(props[titleProperty]),
-                  !title.isEmpty else { continue }
-            out.append(Candidate(pageID: id, title: title))
-        }
+            if let c = cursor { body["start_cursor"] = c }
+            let resp = try await client.post(
+                path: "/data_sources/\(dataSourceID)/query",
+                body: body)
+            let results = resp["results"] as? [[String: Any]] ?? []
+            for row in results {
+                guard let id = row["id"] as? String,
+                      let props = row["properties"] as? [String: Any],
+                      let title = extractTitle(props[titleProperty]),
+                      !title.isEmpty else { continue }
+                out.append(Candidate(pageID: id, title: title))
+            }
+            cursor = ((resp["has_more"] as? Bool) == true) ? (resp["next_cursor"] as? String) : nil
+            page += 1
+        } while cursor != nil && page < 10
         return out
     }
 

@@ -123,11 +123,23 @@ enum CalendarSyncNotionQueries {
         /// Trash). Tracked so we can keep the canonical pageID even if the
         /// archived row was the first one seen during pagination.
         let archived: Bool
+        /// The row's current `Sync State` select name ("Active" / "Orphaned" /
+        /// "Stale"), nil when unset. Used by the orphan sweep to avoid
+        /// re-PATCHing rows already in their target state every run.
+        let syncState: String?
         /// Raw `properties` payload from the Notion query response. Stored so
         /// the upserter can diff incoming props against the current state and
         /// skip the PATCH when nothing changed. Comparing read-format against
         /// write-format requires the canonicaliser in `PropertyDiff`.
         let properties: [String: Any]
+        /// The row's `Date` property start, parsed from Notion. Used by orphan
+        /// classification to only sweep rows whose event date falls inside the
+        /// current run's fetch window — `fetchExistingEvents` queries the whole
+        /// data source (no date filter), but `touched` only covers the window,
+        /// so without this guard every row older than the window would be
+        /// archived even though its event still exists. `nil` when the row has
+        /// no parseable Date (such rows are never swept).
+        let eventDate: Date?
     }
 
     struct ExistingEventsResult {
@@ -173,7 +185,9 @@ enum CalendarSyncNotionQueries {
                     hasMeetingNotesLink: notesCount > 0,
                     hasPreCallBriefingLink: briefCount > 0,
                     archived: archived,
-                    properties: props)
+                    syncState: extractSelectName(props["Sync State"]),
+                    properties: props,
+                    eventDate: extractDateStart(props["Date"]))
 
                 if let existing = map[appleID] {
                     // Record both page IDs as a duplicate set.
@@ -202,6 +216,12 @@ enum CalendarSyncNotionQueries {
         return arr.count
     }
 
+    private static func extractSelectName(_ any: Any?) -> String? {
+        guard let dict = any as? [String: Any],
+              let sel = dict["select"] as? [String: Any] else { return nil }
+        return sel["name"] as? String
+    }
+
     private static func extractTitle(_ any: Any?) -> String? {
         guard let dict = any as? [String: Any],
               let arr = dict["title"] as? [[String: Any]] else { return nil }
@@ -213,13 +233,45 @@ enum CalendarSyncNotionQueries {
               let arr = dict["rich_text"] as? [[String: Any]] else { return nil }
         return arr.compactMap { ($0["plain_text"] as? String) }.joined()
     }
+
+    // Parsers for the Notion `Date` property's `start`. Notion returns either a
+    // full ISO8601 datetime (fractional or not) or an all-day `YYYY-MM-DD`.
+    private static let parseDateFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let parseDatePlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let parseAllDay: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Europe/London")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_GB_POSIX")
+        return f
+    }()
+
+    /// Parses the `start` of a Notion `Date` property into a `Date`. Returns
+    /// nil when the property is absent or unparseable.
+    private static func extractDateStart(_ any: Any?) -> Date? {
+        guard let dict = any as? [String: Any],
+              let date = dict["date"] as? [String: Any],
+              let start = date["start"] as? String, !start.isEmpty else { return nil }
+        return parseDateFractional.date(from: start)
+            ?? parseDatePlain.date(from: start)
+            ?? parseAllDay.date(from: start)
+    }
 }
 
 // MARK: - Counts
 
 struct CalendarSyncCounts: CustomStringConvertible {
     var created = 0, updated = 0, skipped = 0, failed = 0
-    var archived = 0, staled = 0
+    var orphaned = 0, staled = 0
     /// Rows whose incoming props matched the existing Notion row exactly
     /// (ignoring `Last Synced`), so the PATCH was skipped. Tracked separately
     /// from `skipped` (which is for malformed/empty-id events) to make the
@@ -230,8 +282,8 @@ struct CalendarSyncCounts: CustomStringConvertible {
     var duplicates = 0
     var description: String {
         var s = "created=\(created) updated=\(updated) unchanged=\(unchanged) skipped=\(skipped) failed=\(failed)"
-        if archived > 0 || staled > 0 {
-            s += " archived=\(archived) staled=\(staled)"
+        if orphaned > 0 || staled > 0 {
+            s += " orphaned=\(orphaned) staled=\(staled)"
         }
         if duplicates > 0 {
             s += " duplicates=\(duplicates)"
@@ -420,13 +472,24 @@ final class CalendarSyncUpserter {
         var linkTargets: [RelationLinker.LinkTarget]
     }
 
+    /// `orphanWindow` bounds the orphan sweep: only rows whose parsed `Date`
+    /// falls inside `[start, end]` are eligible for orphan/stale classification.
+    /// Rows outside the window (older history, far-future) are left untouched
+    /// because `touched` only reflects events in the current fetch window. Nil
+    /// disables the window guard (the sweep is off in that case anyway).
     func run(rows: [(event: EventLike, isSeriesMaster: Bool, sourceCalendarName: String)],
-             existing: [String: CalendarSyncNotionQueries.ExistingRow]) async -> RunOutcome {
+             existing: [String: CalendarSyncNotionQueries.ExistingRow],
+             orphanWindow: (start: Date, end: Date)? = nil,
+             presentIDs: Set<String> = []) async -> RunOutcome {
         var counts = CalendarSyncCounts()
         var linkTargets: [RelationLinker.LinkTarget] = []
         let now = Date()
         var touched: Set<String> = []
-        touched.reserveCapacity(rows.count)
+        touched.reserveCapacity(rows.count + presentIDs.count)
+        // Events dropped by the Skip List or the skip-free/OOO filter still
+        // exist on the calendar — treat them as "present" so a newly-added
+        // skip rule doesn't cause their Notion rows to be mass-archived.
+        touched.formUnion(presentIDs)
         // Cap diagnostic logging so a noisy run doesn't fill the log file.
         var diagnosticsLogged = 0
         let diagnosticsCap = 5
@@ -445,9 +508,10 @@ final class CalendarSyncUpserter {
                                                             now: now,
                                                             isSeriesMaster: row.isSeriesMaster,
                                                             sourceCalendarName: row.sourceCalendarName)
-            // Mark every touched row as Active. Together with `archived: false`
-            // on the UPDATE path, this auto-restores any row that was
-            // previously archived/staled but has come back from the calendar.
+            // Mark every touched row as Active. Orphaned/Stale rows stay
+            // queryable (the sweep never trashes pages), so a row whose event
+            // comes back from the calendar diffs on Sync State here and gets
+            // revived by the normal UPDATE PATCH.
             props["Sync State"] = ["select": ["name": "Active"]]
             do {
                 var resultPageID: String?
@@ -546,7 +610,10 @@ final class CalendarSyncUpserter {
         }
 
         if archiveOrphans {
-            await processOrphans(touched: touched, existing: existing, counts: &counts)
+            await processOrphans(touched: touched,
+                                 existing: existing,
+                                 orphanWindow: orphanWindow,
+                                 counts: &counts)
         }
         return RunOutcome(counts: counts, linkTargets: linkTargets)
     }
@@ -556,35 +623,60 @@ final class CalendarSyncUpserter {
     ///   - has manual relations (Meeting Notes / Pre-Call Briefing populated)
     ///       → Sync State = "Stale". Row stays visible. Logged.
     ///   - no manual relations
-    ///       → Sync State = "Orphaned" + archived = true. Row hides from views
-    ///         by default. Reversible via Notion API.
+    ///       → Sync State = "Orphaned". Views filter on Sync State to hide
+    ///         them.
+    ///
+    /// Deliberately does NOT set `archived: true`: Notion's data-source query
+    /// never returns trashed pages (verified live 2026-07-18), so an archived
+    /// row is invisible to `fetchExistingEvents` — a returning event would hit
+    /// the CREATE branch and duplicate instead of reviving. Keeping orphans
+    /// queryable means the normal UPDATE path (which always writes
+    /// Sync State = Active) revives them for free.
     private func processOrphans(touched: Set<String>,
                                 existing: [String: CalendarSyncNotionQueries.ExistingRow],
+                                orphanWindow: (start: Date, end: Date)?,
                                 counts: inout CalendarSyncCounts) async {
         var orphanIDs: [String] = []
+        var skippedOutOfWindow = 0
         for (appleID, row) in existing where !touched.contains(appleID) {
-            _ = row // captured by closure below
+            // Only sweep rows whose event date falls inside the current run's
+            // fetch window. `fetchExistingEvents` queries the whole data source
+            // with no date filter, but `touched` only covers the window — so
+            // without this guard every row older than the window would be
+            // archived even though its event still exists on the calendar.
+            // Rows with no parseable Date are left untouched (conservative).
+            if let window = orphanWindow {
+                guard let date = row.eventDate else { skippedOutOfWindow += 1; continue }
+                guard date >= window.start && date <= window.end else {
+                    skippedOutOfWindow += 1
+                    continue
+                }
+            }
             orphanIDs.append(appleID)
+        }
+        if skippedOutOfWindow > 0 {
+            logger.info("orphans: \(skippedOutOfWindow) rows skipped (outside fetch window or no date)")
         }
         guard !orphanIDs.isEmpty else { return }
         logger.info("orphans: \(orphanIDs.count) rows in Notion not in source")
         for appleID in orphanIDs {
             guard let row = existing[appleID] else { continue }
             let stale = row.hasManualRelations
+            let target = stale ? "Stale" : "Orphaned"
+            // Orphans stay queryable, so they show up in `existing` on every
+            // run — skip rows already in their target state to avoid
+            // re-PATCHing (and re-tripping Notion automations) each sync.
+            if row.syncState == target { continue }
             do {
-                var body: [String: Any] = [:]
-                if stale {
-                    body["properties"] = ["Sync State": ["select": ["name": "Stale"]]]
-                } else {
-                    body["properties"] = ["Sync State": ["select": ["name": "Orphaned"]]]
-                    body["archived"] = true
-                }
+                let body: [String: Any] = [
+                    "properties": ["Sync State": ["select": ["name": target]]]
+                ]
                 if dryRun {
-                    logger.info("DRY \(stale ? "STALE" : "ARCHIVE") \(appleID) :: \(row.pageID)")
+                    logger.info("DRY \(stale ? "STALE" : "ORPHAN") \(appleID) :: \(row.pageID)")
                 } else {
                     _ = try await client.patch(path: "/pages/\(row.pageID)", body: body)
                 }
-                if stale { counts.staled += 1 } else { counts.archived += 1 }
+                if stale { counts.staled += 1 } else { counts.orphaned += 1 }
             } catch {
                 logger.error("orphan handling failed for \(appleID): \(error)")
                 counts.failed += 1
@@ -706,7 +798,24 @@ final class CalendarNotionSyncService: ObservableObject {
 
     private let logger = CalendarSyncLogger()
     private var dailyTimer: Timer?
+    private var dailyRetryTimer: Timer?
     private var changeWatcher: CalendarChangeWatcher?
+
+    /// While a sync run is in progress, and for `changeCooldown` seconds after
+    /// it finishes, calendar-change notifications are treated as self-inflicted
+    /// echoes and ignored by the reactive watcher. A run's
+    /// `store.refreshSourcesIfNecessary()` can itself post `.EKEventStoreChanged`,
+    /// which would otherwise re-trigger the watcher in a ~2.5-min loop.
+    private var ignoreChangesUntil: Date?
+    private let changeCooldown: TimeInterval = 15
+
+    /// True when an incoming calendar change should be ignored — a run is in
+    /// flight, or we're within the post-run cooldown window.
+    private func shouldIgnoreCalendarChange() -> Bool {
+        if isRunning { return true }
+        if let until = ignoreChangesUntil, Date() < until { return true }
+        return false
+    }
 
     init() {
         self.lastResult = UserDefaults.standard.string(forKey: CalendarSyncConstants.prefLastResultKey)
@@ -787,9 +896,16 @@ final class CalendarNotionSyncService: ObservableObject {
     private func reconfigureWatcher() {
         if reactiveEnabled && isConfigured {
             if changeWatcher == nil {
-                changeWatcher = CalendarChangeWatcher(logger: logger) { [weak self] in
-                    await self?.runReactive()
-                }
+                changeWatcher = CalendarChangeWatcher(
+                    logger: logger,
+                    shouldIgnoreChange: { [weak self] in
+                        self?.shouldIgnoreCalendarChange() ?? false
+                    },
+                    onFire: { [weak self] in
+                        // A deallocated service counts as "ran" so the watcher
+                        // doesn't spin re-scheduling against a dead target.
+                        await self?.runReactive() ?? true
+                    })
             }
             changeWatcher?.start()
         } else {
@@ -820,29 +936,44 @@ final class CalendarNotionSyncService: ObservableObject {
 
     // MARK: Run
 
-    func runNow(dryRun: Bool = false) async {
+    @discardableResult
+    func runNow(dryRun: Bool = false) async -> Bool {
         await run(mode: .full, dryRun: dryRun)
     }
 
     /// Change-driven run. Narrow forward window, orphan archival forced off,
     /// rolling-week patch skipped. Shares the upsert pipeline with the full run.
-    func runReactive() async {
+    /// Returns whether the run actually executed (false if another was in
+    /// flight and it was skipped).
+    @discardableResult
+    func runReactive() async -> Bool {
         await run(mode: .reactive, dryRun: false)
     }
 
-    private func run(mode: CalendarSyncMode, dryRun: Bool) async {
+    /// Runs a sync in the given mode. Returns `true` if the run executed to
+    /// completion (or hit a handled fatal), `false` if it was skipped because
+    /// another run was already in flight. Callers use the return to decide
+    /// whether to retry (daily timer) or re-schedule the debounce (watcher).
+    @discardableResult
+    private func run(mode: CalendarSyncMode, dryRun: Bool) async -> Bool {
         guard !isRunning else {
             logger.warn("run skipped: already running")
-            return
+            return false
         }
         guard let token else {
             logger.error("no token configured")
             updateLastResult("no token")
-            return
+            return true
         }
 
         isRunning = true
-        defer { isRunning = false }
+        defer {
+            isRunning = false
+            // Open the post-run cooldown so the reactive watcher ignores the
+            // `.EKEventStoreChanged` echo that our own `refreshSourcesIfNecessary()`
+            // may have posted during this run.
+            ignoreChangesUntil = Date().addingTimeInterval(changeCooldown)
+        }
         logger.info("=== sync start (mode=\(mode.logLabel) dryRun=\(dryRun)) ===")
 
         let reader = CalendarSyncReader(logger: logger)
@@ -857,7 +988,7 @@ final class CalendarNotionSyncService: ObservableObject {
         } else {
             logger.error("no calendars to sync (Exchange calendar not found and no opt-ins configured)")
             updateLastResult("no calendars")
-            return
+            return true
         }
         for c in calendars {
             logger.info("calendar: \(c.title) (source: \(c.source.title))")
@@ -884,16 +1015,40 @@ final class CalendarNotionSyncService: ObservableObject {
             var skipped = 0
             var totalEK = 0
             let skipFreeOOO = skipFreeAndOOOEnabled
+            // Composite appleIDs of events dropped by the skip filters. They
+            // still exist on the calendar, so the orphan sweep must treat them
+            // as present (otherwise a newly-added skip rule mass-archives them).
+            var skipFilteredIDs: Set<String> = []
+            // The fetch window bracket, captured so the orphan sweep only
+            // considers Notion rows whose date falls inside it. Full runs use
+            // the 90/30 window; reactive runs are narrow (but skip the sweep).
+            let now0 = Date()
+            let windowStart: Date = {
+                switch mode {
+                case .full:
+                    return Calendar.current.date(byAdding: .day,
+                        value: -CalendarSyncConstants.lookbackDays, to: now0)!
+                case .reactive:
+                    return now0
+                }
+            }()
+            let windowEnd: Date = {
+                switch mode {
+                case .full:
+                    return Calendar.current.date(byAdding: .day,
+                        value: CalendarSyncConstants.lookaheadDays, to: now0)!
+                case .reactive:
+                    return Calendar.current.date(byAdding: .day,
+                        value: CalendarSyncConstants.reactiveLookaheadDays, to: now0)!
+                }
+            }()
             for cal in calendars {
                 let events: [EKEvent]
                 switch mode {
                 case .full:
                     events = reader.fetchEvents(in: cal)
                 case .reactive:
-                    let now = Date()
-                    let to = Calendar.current.date(byAdding: .day,
-                        value: CalendarSyncConstants.reactiveLookaheadDays, to: now)!
-                    events = reader.fetchEvents(in: cal, from: now, to: to)
+                    events = reader.fetchEvents(in: cal, from: windowStart, to: windowEnd)
                 }
                 totalEK += events.count
                 let calName = reader.notionCalendarName(for: cal)
@@ -902,6 +1057,7 @@ final class CalendarNotionSyncService: ObservableObject {
                     if SkipFilter.shouldSkip(title: title, rules: skipRules) {
                         logger.debug("skip rule: \(title)")
                         skipped += 1
+                        skipFilteredIDs.insert(CalendarEventMapper.compositeAppleID(for: e))
                         return false
                     }
                     if skipFreeOOO {
@@ -909,12 +1065,21 @@ final class CalendarNotionSyncService: ObservableObject {
                         if name == "Free" || name == "OOO" {
                             logger.debug("skip free/OOO: \(title) (\(name))")
                             skipped += 1
+                            skipFilteredIDs.insert(CalendarEventMapper.compositeAppleID(for: e))
                             return false
                         }
                     }
                     return true
                 }
-                let expanded = CalendarEventMapper.expandToRows(events: kept.map { $0 as EventLike }, now: Date())
+                // Reactive runs use a narrow, now-anchored window, so the
+                // synthetic series-master row (derived from the earliest
+                // in-window occurrence) would differ from the full run's and
+                // churn a spurious PATCH on each alternation. Suppress masters
+                // on reactive runs — the orphan sweep is off there, so the
+                // now-missing master is never mis-classified.
+                let expanded = CalendarEventMapper.expandToRows(events: kept.map { $0 as EventLike },
+                                                                now: Date(),
+                                                                emitSeriesMasters: mode == .full)
                 for r in expanded {
                     rows.append((r.event, r.isSeriesMaster, calName))
                 }
@@ -936,7 +1101,10 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 logger: logger,
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled)
-            let outcome = await upserter.run(rows: rows, existing: existing)
+            let outcome = await upserter.run(rows: rows,
+                                             existing: existing,
+                                             orphanWindow: (start: windowStart, end: windowEnd),
+                                             presentIDs: skipFilteredIDs)
             var counts = outcome.counts
             counts.duplicates = existingResult.duplicates.count
 
@@ -966,6 +1134,7 @@ final class CalendarNotionSyncService: ObservableObject {
             updateLastResult("error: \(error)")
         }
         logger.flush()
+        return true
     }
 
     /// Read-only diagnostic. Queries the Calendar Events DS, groups by Apple
@@ -1116,10 +1285,34 @@ final class CalendarNotionSyncService: ObservableObject {
         let interval = next.timeIntervalSince(now)
         dailyTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                await self?.runNow()
-                self?.rescheduleDaily()
+                guard let self else { return }
+                let ran = await self.runNow()
+                if !ran {
+                    // Another run (reactive/manual) was in flight, so the daily
+                    // full run was dropped. Retry once after a short delay so a
+                    // day's full reconciliation isn't silently skipped.
+                    self.logger.info("daily run skipped (busy) — retrying in 5 min")
+                    self.scheduleDailyRetry()
+                }
+                self.rescheduleDaily()
             }
         }
         logger.info("scheduled next run at \(next)")
+    }
+
+    /// One-shot retry for a daily full run that was dropped because another run
+    /// was in flight. Fires once after 5 min; if that attempt is also busy it
+    /// is not retried again (the next 06:00 run will reconcile).
+    private func scheduleDailyRetry() {
+        dailyRetryTimer?.invalidate()
+        dailyRetryTimer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let ran = await self.runNow()
+                if !ran {
+                    self.logger.info("daily retry also skipped (busy) — next 06:00 run will reconcile")
+                }
+            }
+        }
     }
 }

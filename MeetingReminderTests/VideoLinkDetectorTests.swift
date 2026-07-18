@@ -118,4 +118,53 @@ final class VideoLinkDetectorTests: XCTestCase {
         let url = URL(string: "https://example.com/call")!
         XCTAssertEqual(VideoLinkDetector.serviceName(for: url), "Meeting")
     }
+
+    // MARK: - Document order & domain anchoring
+
+    func testEarliestLinkInTextWins() {
+        // The real Teams join link in the body beats a Webex link in the
+        // signature: position in the text decides, not pattern order.
+        let text = """
+        Join here: https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc
+
+        --
+        Sent from my Mac | Book me: https://company.webex.com/meet/adam
+        """
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertNotNil(url)
+        XCTAssertTrue(url!.absoluteString.contains("teams.microsoft.com"))
+    }
+
+    func testFooterZoomDoesNotBeatEarlierTeamsLink() {
+        let text = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_x and later https://us02web.zoom.us/j/999"
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertTrue(url!.absoluteString.contains("teams.microsoft.com"))
+    }
+
+    func testLookAlikeZoomDomainRejected() {
+        let text = "Join at https://evilzoom.us/j/123456789"
+        XCTAssertNil(VideoLinkDetector.findVideoURL(in: text))
+    }
+
+    func testSubdomainZoomStillMatches() {
+        let text = "Join at https://us04web.zoom.us/j/123456789"
+        XCTAssertNotNil(VideoLinkDetector.findVideoURL(in: text))
+    }
+
+    func testMarketingWebexHomepageRejected() {
+        let text = "Learn more at https://www.webex.com/pricing"
+        XCTAssertNil(VideoLinkDetector.findVideoURL(in: text))
+    }
+
+    func testStripsTrailingPeriod() {
+        let text = "Join https://us04web.zoom.us/j/123456789."
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertEqual(url!.absoluteString, "https://us04web.zoom.us/j/123456789")
+    }
+
+    func testStripsTrailingComma() {
+        let text = "Join https://us04web.zoom.us/j/123456789, then say hi"
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertEqual(url!.absoluteString, "https://us04web.zoom.us/j/123456789")
+    }
 }

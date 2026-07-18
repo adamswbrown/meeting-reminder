@@ -8,19 +8,34 @@ enum KeychainHelper {
 
     static func save(key: String, value: String) {
         guard let data = value.data(using: .utf8) else { return }
-        delete(key: key)
 
-        let query: [String: Any] = [
+        // Try update first; only add if the item doesn't exist yet.
+        // Never delete-then-add: a failed add after a successful delete
+        // permanently destroys the stored secret (e.g. Graph refresh token).
+        let lookup: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
             kSecAttrService as String: service,
+        ]
+        let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
 
-        let status = SecItemAdd(query as CFDictionary, nil)
-        if status != errSecSuccess {
-            print("[KeychainHelper] save failed: \(status)")
+        let updateStatus = SecItemUpdate(lookup as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+
+        if updateStatus == errSecItemNotFound {
+            // Item doesn't exist yet — add it.
+            var addQuery = lookup
+            addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+            if addStatus != errSecSuccess {
+                print("[KeychainHelper] add failed for key '\(key)': \(addStatus)")
+            }
+        } else {
+            print("[KeychainHelper] update failed for key '\(key)': \(updateStatus)")
         }
     }
 

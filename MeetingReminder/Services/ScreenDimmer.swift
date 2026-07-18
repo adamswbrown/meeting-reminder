@@ -3,7 +3,8 @@ import Foundation
 import IOKit.graphics
 
 /// Gradually dims the screen before meetings.
-/// Safety: linear dimming only, never below 70%, respects Reduce Motion, off by default.
+/// Safety: linear dimming only, only ever darkens (never brightens), respects
+/// Reduce Motion, off by default.
 @MainActor
 final class ScreenDimmer {
     private var dimTimer: Timer?
@@ -26,12 +27,17 @@ final class ScreenDimmer {
         }
 
         guard let current = getCurrentBrightness() else { return }
+
+        // Target is 70% of current brightness. If the screen is already dim
+        // enough that this wouldn't actually darken it, skip entirely — we must
+        // never brighten a screen the user deliberately turned down.
+        let target = current * 0.7
+        guard target < current else { return }
+
         originalBrightness = current
         dimDuration = durationSeconds
         dimStartTime = Date()
-
-        // Target is 70% of current brightness, never below 0.7 absolute
-        targetBrightness = max(current * 0.7, 0.3)
+        targetBrightness = target
 
         // Update every 5 seconds for smooth linear transition
         dimTimer?.invalidate()

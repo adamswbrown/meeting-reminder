@@ -72,12 +72,17 @@ final class CalendarService: ObservableObject {
         let now = Date()
         let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
 
+        // Extend to at least 2 hours out so a late-evening tick can still see a
+        // meeting scheduled just after midnight — otherwise a 23:59 fetch window
+        // clips the day boundary and no advance alert ever fires for it.
+        let windowEnd = max(endOfDay, now.addingTimeInterval(7200))
+
         // Reach back 2 hours so the user can join meetings they're running late to —
         // an in-progress or recently-started meeting must stay visible in the menu
         // bar list even if it kicked off well before the app was opened.
         let predicate = eventStore.predicateForEvents(
             withStart: now.addingTimeInterval(-7200),
-            end: endOfDay,
+            end: windowEnd,
             calendars: nil
         )
 

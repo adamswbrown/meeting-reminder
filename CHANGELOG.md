@@ -2,6 +2,24 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.2.1] - 2026-07-18
+
+**AI Bug Fix** — a full-codebase AI review found and fixed 30+ bugs across the meeting engine, Notion sync, booking, and UI layers.
+
+### Fixed
+- Quitting Chrome no longer ends an in-progress meeting (stray bundle ID in the video-app quit watcher).
+- The "Full overlay" and "Last chance" alert toggles now work — the overlay respects its tier toggle, and the last-chance re-fire at meeting start is actually implemented.
+- Expired snoozes near meeting start re-fire the overlay instead of being silently swallowed; midnight no longer wipes alert state for imminent meetings or re-fires dismissed ones; meetings shortly after midnight now get advance alerts.
+- Overlay previews no longer auto-dismiss after 10 seconds; screen dimming restores when you dismiss without joining and can no longer brighten a dark screen.
+- ⌘, (Settings) works on macOS 14+; "Re-run Setup Assistant" window closes properly; onboarding no longer dead-ends when calendar access was denied.
+- Busy light: no more spurious "Free" shortcut run ~30s after launch; rapid busy/free flips can't race the light into the wrong state.
+- Calendar → Notion sync: the orphan sweep only classifies rows inside the fetch window (no more archiving of >90-day history) and no longer trashes pages at all — orphans are marked `Sync State = Orphaned` and revive automatically if the event returns (Notion's query API never returns trashed pages, so archiving made revival impossible). Reactive runs no longer churn series-master rows or self-retrigger via EventKit echoes; a busy 06:00 run retries instead of skipping the day; three unpaginated Notion queries (brief bodies, brief lookup, relation candidates) now follow cursors.
+- Cal.com: cancel uses the correct v2 route (`POST /bookings/{uid}/cancel`); sync waits out Exchange lag before creating local events (no more duplicates); title matching is prefix-based and cancellation only deletes events the app itself created.
+- Booking (legacy path): conflict check ignores all-day/free events (holidays no longer block bookings); the recovery path sends the confirmation email it used to skip; booker emails are validated against CRLF injection in the .ics and Mail composer.
+- Keychain writes are update-first — a failed write can no longer destroy a stored token (Graph refresh token, Notion/Supabase/Cal.com keys).
+- Availability push: cancelled in-progress events disappear from the public page; past rows are cleaned up; URLs are properly percent-encoded.
+- Video link detection: the link that appears earliest in the notes wins (a footer Webex link can't beat the real Teams link), look-alike domains like `evilzoom.us` are rejected, and trailing punctuation is stripped.
+
 ## [3.2.0] - 2026-07-18
 
 ### Added

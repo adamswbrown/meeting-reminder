@@ -180,9 +180,21 @@ final class BookingPollService: ObservableObject {
         // persisted). Look for an event we already tagged with this booking's
         // deterministic marker. If found, re-confirm against it instead of
         // creating a duplicate or false-rejecting against our own event.
+        //
+        // We also send the confirmation email here because the prior attempt
+        // created the event but failed on the PATCH (which happens before email),
+        // so the booker never received a confirmation. There is no double-send risk
+        // because email is the last step of confirm() and this branch only fires
+        // when the PATCH (the step before email) failed.
         if let existingID = findOwnEvent(booking: booking, bufferBefore: bufferBefore, bufferAfter: bufferAfter) {
-            NSLog("[BookingPoll] booking \(booking.id) already has a tagged event \(existingID) from a prior attempt — re-confirming, skipping email (event already created)")
+            NSLog("[BookingPoll] booking \(booking.id) already has a tagged event \(existingID) from a prior attempt — re-confirming and sending confirmation email")
             try await patchConfirmed(bookingID: booking.id, ekEventID: existingID)
+            let eventTitle = title + " — " + booking.bookerName
+            do {
+                try await sendConfirmationEmail(booking: booking, title: eventTitle, questions: eventType?.questions ?? [])
+            } catch {
+                NSLog("[BookingPoll] recovery confirmation email failed for booking \(booking.id): \(error.localizedDescription)")
+            }
             return true
         }
 
@@ -259,6 +271,12 @@ final class BookingPollService: ObservableObject {
                 if event.notes?.contains(marker) ?? false {
                     return false
                 }
+                // All-day events (e.g. public holidays, annual-leave blocks that
+                // span the whole day) don't occupy a specific hour-slot; don't
+                // block a booking because of them.
+                if event.isAllDay { return false }
+                // "Free" events are explicitly marked as non-blocking; skip them.
+                if event.availability == .free { return false }
                 return true
             }
             .map { ($0.startDate, $0.endDate) }
@@ -323,7 +341,9 @@ final class BookingPollService: ObservableObject {
 
     private func sendConfirmationEmail(booking: PendingBooking, title: String, questions: [BookingQuestionDef]) async throws {
         let description = "Confirmed: \(title)"
-        let ics = BookingICS.build(
+        // BookingICS.build validates both email addresses and throws
+        // BookingPollError.invalidEmail if either is malformed/injected.
+        let ics = try BookingICS.build(
             title: title,
             start: booking.startUTC,
             end: booking.endUTC,
@@ -411,7 +431,9 @@ final class BookingPollService: ObservableObject {
         }
         defer { if let p = icsPath { try? FileManager.default.removeItem(atPath: p) } }
 
-        let script = MailAppleScript.compose(
+        // MailAppleScript.compose validates the recipient email address and throws
+        // BookingPollError.invalidEmail if it is malformed or contains injection chars.
+        let script = try MailAppleScript.compose(
             senderDisplay: Self.ownerSenderDisplay,
             senderEmail: Self.ownerOrganizerEmail,
             to: to,
@@ -588,6 +610,7 @@ enum BookingPollError: LocalizedError {
     case noEventIdentifier
     case osascriptFailed(String)
     case httpError(Int, String)
+    case invalidEmail(String)
 
     var errorDescription: String? {
         switch self {
@@ -601,6 +624,7 @@ enum BookingPollError: LocalizedError {
         case .osascriptFailed(let e):   return "osascript failed: \(e)"
         case .httpError(let c, let body):
             return "HTTP \(c)\(body.isEmpty ? "" : " — \(body)")"
+        case .invalidEmail(let e):      return "Invalid booker email address: \(e)"
         }
     }
 }

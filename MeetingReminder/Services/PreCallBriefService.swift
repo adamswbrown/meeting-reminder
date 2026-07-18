@@ -188,53 +188,72 @@ final class PreCallBriefService: ObservableObject {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
 
-        let body: [String: Any] = [
-            "filter": [
-                "and": [
-                    [
-                        "property": "Date & Time",
-                        "date": ["on_or_after": iso.string(from: range.lowerBound)],
-                    ],
-                    [
-                        "property": "Date & Time",
-                        "date": ["on_or_before": iso.string(from: range.upperBound)],
-                    ],
-                ]
-            ],
-            "sorts": [
-                ["property": "Date & Time", "direction": "descending"]
-            ],
-            "page_size": 50,
-        ]
-
         guard let url = URL(string: "https://api.notion.com/v1/databases/\(databaseID)/query") else {
             lastError = "Invalid database ID"
             return []
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.addValue("2022-06-28", forHTTPHeaderField: "Notion-Version")
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Follow Notion's pagination so a wide window doesn't silently truncate
+        // at 100 results. Capped at 10 pages to avoid a pathological loop.
+        var out: [BriefCandidateSummary] = []
+        var cursor: String? = nil
+        var page = 0
+        repeat {
+            var body: [String: Any] = [
+                "filter": [
+                    "and": [
+                        [
+                            "property": "Date & Time",
+                            "date": ["on_or_after": iso.string(from: range.lowerBound)],
+                        ],
+                        [
+                            "property": "Date & Time",
+                            "date": ["on_or_before": iso.string(from: range.upperBound)],
+                        ],
+                    ]
+                ],
+                "sorts": [
+                    ["property": "Date & Time", "direction": "descending"]
+                ],
+                "page_size": 100,
+            ]
+            if let c = cursor { body["start_cursor"] = c }
 
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                lastError = "Invalid response from Notion"
-                return []
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("2022-06-28", forHTTPHeaderField: "Notion-Version")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    lastError = "Invalid response from Notion"
+                    return out
+                }
+                guard http.statusCode == 200 else {
+                    let detail = String(data: data, encoding: .utf8) ?? ""
+                    lastError = "Notion HTTP \(http.statusCode)\(detail.isEmpty ? "" : " — \(detail.prefix(200))")"
+                    return out
+                }
+                out.append(contentsOf: Self.parseQueryResults(data: data))
+                cursor = Self.nextCursor(from: data)
+            } catch {
+                lastError = error.localizedDescription
+                return out
             }
-            guard http.statusCode == 200 else {
-                let detail = String(data: data, encoding: .utf8) ?? ""
-                lastError = "Notion HTTP \(http.statusCode)\(detail.isEmpty ? "" : " — \(detail.prefix(200))")"
-                return []
-            }
-            return Self.parseQueryResults(data: data)
-        } catch {
-            lastError = error.localizedDescription
-            return []
-        }
+            page += 1
+        } while cursor != nil && page < 10
+        return out
+    }
+
+    /// Extracts `next_cursor` from a Notion query response, returning nil when
+    /// `has_more` is false or the cursor is absent.
+    private static func nextCursor(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (json["has_more"] as? Bool) == true else { return nil }
+        return json["next_cursor"] as? String
     }
 
     /// Public: list the last N days of briefs for the manual picker.
@@ -323,23 +342,41 @@ final class PreCallBriefService: ObservableObject {
     /// Recurses into children up to a small depth limit to bound request fan-out.
     private func fetchBlocksAsMarkdown(pageID: String, token: String, depth: Int) async -> String {
         guard depth < 3 else { return "" }
-        guard let url = URL(string: "https://api.notion.com/v1/blocks/\(pageID)/children?page_size=100") else { return "" }
-        var request = URLRequest(url: url)
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.addValue("2022-06-28", forHTTPHeaderField: "Notion-Version")
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let results = json["results"] as? [[String: Any]] else {
-                return ""
+        // Page through the block children so long briefs don't truncate at 100
+        // blocks. Capped at 10 pages to bound a pathological page.
+        var results: [[String: Any]] = []
+        var cursor: String? = nil
+        var page = 0
+        repeat {
+            var comps = URLComponents(string: "https://api.notion.com/v1/blocks/\(pageID)/children")!
+            var items = [URLQueryItem(name: "page_size", value: "100")]
+            if let c = cursor { items.append(URLQueryItem(name: "start_cursor", value: c)) }
+            comps.queryItems = items
+            guard let url = comps.url else { break }
+            var request = URLRequest(url: url)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("2022-06-28", forHTTPHeaderField: "Notion-Version")
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard (response as? HTTPURLResponse)?.statusCode == 200,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let pageResults = json["results"] as? [[String: Any]] else {
+                    break
+                }
+                results.append(contentsOf: pageResults)
+                cursor = ((json["has_more"] as? Bool) == true) ? (json["next_cursor"] as? String) : nil
+            } catch {
+                break
             }
+            page += 1
+        } while cursor != nil && page < 10
 
-            var out = ""
-            var pendingNumberedIndex = 1
-            var inNumbered = false
-            for block in results {
+        var out = ""
+        var pendingNumberedIndex = 1
+        var inNumbered = false
+        for block in results {
                 let type = block["type"] as? String ?? ""
                 // Reset numbered list counter when leaving consecutive numbered items
                 if type != "numbered_list_item" {
@@ -407,11 +444,8 @@ final class PreCallBriefService: ObservableObject {
                         .joined(separator: "\n")
                     out += indented
                 }
-            }
-            return out
-        } catch {
-            return ""
         }
+        return out
     }
 
     // MARK: - Rich text helpers

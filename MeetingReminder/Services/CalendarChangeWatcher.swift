@@ -33,14 +33,25 @@ struct ReactiveSyncScheduler {
 final class CalendarChangeWatcher {
     private let scheduler = ReactiveSyncScheduler()
     private let logger: CalendarSyncLogger
-    private let onFire: () async -> Void
+    /// Fires a reactive sync. Returns whether the run actually executed —
+    /// `false` means it was skipped (another run in flight), so the watcher
+    /// re-schedules the debounce instead of counting the change as handled.
+    private let onFire: () async -> Bool
+    /// Queried on each incoming notification. When it returns `true` the
+    /// notification is a self-inflicted echo (a sync run is in progress or just
+    /// finished — `store.refreshSourcesIfNecessary()` can post `.EKEventStoreChanged`),
+    /// so we ignore it to avoid a ~2.5-min self-perpetuating loop.
+    private let shouldIgnoreChange: () -> Bool
 
     private var observer: NSObjectProtocol?
     private var pendingTimer: Timer?
     private var lastRunAt: Date?
 
-    init(logger: CalendarSyncLogger, onFire: @escaping () async -> Void) {
+    init(logger: CalendarSyncLogger,
+         shouldIgnoreChange: @escaping () -> Bool = { false },
+         onFire: @escaping () async -> Bool) {
         self.logger = logger
+        self.shouldIgnoreChange = shouldIgnoreChange
         self.onFire = onFire
     }
 
@@ -72,22 +83,49 @@ final class CalendarChangeWatcher {
     }
 
     private func handleChange() {
+        // Ignore self-inflicted echoes: a sync run's `refreshSourcesIfNecessary()`
+        // can post `.EKEventStoreChanged`, which would otherwise re-trigger us in
+        // a ~2.5-min loop. The service suppresses for the duration of a run plus
+        // a short cooldown after.
+        if shouldIgnoreChange() {
+            logger.debug("reactive watcher: change ignored (sync in progress / cooldown)")
+            return
+        }
+        scheduleFire()
+    }
+
+    /// Arms (or re-arms) the single debounced fire timer. Bypasses the
+    /// ignore-echo check on purpose — used both by `handleChange()` (after the
+    /// check passes) and by `fire()`'s skipped-busy reschedule, where we must
+    /// re-queue even though `shouldIgnoreChange()` is momentarily true because a
+    /// run is still in flight.
+    private func scheduleFire() {
         let fireAt = scheduler.fireTime(changeAt: Date(), lastRunAt: lastRunAt)
         let delay = max(0, fireAt.timeIntervalSinceNow)
         pendingTimer?.invalidate()
         pendingTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in await self?.fire() }
         }
-        logger.debug("reactive watcher: change observed, run scheduled in \(Int(delay))s")
+        logger.debug("reactive watcher: run scheduled in \(Int(delay))s")
     }
 
     private func fire() async {
         pendingTimer = nil
-        // Floor is measured start-to-start (set before the await). Overlapping
-        // runs are harmless: CalendarNotionSyncService.run() has its own
-        // `isRunning` guard, so a reactive run that begins while another sync
-        // is in flight no-ops immediately.
-        lastRunAt = Date()
-        await onFire()
+        let ran = await onFire()
+        if ran {
+            // Only mark the floor once the run actually executed. Setting it
+            // before the await (the old behaviour) meant a change that hit the
+            // service's `isRunning` guard was counted as done and never
+            // re-synced. Floor is start-to-start, so measuring from completion
+            // is a slight over-approximation — acceptable, and safer than
+            // dropping edits.
+            lastRunAt = Date()
+        } else {
+            // The run was skipped (another sync in flight). Re-schedule the
+            // debounced fire so this change is eventually reconciled rather
+            // than silently lost.
+            logger.debug("reactive watcher: run skipped (busy), rescheduling")
+            scheduleFire()
+        }
     }
 }

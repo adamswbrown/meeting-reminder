@@ -249,16 +249,30 @@ final class AvailabilityPushService: ObservableObject {
     }
 
     private func deleteMissing(eventIDs: Set<String>, windowStart: Date, windowEnd: Date) async throws {
-        // PostgREST filter syntax: not.in.(id1,id2,...). If the keep-set is
-        // empty we still want to clear the window; PostgREST rejects an empty
-        // `in.()` list, so skip the not-in clause in that case.
         let iso = ISO8601DateFormatter()
-        let startISO = iso.string(from: windowStart)
+        let nowISO = iso.string(from: windowStart) // windowStart == now (passed from collectSnapshot)
         let endISO = iso.string(from: windowEnd)
 
-        var queryParts = [
-            "start_utc=gte.\(startISO)",
-            "start_utc=lt.\(endISO)",
+        // Step 1: Delete stale rows within the current push window whose event_id is
+        // no longer in the EventKit snapshot (handles cancellations and reschedules).
+        // We bound by `end_utc >= now` rather than `start_utc >= now` so that an event
+        // cancelled while already in progress (start < now < end) is also removed —
+        // it would otherwise stay "busy" on the public page until its end time.
+        //
+        // PostgREST filter syntax: not.in.(id1,id2,...). If the keep-set is empty we
+        // still want to clear the window; PostgREST rejects an empty `in.()` list, so
+        // skip the not-in clause in that case.
+        //
+        // All filter values are set via URLComponents.queryItems so they are
+        // percent-encoded properly rather than being string-interpolated into the URL.
+        let base = projectURL.hasSuffix("/") ? String(projectURL.dropLast()) : projectURL
+        guard var components = URLComponents(string: base + "/rest/v1/calendar_events") else {
+            throw AvailabilityPushError.invalidURL(base + "/rest/v1/calendar_events")
+        }
+
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "end_utc", value: "gte.\(nowISO)"),
+            URLQueryItem(name: "end_utc", value: "lt.\(endISO)"),
         ]
         if !eventIDs.isEmpty {
             // PostgREST requires comma-separated, quoted strings inside `in.(...)`.
@@ -267,13 +281,30 @@ final class AvailabilityPushService: ObservableObject {
                 let escaped = id.replacingOccurrences(of: "\"", with: "\"\"")
                 return "\"\(escaped)\""
             }.joined(separator: ",")
-            queryParts.append("event_id=not.in.(\(quoted))")
+            items.append(URLQueryItem(name: "event_id", value: "not.in.(\(quoted))"))
         }
-        let query = queryParts.joined(separator: "&")
+        components.queryItems = items
+        guard let staleURL = components.url else {
+            throw AvailabilityPushError.invalidURL(base + "/rest/v1/calendar_events")
+        }
+        let staleRequest = try authedRequest(url: staleURL, method: "DELETE")
+        try await send(staleRequest)
 
-        let url = try restURL(path: "/rest/v1/calendar_events", query: query)
-        let request = try authedRequest(url: url, method: "DELETE")
-        try await send(request)
+        // Step 2: Clean up rows from past pushes whose end time has now passed.
+        // These accumulate if the service is left running for days; clearing them
+        // keeps the Supabase table lean and prevents stale "busy" rows from
+        // appearing if the frontend query window is ever extended beyond "now".
+        guard var pastComponents = URLComponents(string: base + "/rest/v1/calendar_events") else {
+            throw AvailabilityPushError.invalidURL(base + "/rest/v1/calendar_events")
+        }
+        pastComponents.queryItems = [
+            URLQueryItem(name: "end_utc", value: "lt.\(nowISO)"),
+        ]
+        guard let pastURL = pastComponents.url else {
+            throw AvailabilityPushError.invalidURL(base + "/rest/v1/calendar_events")
+        }
+        let pastRequest = try authedRequest(url: pastURL, method: "DELETE")
+        try await send(pastRequest)
     }
 
     private func updateSyncState(count: Int, windowEnd: Date) async throws {

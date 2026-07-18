@@ -127,6 +127,34 @@ enum BookingConflict {
     }
 }
 
+// MARK: - Email address sanitizer (shared by ICS and AppleScript builders)
+
+enum BookingEmailSanitizer {
+    /// Validates `email` against a minimal email shape, rejecting any address
+    /// containing CR/LF characters that could enable header/script injection.
+    /// Returns the address unchanged, or throws `BookingPollError.invalidEmail`.
+    ///
+    /// The regex is intentionally permissive (`^[^@\s]+@[^@\s]+\.[^@\s]+$`) — it
+    /// catches obviously-broken values without false-rejecting legitimate
+    /// addresses. CR/LF-bearing input is rejected outright (never stripped and
+    /// accepted) so an address sourced from untrusted input can never break an
+    /// ICS `ATTENDEE:` line or inject a new AppleScript statement.
+    static func sanitize(_ email: String) throws -> String {
+        // A CR or LF anywhere means injection, not a typo — reject outright.
+        guard !email.contains("\r"), !email.contains("\n") else {
+            throw BookingPollError.invalidEmail(email)
+        }
+
+        // Validate: must have one @ with non-whitespace on each side and a dot in
+        // the domain portion. Empty or whitespace-only strings are rejected.
+        let pattern = #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#
+        guard email.range(of: pattern, options: .regularExpression) != nil else {
+            throw BookingPollError.invalidEmail(email)
+        }
+        return email
+    }
+}
+
 // MARK: - B3: ICS invite builder
 
 enum BookingICS {
@@ -135,19 +163,25 @@ enum BookingICS {
     /// at availability-page/lib/booking.ts `buildICSContent` for format consistency.
     static func build(title: String, start: Date, end: Date,
                       organizerEmail: String, attendeeEmail: String,
-                      description: String) -> String {
+                      description: String) throws -> String {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
         fmt.timeZone = TimeZone(identifier: "UTC")
         fmt.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+
+        // Sanitize email addresses before embedding in ICS lines to prevent
+        // CRLF injection (an unvalidated newline in an address would break the
+        // ATTENDEE: / ORGANIZER: fold and could inject arbitrary ICS properties).
+        let safeAttendee = try BookingEmailSanitizer.sanitize(attendeeEmail)
+        let safeOrganizer = try BookingEmailSanitizer.sanitize(organizerEmail)
 
         let startICS = fmt.string(from: start)
         let endICS = fmt.string(from: end)
         // DTSTAMP derived from start (not Date()) so output is deterministic/testable.
         let stampICS = startICS
 
-        // Stable UID derived from start+end+attendee.
-        let uid = "booking-\(startICS)-\(endICS)-\(attendeeEmail)@adam-booking"
+        // Stable UID derived from start+end+attendee (use sanitized form).
+        let uid = "booking-\(startICS)-\(endICS)-\(safeAttendee)@adam-booking"
 
         func esc(_ text: String) -> String {
             text
@@ -158,7 +192,7 @@ enum BookingICS {
                 .replacingOccurrences(of: "\n", with: "\\n")
         }
 
-        let organizerCN = organizerEmail.split(separator: "@").first.map(String.init) ?? organizerEmail
+        let organizerCN = safeOrganizer.split(separator: "@").first.map(String.init) ?? safeOrganizer
 
         let lines = [
             "BEGIN:VCALENDAR",
@@ -172,8 +206,8 @@ enum BookingICS {
             "DTEND:\(endICS)",
             "SUMMARY:\(esc(title))",
             "DESCRIPTION:\(esc(description))",
-            "ORGANIZER;CN=\(esc(organizerCN)):MAILTO:\(organizerEmail)",
-            "ATTENDEE;RSVP=TRUE:MAILTO:\(attendeeEmail)",
+            "ORGANIZER;CN=\(esc(organizerCN)):MAILTO:\(safeOrganizer)",
+            "ATTENDEE;RSVP=TRUE:MAILTO:\(safeAttendee)",
             "STATUS:CONFIRMED",
             "END:VEVENT",
             "END:VCALENDAR",
@@ -196,8 +230,15 @@ enum MailAppleScript {
     /// stops Mail silently falling back to another account (e.g. iCloud) when the
     /// intended Exchange account is disabled — booking mail only ever leaves from
     /// the Exchange address or not at all.
+    /// Throws `BookingPollError.invalidEmail` if `to` fails email validation —
+    /// an invalid/injected recipient address is never written into the AppleScript.
     static func compose(senderDisplay: String, senderEmail: String, to: String, subject: String,
-                        body: String, icsPath: String?) -> String {
+                        body: String, icsPath: String?) throws -> String {
+        // Sanitize the booker email before embedding it in the AppleScript string.
+        // An embedded newline would break out of the AppleScript string literal and
+        // could inject an arbitrary AppleScript statement (e.g. `do shell script`).
+        let sanitizedTo = try BookingEmailSanitizer.sanitize(to)
+
         // Escape backslash first, then double-quote, so generated AppleScript
         // string literals stay syntactically valid. This does NOT touch newlines —
         // AppleScript does not interpret `\n` inside a double-quoted string, so
@@ -223,7 +264,7 @@ enum MailAppleScript {
 
         let sender = esc(senderDisplay)
         let senderAddr = esc(senderEmail)
-        let recipient = esc(to)
+        let recipient = esc(sanitizedTo)
         let subj = esc(subject)
         let bodyEsc = escBody(body)
 

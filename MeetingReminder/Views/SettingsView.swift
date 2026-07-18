@@ -108,7 +108,13 @@ struct SettingsView: View {
             Section {
                 Button("Re-run Setup Assistant") {
                     UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
-                    OnboardingWindowController().show(calendarService: calendarService)
+                    // Retain the controller so its onComplete / close path can
+                    // dismiss the window. A bare `OnboardingWindowController()`
+                    // would be released by ARC immediately after this closure
+                    // returns, making the Finish button a no-op.
+                    let controller = OnboardingWindowController()
+                    OnboardingWindowController.retained = controller
+                    controller.show(calendarService: calendarService)
                 }
                 .controlSize(.small)
             }

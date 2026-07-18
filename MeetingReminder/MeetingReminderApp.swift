@@ -1,6 +1,47 @@
 import Combine
 import SwiftUI
 
+// MARK: - Settings Opener Bridge
+//
+// macOS 14+ blocks `sendAction(showSettingsWindow:)` from arbitrary callers
+// (documented in the project CLAUDE.md). The canonical fix is to capture
+// `@Environment(\.openSettings)` inside a SwiftUI view. Because AppDelegate
+// is UIKit/AppKit, we bridge via a shared object: a hidden SwiftUI helper
+// view (SettingsOpenerCapture) attaches to the MenuBarExtra label, captures
+// the environment action, and stores it here. The AppDelegate's ⌘, handler
+// then calls `SettingsOpenerBridge.shared.open?()` with a legacy fallback.
+final class SettingsOpenerBridge {
+    static let shared = SettingsOpenerBridge()
+    private init() {}
+    var open: (() -> Void)?
+}
+
+/// Invisible zero-size view embedded in the MenuBarExtra label. It captures
+/// `openSettings` once it has appeared and registers it with the bridge.
+/// On macOS 13 there is nothing to capture — the legacy
+/// `showPreferencesWindow:` selector still works there.
+private struct SettingsOpenerCapture: View {
+    var body: some View {
+        if #available(macOS 14.0, *) {
+            SettingsOpenerCapture14()
+        } else {
+            EmptyView()
+        }
+    }
+}
+
+@available(macOS 14.0, *)
+private struct SettingsOpenerCapture14: View {
+    @Environment(\.openSettings) private var openSettings
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                SettingsOpenerBridge.shared.open = { openSettings() }
+            }
+    }
+}
+
 @main
 struct MeetingReminderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -66,6 +107,9 @@ struct MeetingReminderApp: App {
             )
         } label: {
             menuBarLabel
+                // Attach the invisible settings-opener capture so the bridge
+                // is populated as soon as the label view appears (at launch).
+                .background(SettingsOpenerCapture())
                 .task {
                     // Best practice: start services when the menu bar label
                     // appears (i.e. at app launch), NOT when the popover is
@@ -171,13 +215,17 @@ final class OverlayCoordinator: ObservableObject {
         self.notionService = notionService
         self.preCallBriefService = preCallBriefService
 
-        // Ensure all panels are closed when the app terminates
+        // Ensure all panels are closed when the app terminates.
+        // `willTerminateNotification` is delivered on the main thread (queue: .main
+        // above), so a detached Task would never execute before the process exits.
+        // Use `MainActor.assumeIsolated` to call synchronously while staying within
+        // Swift's actor isolation model (safe here because we know we're on main).
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.closeAllPanels()
             }
         }
@@ -478,7 +526,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        if #available(macOS 14.0, *) {
+        // Prefer the SwiftUI environment action captured via SettingsOpenerBridge
+        // (registered by the hidden SettingsOpenerCapture view in the menu bar
+        // label). This is the only path that works reliably on macOS 14+ where
+        // `sendAction(showSettingsWindow:)` is blocked for LSUIElement apps.
+        if let openViaSwiftUI = SettingsOpenerBridge.shared.open {
+            openViaSwiftUI()
+        } else if #available(macOS 14.0, *) {
+            // Bridge not yet populated (shouldn't happen after first render, but
+            // keep the selector as a best-effort fallback).
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         } else {
             NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)

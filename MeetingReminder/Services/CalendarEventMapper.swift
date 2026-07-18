@@ -177,7 +177,18 @@ enum CalendarEventMapper {
     /// Filter out cancelled occurrences, then for each recurring series emit
     /// one synthetic series-master row followed by every occurrence in window.
     /// Non-recurring events pass through unchanged.
-    static func expandToRows(events: [EventLike], now: Date) -> [(event: EventLike, isSeriesMaster: Bool)] {
+    ///
+    /// `emitSeriesMasters` gates the synthetic master rows. Reactive
+    /// (narrow-window) runs pass `false`: the master is derived from the
+    /// *earliest occurrence in the current window*, so a full run (−90d start)
+    /// and a reactive run (now start) would produce different master content
+    /// and churn a spurious PATCH on every alternation. Suppressing masters on
+    /// reactive runs keeps the master row stable (only the 06:00 full run
+    /// writes it). Reactive runs skip the orphan sweep, so the now-missing
+    /// master is never mis-classified as an orphan.
+    static func expandToRows(events: [EventLike],
+                             now: Date,
+                             emitSeriesMasters: Bool = true) -> [(event: EventLike, isSeriesMaster: Bool)] {
         var nonRecurring: [EventLike] = []
         var bySeries: [String: [EventLike]] = [:]
         var seriesOrder: [String] = []
@@ -205,7 +216,9 @@ enum CalendarEventMapper {
         for key in seriesOrder {
             let occurrences = bySeries[key]!.sorted { $0.eventStart < $1.eventStart }
             guard let first = occurrences.first else { continue }
-            rows.append((SyntheticSeriesMasterEvent(source: first), true))
+            if emitSeriesMasters {
+                rows.append((SyntheticSeriesMasterEvent(source: first), true))
+            }
             for occ in occurrences {
                 rows.append((occ, false))
             }

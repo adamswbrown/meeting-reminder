@@ -2,11 +2,15 @@ import EventKit
 import Foundation
 
 struct VideoLinkDetector {
+    // Domains are anchored (subdomains must be dot-separated labels) so
+    // look-alikes such as "evilzoom.us" never match. Webex requires a
+    // non-"www" subdomain because meeting links live on tenant hosts
+    // (company.webex.com) while www.webex.com is marketing pages.
     private static let patterns: [(name: String, pattern: String)] = [
-        ("Zoom", #"https?://[\w.-]*zoom\.us/j/\S+"#),
+        ("Zoom", #"https?://(?:[\w-]+\.)*zoom\.us/j/\S+"#),
         ("Google Meet", #"https?://meet\.google\.com/[a-z]+-[a-z]+-[a-z]+\S*"#),
         ("Microsoft Teams", #"https?://teams\.microsoft\.com/l/meetup-join/\S+"#),
-        ("Webex", #"https?://[\w.-]*webex\.com/\S+"#),
+        ("Webex", #"https?://(?!www\.)(?:[\w-]+\.)+webex\.com/\S+"#),
         ("Slack Huddle", #"https?://app\.slack\.com/huddle/\S+"#),
     ]
 
@@ -31,34 +35,37 @@ struct VideoLinkDetector {
     static func isVideoLink(_ url: URL) -> Bool {
         let urlString = url.absoluteString
         return patterns.contains { _, pattern in
-            urlString.range(of: pattern, options: .regularExpression) != nil
+            urlString.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
         }
     }
 
     static func findVideoURL(in text: String) -> URL? {
+        // Collect the first match of every service and return the one that
+        // appears earliest in the text — so a real join link in the body wins
+        // over a different service's link in a signature or footer.
+        var best: (location: Int, url: URL)?
+
         for (_, pattern) in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
                 continue
             }
 
             let range = NSRange(text.startIndex..., in: text)
-            if let match = regex.firstMatch(in: text, range: range) {
-                let matchRange = Range(match.range, in: text)!
-                var urlString = String(text[matchRange])
+            guard let match = regex.firstMatch(in: text, range: range) else { continue }
+            let matchRange = Range(match.range, in: text)!
+            var urlString = String(text[matchRange])
 
-                // Clean trailing punctuation that might have been captured
-                while urlString.hasSuffix(")") || urlString.hasSuffix(">") ||
-                      urlString.hasSuffix("\"") || urlString.hasSuffix("'") {
-                    urlString = String(urlString.dropLast())
-                }
+            // Clean trailing punctuation that might have been captured
+            while let last = urlString.last, ")>\"'.,;".contains(last) {
+                urlString = String(urlString.dropLast())
+            }
 
-                if let url = URL(string: urlString) {
-                    return url
-                }
+            if let url = URL(string: urlString), best == nil || match.range.location < best!.location {
+                best = (match.range.location, url)
             }
         }
 
-        return nil
+        return best?.url
     }
 
     static func serviceName(for url: URL) -> String {

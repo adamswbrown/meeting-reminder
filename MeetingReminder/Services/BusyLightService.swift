@@ -56,24 +56,44 @@ final class BusyLightService: ObservableObject {
     /// Apply the configured Shortcut for `state`. No-op when the state is
     /// disabled, when no shortcut is selected, or when the same state was
     /// already applied (avoids re-running the same shortcut every poll).
+    ///
+    /// Launch-suppression: `nil` lastAppliedState is treated as `.free` so the
+    /// debounced `.free` emission that always fires ~30 s after launch doesn't
+    /// trigger the Free shortcut when nothing has actually changed. A genuinely-
+    /// busy launch (meeting in-progress at startup) will still fire `.busy`
+    /// because `.busy != .free`.
+    ///
+    /// Race mitigation: `lastAppliedState` is set optimistically before the
+    /// process is launched. Rapid busy→free→busy flips therefore see a consistent
+    /// guard value and avoid queuing two concurrent shortcut runs. On failure the
+    /// field is reset to `nil` so the next edge retries.
     func apply(_ state: AppliedState) {
-        guard lastAppliedState != state else { return }
+        // Treat nil as .free for the guard so the first-launch .free emission
+        // (before any edge has actually occurred) is a no-op.
+        let effective = lastAppliedState ?? .free
+        guard effective != state else { return }
 
         let enabled = (state == .busy) ? busyEnabled : freeEnabled
         let name = (state == .busy) ? busyShortcut : freeShortcut
 
         guard enabled, !name.isEmpty else {
-            // Even when skipping, record the state so we don't re-evaluate
-            // every tick if the user has one side disabled.
+            // Even when skipping the shortcut, record the state so we don't
+            // re-evaluate every tick if the user has one side disabled.
             lastAppliedState = state
             return
         }
 
+        // Set optimistically before launch so rapid flips see a stable guard
+        // value and don't spawn two concurrent shortcut processes.
+        lastAppliedState = state
+
         Task.detached { [weak self] in
-            let err = await Self.runShortcut(name: name, at: self?.cliPath ?? "/usr/bin/shortcuts")
+            let cliPath = await MainActor.run { self?.cliPath ?? "/usr/bin/shortcuts" }
+            let err = await Self.runShortcut(name: name, at: cliPath)
             await MainActor.run {
-                self?.lastAppliedState = state
                 if let err {
+                    // On failure, clear lastAppliedState so the next edge retries.
+                    self?.lastAppliedState = nil
                     self?.lastError = "Running '\(name)': \(err)"
                 }
             }

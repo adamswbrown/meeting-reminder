@@ -8,6 +8,7 @@ struct OnboardingView: View {
 
     @State private var currentStep = 0
     @State private var calendarGranted = false
+    @State private var calendarDenied = false
     @State private var notificationsGranted = false
     @State private var notificationsDenied = false
     @State private var showNotionWizard = false
@@ -101,6 +102,24 @@ struct OnboardingView: View {
 
             if calendarGranted {
                 permissionBadge(text: "Access Granted", color: .green)
+            } else if calendarDenied {
+                // macOS never re-prompts after a denial — show the escape hatch
+                // so the user can open System Settings and unblock themselves.
+                // Mirror the same idiom used for the notification denied state.
+                VStack(spacing: 10) {
+                    permissionBadge(text: "Access Denied", color: .orange)
+                    Text("Calendar access was denied. Open System Settings to grant it, then return here and continue.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Open System Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
             } else {
                 Button("Grant Calendar Access") {
                     Task {
@@ -117,7 +136,9 @@ struct OnboardingView: View {
             navigationButtons(
                 backEnabled: true,
                 nextLabel: "Continue",
-                nextEnabled: calendarGranted
+                // Allow Continue even when denied — the user can proceed without
+                // calendar access and grant it later in System Settings.
+                nextEnabled: calendarGranted || calendarDenied
             )
         }
         .padding(30)
@@ -319,6 +340,8 @@ struct OnboardingView: View {
 
     private func updatePermissionStates() {
         calendarGranted = calendarService.authorizationStatus == .authorized
+        // `.denied` means macOS will never re-prompt — surface the escape hatch.
+        calendarDenied = calendarService.authorizationStatus == .denied
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
@@ -353,6 +376,13 @@ struct OnboardingView: View {
 /// Presents onboarding as a standalone, centered NSWindow — not a sheet on the menu bar popover.
 final class OnboardingWindowController {
     private var window: NSWindow?
+
+    /// Retains the most-recently created controller launched from an ephemeral
+    /// call site (e.g. "Re-run Setup Assistant" in SettingsView). The first-launch
+    /// path in MeetingReminderApp already stores the controller in a stored property,
+    /// so it doesn't need this. Cleared when the window is closed so ARC can release
+    /// the controller and its window.
+    static var retained: OnboardingWindowController?
 
     func show(calendarService: CalendarService) {
         guard window == nil else {
@@ -390,5 +420,9 @@ final class OnboardingWindowController {
     func close() {
         window?.close()
         window = nil
+        // If this is the retained instance (launched from SettingsView), release it.
+        if OnboardingWindowController.retained === self {
+            OnboardingWindowController.retained = nil
+        }
     }
 }

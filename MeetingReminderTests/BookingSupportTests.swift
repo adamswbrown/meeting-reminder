@@ -165,8 +165,8 @@ final class BookingSupportTests: XCTestCase {
 
     // MARK: - B3: BookingICS.build
 
-    private func sampleICS(title: String = "Intro call", description: String = "A chat") -> String {
-        BookingICS.build(
+    private func sampleICS(title: String = "Intro call", description: String = "A chat") throws -> String {
+        try BookingICS.build(
             title: title,
             start: d("2026-07-01T10:00:00Z"),
             end: d("2026-07-01T10:30:00Z"),
@@ -176,29 +176,29 @@ final class BookingSupportTests: XCTestCase {
         )
     }
 
-    func testICSContainsCoreLines() {
-        let ics = sampleICS()
+    func testICSContainsCoreLines() throws {
+        let ics = try sampleICS()
         XCTAssertTrue(ics.contains("BEGIN:VEVENT"))
         XCTAssertTrue(ics.contains("METHOD:REQUEST"))
         XCTAssertTrue(ics.contains("STATUS:CONFIRMED"))
     }
 
-    func testICSDTSTARTBasicUTC() {
-        let ics = sampleICS()
+    func testICSDTSTARTBasicUTC() throws {
+        let ics = try sampleICS()
         XCTAssertTrue(ics.contains("DTSTART:20260701T100000Z"), ics)
         XCTAssertTrue(ics.contains("DTEND:20260701T103000Z"), ics)
         // DTSTAMP is derived from start for determinism.
         XCTAssertTrue(ics.contains("DTSTAMP:20260701T100000Z"), ics)
     }
 
-    func testICSEscapesCommas() {
-        let ics = sampleICS(title: "Intro, with comma", description: "Line one, line two")
+    func testICSEscapesCommas() throws {
+        let ics = try sampleICS(title: "Intro, with comma", description: "Line one, line two")
         XCTAssertTrue(ics.contains("SUMMARY:Intro\\, with comma"), ics)
         XCTAssertTrue(ics.contains("DESCRIPTION:Line one\\, line two"), ics)
     }
 
-    func testICSUsesCRLF() {
-        let ics = sampleICS()
+    func testICSUsesCRLF() throws {
+        let ics = try sampleICS()
         XCTAssertTrue(ics.contains("\r\n"))
         // No lone \n that isn't preceded by \r.
         let chars = Array(ics)
@@ -207,16 +207,28 @@ final class BookingSupportTests: XCTestCase {
         }
     }
 
-    func testICSContainsAttendeeMailto() {
-        let ics = sampleICS()
+    func testICSContainsAttendeeMailto() throws {
+        let ics = try sampleICS()
         XCTAssertTrue(ics.contains("MAILTO:sam@example.com"), ics)
+    }
+
+    func testICSRejectsInjectedAttendeeEmail() {
+        // A newline in the attendee email must throw rather than producing a broken ICS.
+        XCTAssertThrowsError(try BookingICS.build(
+            title: "Meeting",
+            start: d("2026-07-01T10:00:00Z"),
+            end: d("2026-07-01T10:30:00Z"),
+            organizerEmail: "adam@askadam.cloud",
+            attendeeEmail: "evil\r\nBCC:other@example.com",
+            description: "desc"
+        ))
     }
 
     // MARK: - B4: MailAppleScript.compose
 
     private func sampleScript(subject: String = "Your booking is confirmed",
-                              body: String = "Hi Sam") -> String {
-        MailAppleScript.compose(
+                              body: String = "Hi Sam") throws -> String {
+        try MailAppleScript.compose(
             senderDisplay: "Adam Brown <adam.brown@altra.cloud>",
             senderEmail: "adam.brown@altra.cloud",
             to: "sam@example.com",
@@ -226,26 +238,26 @@ final class BookingSupportTests: XCTestCase {
         )
     }
 
-    func testScriptPinsSender() {
-        let s = sampleScript()
+    func testScriptPinsSender() throws {
+        let s = try sampleScript()
         XCTAssertTrue(s.contains("set sender to \"Adam Brown <adam.brown@altra.cloud>\""), s)
     }
 
-    func testScriptContainsRecipientAndPath() {
-        let s = sampleScript()
+    func testScriptContainsRecipientAndPath() throws {
+        let s = try sampleScript()
         XCTAssertTrue(s.contains("sam@example.com"), s)
         XCTAssertTrue(s.contains("/tmp/invite.ics"), s)
     }
 
-    func testScriptIsInvisibleAndSends() {
-        let s = sampleScript()
+    func testScriptIsInvisibleAndSends() throws {
+        let s = try sampleScript()
         XCTAssertTrue(s.contains("visible:false"), s)
         XCTAssertTrue(s.contains("send"), s)
         XCTAssertTrue(s.hasSuffix("send") || s.contains("send\n") || s.contains("\tsend"), s)
     }
 
-    func testScriptEscapesDoubleQuotes() {
-        let s = MailAppleScript.compose(
+    func testScriptEscapesDoubleQuotes() throws {
+        let s = try MailAppleScript.compose(
             senderDisplay: "Adam",
             senderEmail: "adam@example.com",
             to: "sam@example.com",
@@ -258,13 +270,13 @@ final class BookingSupportTests: XCTestCase {
         XCTAssertFalse(s.contains("subject:\"Say \"hello\""), s)
     }
 
-    func testScriptWithAttachmentIncludesAttachmentLine() {
-        let s = sampleScript()
+    func testScriptWithAttachmentIncludesAttachmentLine() throws {
+        let s = try sampleScript()
         XCTAssertTrue(s.contains("make new attachment"), s)
     }
 
-    func testScriptNilAttachmentOmitsAttachmentLine() {
-        let s = MailAppleScript.compose(
+    func testScriptNilAttachmentOmitsAttachmentLine() throws {
+        let s = try MailAppleScript.compose(
             senderDisplay: "Adam",
             senderEmail: "adam@example.com",
             to: "sam@example.com",
@@ -279,8 +291,8 @@ final class BookingSupportTests: XCTestCase {
         XCTAssertTrue(s.contains("sam@example.com"), s)
     }
 
-    func testScriptMultilineBodyUsesLinefeedConcatenation() {
-        let s = MailAppleScript.compose(
+    func testScriptMultilineBodyUsesLinefeedConcatenation() throws {
+        let s = try MailAppleScript.compose(
             senderDisplay: "Adam",
             senderEmail: "adam@example.com",
             to: "sam@example.com",
@@ -291,5 +303,37 @@ final class BookingSupportTests: XCTestCase {
         // Newlines must become AppleScript `linefeed` concatenation, not literal \n.
         XCTAssertTrue(s.contains("& linefeed &"), s)
         XCTAssertFalse(s.contains("\\n"), s)
+    }
+
+    func testScriptRejectsInjectedRecipientEmail() {
+        // A newline in the recipient email must throw rather than injecting an extra
+        // AppleScript statement into the generated script.
+        XCTAssertThrowsError(try MailAppleScript.compose(
+            senderDisplay: "Adam",
+            senderEmail: "adam@example.com",
+            to: "evil\r\ndo shell script \"rm -rf ~\"",
+            subject: "Hi",
+            body: "Body",
+            icsPath: nil
+        ))
+    }
+
+    // MARK: - BookingEmailSanitizer
+
+    func testSanitizerAcceptsValidEmail() throws {
+        XCTAssertEqual(try BookingEmailSanitizer.sanitize("sam@example.com"), "sam@example.com")
+    }
+
+    func testSanitizerStripsAndRejectsCRLF() {
+        // A CR or LF anywhere in the address makes it invalid (no @ etc).
+        XCTAssertThrowsError(try BookingEmailSanitizer.sanitize("evil\r\nBCC:x@y.com"))
+    }
+
+    func testSanitizerRejectsNoAtSign() {
+        XCTAssertThrowsError(try BookingEmailSanitizer.sanitize("notanemail"))
+    }
+
+    func testSanitizerRejectsEmpty() {
+        XCTAssertThrowsError(try BookingEmailSanitizer.sanitize(""))
     }
 }
