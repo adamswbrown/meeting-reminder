@@ -84,7 +84,9 @@ final class FloatingPromptWindowController {
             }
         )
 
-        panel.contentView = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view)
+        hosting.sizingOptions = []  // avoid content-driven window resize crash (see ContextPanelWindowController)
+        panel.contentView = hosting
 
         // Position top-center of screen
         let x = screen.visibleFrame.midX - 190

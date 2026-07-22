@@ -406,7 +406,12 @@ final class OnboardingWindowController {
         )
 
         window.title = "Meeting Reminder Setup"
-        window.contentView = NSHostingView(rootView: onboardingView)
+        let hosting = NSHostingView(rootView: onboardingView)
+        // Advancing steps / async permission state changes the content size; disable
+        // content-driven window sizing so it doesn't re-invalidate constraints
+        // during the display cycle (crashes AppKit via _postWindowNeedsUpdateConstraints).
+        hosting.sizingOptions = []
+        window.contentView = hosting
         window.center()
         window.isReleasedWhenClosed = false
         window.level = .floating  // Above other windows so user doesn't lose it

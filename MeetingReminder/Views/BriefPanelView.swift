@@ -728,7 +728,12 @@ final class BriefPanelWindowController {
             }
         )
 
-        panel.contentView = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view)
+        // Brief loads async and resizes the content; disable content-driven window
+        // sizing so a resize doesn't re-invalidate constraints mid-display-cycle
+        // (crashes AppKit via -[NSWindow _postWindowNeedsUpdateConstraints]).
+        hosting.sizingOptions = []
+        panel.contentView = hosting
 
         // Only set position if autosaved frame didn't place it — default to
         // upper-left of main screen so it doesn't overlap the context panel

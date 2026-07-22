@@ -233,7 +233,9 @@ final class MinimalAlertWindowController {
             }
         )
 
-        panel.contentView = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view)
+        hosting.sizingOptions = []  // avoid content-driven window resize crash (see ContextPanelWindowController)
+        panel.contentView = hosting
 
         // Position top-right of the chosen screen
         let x = screen.visibleFrame.maxX - 360

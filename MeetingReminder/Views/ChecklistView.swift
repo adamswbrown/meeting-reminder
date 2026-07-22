@@ -102,7 +102,9 @@ final class ChecklistWindowController {
             onDone()
         })
 
-        panel.contentView = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view)
+        hosting.sizingOptions = []  // avoid content-driven window resize crash (see ContextPanelWindowController)
+        panel.contentView = hosting
 
         // Position to the right of center
         let x = screen.visibleFrame.midX + 200

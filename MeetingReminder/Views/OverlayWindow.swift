@@ -41,7 +41,13 @@ final class OverlayWindowController {
                 }
             )
 
-            panel.contentView = NSHostingView(rootView: overlayView)
+            let hosting = NSHostingView(rootView: overlayView)
+            // Don't let the hosting view drive the panel's content-size extrema.
+            // Content-driven window sizing re-invalidates constraints mid-display-cycle
+            // when the SwiftUI content resizes, which crashes AppKit via
+            // -[NSWindow _postWindowNeedsUpdateConstraints]. The panel is explicitly framed.
+            hosting.sizingOptions = []
+            panel.contentView = hosting
             panel.setFrame(screen.frame, display: true)
             panel.orderFrontRegardless()
             panel.makeKey()
@@ -98,7 +104,9 @@ final class BreakOverlayWindowController {
                 onSkip: dismissOverlay
             )
 
-            panel.contentView = NSHostingView(rootView: view)
+            let hosting = NSHostingView(rootView: view)
+            hosting.sizingOptions = []  // see OverlayWindowController: avoid content-driven window resize crash
+            panel.contentView = hosting
             panel.setFrame(screen.frame, display: true)
             panel.orderFrontRegardless()
             panel.makeKey()

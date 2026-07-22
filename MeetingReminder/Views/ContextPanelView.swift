@@ -152,7 +152,13 @@ final class ContextPanelWindowController {
             }
         )
 
-        panel.contentView = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view)
+        // Async content (attendees, notes, pre-call brief) changes size after the
+        // panel appears. Without this, the hosting view drives the window's
+        // content-size extrema and re-invalidates constraints during the display
+        // cycle, crashing AppKit in -[NSWindow _postWindowNeedsUpdateConstraints].
+        hosting.sizingOptions = []
+        panel.contentView = hosting
 
         // Position in top-right corner
         let x = screen.visibleFrame.maxX - 340
