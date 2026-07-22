@@ -2,6 +2,11 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.2.2] - 2026-07-22
+
+### Fixed
+- **Crash during window layout** — floating panels that host SwiftUI (meeting overlay, break overlay, context panel, pre-call brief, checklist, floating prompt, minimal alert, and the onboarding window) could crash the app with an uncaught `NSException` from `-[NSWindow _postWindowNeedsUpdateConstraints]`. Each panel set its `NSHostingView` as the window's content view without disabling content-driven window sizing, so when the hosted content resized after appearing (e.g. a pre-call brief loading from Notion, or advancing an onboarding step) the hosting view re-invalidated the window's constraints mid-display-cycle and AppKit trapped. All eight panels now set `NSHostingView.sizingOptions = []`; the panels are explicitly framed so nothing else changes.
+
 ## [3.2.1] - 2026-07-18
 
 **AI Bug Fix** — a full-codebase AI review found and fixed 30+ bugs across the meeting engine, Notion sync, booking, and UI layers.
