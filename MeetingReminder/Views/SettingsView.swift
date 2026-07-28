@@ -1095,12 +1095,19 @@ struct SettingsView: View {
                 if preCallBriefTrigger.isRunning {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Briefing…").font(.caption) }
                 }
+                HStack {
+                    Button("Grant permissions…") { preCallBriefTrigger.requestPermissions() }
+                    if !preCallBriefTrigger.permissionStatus.isEmpty {
+                        Text(preCallBriefTrigger.permissionStatus)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             } header: {
                 Text("Intraday Pre-Call Briefings")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("When a new meeting lands in your calendar during the working day, this runs the pre-call briefing agent for it within ~2 minutes — the local counterpart to the 03:00 cloud task. It follows the same rules and delivers via the local iMessage + Reminders CLIs.")
-                    Text("Requires the `claude` CLI, the `imessage-tools` + `remctl` CLIs, and Full Disk Access + Automation (Messages) + Reminders permission for this app. Off by default.")
+                    Text("Requires the `claude` CLI plus the `imessage-tools` + `remctl` CLIs. Click **Grant permissions** to trigger the Reminders + Automation (Messages) prompts — those two panes have no “+” so they can only be added this way. Full Disk Access must be added manually: System Settings → Privacy & Security → Full Disk Access → add MeetingReminder. Off by default.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

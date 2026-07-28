@@ -24,6 +24,10 @@
 	<string>Meeting Reminder needs access to your calendars to show upcoming meeting notifications and provide quick-join links for video conferences.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Meeting Reminder needs access to your calendars to show upcoming meeting notifications and provide quick-join links for video conferences.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Meeting Reminder syncs the action items from your pre-call briefings into your Reminders "Daily Briefing" list.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Meeting Reminder sends a message via Messages to deliver your intraday pre-call briefing alerts.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
