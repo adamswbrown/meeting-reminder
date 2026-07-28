@@ -116,8 +116,13 @@ ruleset.
 ### Build sequence
 1. ~~**Validate headless parity (make-or-break).**~~ ✅ DONE 2026-07-28. `imessage-tools` +
    `remctl` both work from a headless spawn (`HEADLESS_RESULT: imessage=ok reminder=ok`).
-2. **Author the derived intraday skill** — same rules, CLI delivery, Template-C-only.
-   (Co Work ruleset untouched.)
+2. ~~**Author the derived intraday skill**~~ ✅ DONE 2026-07-28 — `automation/pre-call-briefing-intraday.md`
+   (gitignored — contains the private ICS URL). Same rules, CLI delivery, Template-C-only.
+   Proven headless against the already-briefed Walkers meeting: correct Step 3 dedup (no
+   duplicate), reschedule/cancellation checks, iMessage correctly suppressed on no-change,
+   run-log row written, clean `INTRADAY_RESULT: …` output contract. Create + Template-C-send +
+   `remctl` reminder not exercised live (no un-briefed target left today) but all components
+   proven separately. Co Work ruleset untouched.
 3. **Confirm the trigger signal.** Reconcile `calendarNotionSyncReactiveEnabled` (reads
    unset, yet rows update intraday) and that a new meeting reliably lands in the Calendar
    Events DB within ~2 min — the signal the catcher keys on.
