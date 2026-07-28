@@ -126,11 +126,17 @@ ruleset.
 3. **Confirm the trigger signal.** Reconcile `calendarNotionSyncReactiveEnabled` (reads
    unset, yet rows update intraday) and that a new meeting reliably lands in the Calendar
    Events DB within ~2 min — the signal the catcher keys on.
-4. **Validate app-spawned TCC.** The headless proof used a terminal-launched `claude`
-   (which holds FDA/Automation/Reminders). Confirm the grants hold when **MeetingReminder.app**
-   is the responsible process (likely a one-time per-binary System Settings grant).
-5. **Build `PreCallBriefTriggerService`** per the design below.
-6. **Ship behind `preCallBriefTriggerEnabled` (default off);** Co Work stays the backstop.
+4. **Validate app-spawned TCC.** ⏳ PENDING LIVE — the headless proof used a
+   terminal-launched `claude`. Confirm the grants hold when **MeetingReminder.app** is the
+   responsible process (likely a one-time FDA/Automation/Reminders grant for the app in
+   System Settings). Only testable now that the app spawns `claude`.
+5. ~~**Build `PreCallBriefTriggerService`**~~ ✅ DONE 2026-07-28 (`d68e426`). Built, wired
+   into `MeetingReminderApp`, Settings toggle under Notion → Calendar Sync, deployed to
+   /Applications. Keys off `CalendarService.$events`; baseline-seeds on launch; 30s debounce,
+   120s floor, serial; persists fired IDs; logs to
+   `~/Library/Logs/MeetingReminder/precall-brief-intraday.log`.
+6. ~~**Ship behind `preCallBriefTriggerEnabled` (default off)**~~ ✅ — toggle default off;
+   Co Work stays the backstop.
 
 ## Headless capability matrix (resolved 2026-07-28)
 
