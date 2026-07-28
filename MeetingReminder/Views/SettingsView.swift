@@ -24,6 +24,7 @@ struct SettingsView: View {
     @ObservedObject var busyLightService: BusyLightService
     @ObservedObject var calComService: CalComService
     @ObservedObject var calComSyncService: CalComSyncService
+    @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
 
     @State private var launchAtLogin = false
@@ -1069,6 +1070,37 @@ struct SettingsView: View {
                     Text("Skip Free / OOO: drops events marked Free or Out of Office (e.g. Annual Leave) before they reach Notion. Off by default — keeps holidays in the ledger.")
                     Text("Auto-link: after each upsert, query Meeting Notes and Pre-Call Briefings for a single same-day-same-title match and link it. Append-only — manual links are never overwritten. Ambiguous matches (>1 candidate) are skipped with a log warning.")
                     Text("Watch for changes (reactive sync): sync changed events to Notion within ~2 min of a calendar change, instead of waiting for the daily 06:00 run. Feeds Co-Work pre-call briefs via a Notion automation.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Auto-brief new meetings during the day (09:00–17:00)",
+                       isOn: Binding(get: { preCallBriefTrigger.isEnabled },
+                                     set: { preCallBriefTrigger.isEnabled = $0 }))
+                if !preCallBriefTrigger.lastResult.isEmpty {
+                    LabeledContent("Last run") {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(preCallBriefTrigger.lastResult)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                            if let at = preCallBriefTrigger.lastRunAt {
+                                Text(at, style: .relative).font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+                if preCallBriefTrigger.isRunning {
+                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Briefing…").font(.caption) }
+                }
+            } header: {
+                Text("Intraday Pre-Call Briefings")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("When a new meeting lands in your calendar during the working day, this runs the pre-call briefing agent for it within ~2 minutes — the local counterpart to the 03:00 cloud task. It follows the same rules and delivers via the local iMessage + Reminders CLIs.")
+                    Text("Requires the `claude` CLI, the `imessage-tools` + `remctl` CLIs, and Full Disk Access + Automation (Messages) + Reminders permission for this app. Off by default.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
