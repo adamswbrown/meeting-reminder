@@ -126,7 +126,8 @@ MeetingReminder/
 │   ├── CalendarSyncTypes.swift           # EventLike protocol, EKEvent adapter, logger, constants
 │   ├── CalendarSyncMigrations.swift      # Idempotent Notion schema migrations
 │   ├── RelationLinker.swift              # Auto-link Meeting Notes / Pre-Call Briefings
-│   └── CalendarChangeWatcher.swift       # Reactive .EKEventStoreChanged watcher (opt-in)
+│   ├── CalendarChangeWatcher.swift       # Reactive .EKEventStoreChanged watcher (opt-in)
+│   └── PreCallBriefTriggerService.swift  # Intraday pre-call briefing catcher: on a new work-calendar meeting during 09:00–17:00, spawns headless `claude` running the derived skill (CLI delivery via imessage-tools + remctl). See docs/INTRADAY-BRIEFINGS.md
 ├── Views/
 │   ├── MenuBarView.swift                 # Window-style popover (event list, meeting load, previews, ad-hoc start)
 │   ├── OverlayWindow.swift               # NSPanel wrappers for meeting + break overlays
