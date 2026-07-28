@@ -58,6 +58,7 @@ struct MeetingReminderApp: App {
     @StateObject private var busyLightService = BusyLightService()
     @StateObject private var calComService: CalComService
     @StateObject private var calComSyncService: CalComSyncService
+    @StateObject private var preCallBriefTrigger: PreCallBriefTriggerService
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
@@ -95,6 +96,7 @@ struct MeetingReminderApp: App {
         _bookingPollService = StateObject(wrappedValue: bookingPoll)
         _calComService = StateObject(wrappedValue: calCom)
         _calComSyncService = StateObject(wrappedValue: calComSync)
+        _preCallBriefTrigger = StateObject(wrappedValue: PreCallBriefTriggerService(calendarService: calendar))
     }
 
     var body: some Scene {
@@ -126,6 +128,7 @@ struct MeetingReminderApp: App {
                     availabilityPushService.start()
                     bookingPollService.start()
                     calComSyncService.startIfEnabled()
+                    preCallBriefTrigger.start()
                     overlayCoordinator.startBusyLightObserver(busyLightService)
 
                     if !hasCompletedOnboarding {
@@ -155,7 +158,8 @@ struct MeetingReminderApp: App {
                 bookingPollService: bookingPollService,
                 busyLightService: busyLightService,
                 calComService: calComService,
-                calComSyncService: calComSyncService
+                calComSyncService: calComSyncService,
+                preCallBriefTrigger: preCallBriefTrigger
             )
         }
     }

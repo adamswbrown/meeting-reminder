@@ -13,3 +13,8 @@ __pycache__/
 
 # git worktrees for isolated feature work
 .worktrees/
+
+# Briefing skills — contain the private Outlook ICS feed URL + recipient (secrets).
+# Kept local, never committed. See docs/plans/2026-07-28-reactive-precall-briefing-trigger-design.md
+breifingskill.txt
+automation/
