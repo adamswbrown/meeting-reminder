@@ -1,4 +1,5 @@
 import Combine
+import EventKit
 import Foundation
 
 /// Intraday pre-call briefing catcher.
@@ -85,6 +86,46 @@ final class PreCallBriefTriggerService: ObservableObject {
 
     /// Subscribe to calendar changes if enabled. Safe to call repeatedly.
     func start() { reconfigure() }
+
+    /// Trigger the two TCC consent prompts that the Automation and Reminders panes
+    /// can't be populated any other way (they have no `+` button — an app only appears
+    /// after it programmatically requests access). Call from a foreground moment
+    /// (the Settings button) so the prompts actually surface.
+    ///
+    /// The spawned `imessage-tools` / `remctl` inherit the app as the TCC-responsible
+    /// process, so granting the app here unblocks them.
+    @Published private(set) var permissionStatus: String = ""
+
+    func requestPermissions() {
+        // Reminders — surfaces the Reminders consent prompt + lists the app in the pane.
+        let store = EKEventStore()
+        let handler: (Bool, Error?) -> Void = { [weak self] granted, error in
+            Task { @MainActor in
+                let msg = "Reminders access: \(granted ? "granted" : "DENIED")\(error.map { " (\($0.localizedDescription))" } ?? "")"
+                self?.permissionStatus = msg
+                self?.log(msg)
+            }
+        }
+        if #available(macOS 14.0, *) {
+            store.requestFullAccessToReminders(completion: handler)
+        } else {
+            store.requestAccess(to: .reminder, completion: handler)
+        }
+        // Automation (control Messages) — send one harmless Apple Event from the app
+        // process so macOS shows "MeetingReminder wants to control Messages" and adds
+        // the app to Automation → Messages.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var err: NSDictionary?
+            let script = NSAppleScript(source: "tell application \"Messages\" to get name")
+            _ = script?.executeAndReturnError(&err)
+            let ok = (err == nil)
+            Task { @MainActor in
+                let m = "Messages automation: \(ok ? "prompt shown / already allowed" : "denied — \(err?[NSAppleScript.errorMessage] ?? "?")")"
+                self?.permissionStatus = m
+                self?.log(m)
+            }
+        }
+    }
 
     private func reconfigure() {
         cancellable?.cancel()
