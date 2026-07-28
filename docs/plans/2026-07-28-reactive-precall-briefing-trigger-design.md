@@ -90,27 +90,42 @@ Step 0.0 decide if work exists. The service is thin:
 - Skip firing during the 06:00 full-window backfill (let the cloud "first run of the day"
   own the morning digest), and outside working hours.
 
-### Decision — Hybrid (2026-07-28)
-Keep the existing cloud schedule as the **backstop** (morning digest + a few daily
-reconciles), and add the **Mac app reactive trigger** (Option 2) to close the same-day
-gap with zero idle spawns. This matches the literal ask ("when a new meeting comes in, a
-briefing gets created") and respects the idle-cost constraint. **Gated on headless-MCP
-parity validation** before any Swift is written.
+### Decision — divergent-delivery Hybrid (2026-07-28, confirmed by Adam)
+Two independent runners that share Notion state and never edit each other:
+
+| | **Co Work (cloud) — unchanged** | **App reactive catcher — NEW** |
+|---|---|---|
+| Owner | Claude Co Work | this Mac app |
+| Trigger | 3am schedule (+ its existing runs) | a new meeting landing, **09:00–17:00** working day |
+| Ruleset | `breifingskill.txt` verbatim | **same rules**, own local artifact |
+| Delivery | its MCP servers (iMessage/Reminders) | **CLIs** (`imessage-tools` + `remctl`) |
+| Scope | morning digest (Template A/B) + backstop | **Template C change alerts only** (net-new / reschedule / cancellation intraday) |
+
+**Divergent delivery is explicitly fine** (Adam): Co Work keeps its MCP delivery; the app
+uses CLIs. They interoperate purely through shared state — same Pre-Call Briefings DB, same
+Run Log, same "Daily Briefing" Reminders list, same `#AI-` hashes — so Step 2B/4 dedup
+means neither double-briefs. **No Co Work edits by anyone.** The app run is *always* a
+"re-run" in ruleset terms (`is_first_run_today=False`, since Co Work ran at 3am) → it only
+ever emits Template C, never the full digest.
+
+The app artifact is a **derived skill**: identical rules to `breifingskill.txt`, differing
+only in (a) delivery via CLIs, (b) Template-C-only intraday scope, (c) the working-hours
+gate is the app's 09:00–17:00 firing window. I author this; it does not modify the Co Work
+ruleset.
 
 ### Build sequence
-1. ~~**Validate headless parity (make-or-break).**~~ ✅ DONE 2026-07-28. Content pipeline
-   (Notion/Jira/ICS/web) works headless; the delivery + Reminders gaps are **closed via
-   CLI-over-Bash** (`imessage-tools` + `remctl`), proven from a headless spawn
-   (`HEADLESS_RESULT: imessage=ok reminder=ok`). Full parity — no content-only compromise.
-2. **Edit `breifingskill.txt`** to use the CLIs (Step 8 → `imessage-tools`, Step 4B/7B →
-   `remctl`) — see "Ruleset changes required". Benefits cloud runs too. Do this first; it's
-   independent of the app and immediately de-flakes the existing schedule.
-3. **Confirm the trigger signal.** Verify `calendarNotionSyncReactiveEnabled` real state
-   and that `runReactive()` reliably writes new mid-day meetings to the Calendar Events DB
-   (the varied morning `Last Synced` stamps suggest it does, but the default reads unset —
-   reconcile this).
-4. **Build `PreCallBriefTriggerService`** per the design below.
-5. **Ship behind `preCallBriefTriggerEnabled` (default off);** keep cloud runs as backstop.
+1. ~~**Validate headless parity (make-or-break).**~~ ✅ DONE 2026-07-28. `imessage-tools` +
+   `remctl` both work from a headless spawn (`HEADLESS_RESULT: imessage=ok reminder=ok`).
+2. **Author the derived intraday skill** — same rules, CLI delivery, Template-C-only.
+   (Co Work ruleset untouched.)
+3. **Confirm the trigger signal.** Reconcile `calendarNotionSyncReactiveEnabled` (reads
+   unset, yet rows update intraday) and that a new meeting reliably lands in the Calendar
+   Events DB within ~2 min — the signal the catcher keys on.
+4. **Validate app-spawned TCC.** The headless proof used a terminal-launched `claude`
+   (which holds FDA/Automation/Reminders). Confirm the grants hold when **MeetingReminder.app**
+   is the responsible process (likely a one-time per-binary System Settings grant).
+5. **Build `PreCallBriefTriggerService`** per the design below.
+6. **Ship behind `preCallBriefTriggerEnabled` (default off);** Co Work stays the backstop.
 
 ## Headless capability matrix (resolved 2026-07-28)
 
@@ -190,79 +205,90 @@ have been logging `Partial` because Macuse (Reminders) and the iMessage server a
 flaky/absent. Moving Step 4B/7B/8 to `remctl` + `imessage-tools` makes *every* run
 (cloud + app) deliver reliably; Macuse can be retired.
 
-### Ruleset changes required (in `breifingskill.txt`, not the app)
-- **Step 8 (iMessage):** replace the `mcp__Read_and_Send_iMessages__send_imessage` path
-  (and its `select:` ToolSearch) with a Bash call to
-  `~/.bun/bin/imessage-tools send "adamswbrown@gmail.com" "<digest>"`. Keep the Run-Log
-  fallback for the recoverable-verbatim case.
-- **Step 4B / 7B (Reminders):** replace the Macuse/AppleScript "find a backend, probe it"
-  block with `remctl` — `remctl show "Daily Briefing"` (pull open), `remctl add … -l
-  "Daily Briefing"` (create), `remctl done <id>` (complete). `#AI-xxxxxx` hash tags still
-  go in the reminder title/notes as the join key. Deletes need `--force` (non-interactive).
+### Delivery spec for the DERIVED intraday skill (not Co Work)
+The derived skill implements Steps 8 / 4B / 7B against the CLIs instead of MCP servers.
+Co Work's own `breifingskill.txt` is unchanged.
+- **Step 8 (iMessage):** `~/.bun/bin/imessage-tools send "adamswbrown@gmail.com" "<Template C>"`.
+  Intraday emits **Template C only**. Keep the Run-Log-verbatim fallback if the CLI errors.
+- **Step 4B / 7B (Reminders):** `remctl show "Daily Briefing"` (pull open), `remctl add …
+  -l "Daily Briefing"` (create), `remctl done <id>` (complete), `remctl delete <id>
+  --force` (non-interactive). `#AI-xxxxxx` hash tags stay in the reminder title/notes as the
+  join key — **shared with Co Work's MCP-written reminders**, so completions propagate both
+  ways across the two runners.
 
-## Design (Option 2 specifics, if pursued)
+## Design
 
 ### Invoked skill
-Install `breifingskill.txt` as the skill the app runs (e.g. copy/symlink into
-`~/.claude/` as a named skill, or pass its content via stdin). **No app-side variant** —
-the app substitutes nothing; the ruleset re-derives today's meetings from the Calendar
-Events DB + ICS itself.
+The app invokes the **derived intraday skill** (own artifact, same rules, CLI delivery,
+Template-C-only — see "Delivery spec"). Installed under `~/.claude/` (or passed via stdin).
+The skill re-derives today's meetings from the **ICS feed + Pre-Call Briefings DB itself**,
+so it does not depend on the Calendar Events row pre-existing.
 
 ### `PreCallBriefTriggerService` (Mac app)
 `Services/PreCallBriefTriggerService.swift`:
-- **Signal:** hook the completion of `CalendarNotionSyncService.runReactive()` when it
-  wrote ≥1 row. (Surface a "wrote something" bool out of the reactive run.)
-- **Debounce + serialize:** coalesce bursts; a single in-flight run; a floor between runs
-  (mirror the reactive sync's 2-min floor).
-- **Invoke:** background `Process` → `claude --print --allowedTools <…> ` (prefer an
-  allow-list over `--dangerously-skip-permissions`) running the ruleset. Off the main
-  actor. Capture the Run Log outcome / final line; log locally.
-- **Guards:** don't fire during the 06:00 backfill; respect working hours (cheap check
-  before spawning, so we don't even start `claude` out of hours); leave the 3 scheduled
-  tasks / 15-min cron as backstop.
+- **Signal — EventKit directly, NOT the Notion reactive sync.** Key off
+  `CalendarService`'s existing `.EKEventStoreChanged` + wake observers (already `object:nil`,
+  already reliable). Rationale: the Calendar→Notion sync reads *disabled* on this machine
+  (`calendarNotionSyncEnabled`/`…ReactiveEnabled` both unset ⇒ false), so its "created row"
+  is not a trustworthy signal — but EventKit change detection is always live and the derived
+  skill re-derives from ICS anyway. This decouples the catcher from the Notion-sync toggle.
+- **New-meeting detection:** on each EventKit change, diff the fetched upcoming events against
+  a persisted `preCallBriefFiredIDs` set (keyed on `EKEvent.calendarItemExternalIdentifier`);
+  a genuinely-new event that **starts within the working day and after now** is a candidate.
+- **Working-day gate:** only fire **09:00–17:00** Mon–Fri (Adam's window; the derived skill
+  re-checks the ⚙️ Daily Briefing Settings hours too). Outside that, do nothing — the 3am
+  Co Work run + its schedule own everything else.
+- **Debounce + serialize:** coalesce bursts (30s), a single in-flight `claude` run, a floor
+  (~2 min) between runs.
+- **Invoke:** background `Process` → `claude --print` with the derived skill. Off the main
+  actor. Parse the final `BRIEFING_CREATED`/`SKIPPED` line + Run Log outcome; log locally.
+- **Guards:** record fired IDs so a meeting never re-fires; the skill's own Step 4 dedup is
+  the second line of defence (and what keeps it from colliding with Co Work's briefs).
 
 ### Settings (UserDefaults)
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `preCallBriefTriggerEnabled` | Bool | false | Master toggle for app-driven reactive briefing |
+| `preCallBriefTriggerEnabled` | Bool | false | Master toggle for the app-driven intraday catcher |
 | `preCallBriefCLIPath` | String | "/usr/local/bin/claude" | Path to the `claude` binary |
+| `preCallBriefSkillPath` | String | (derived skill path) | The intraday skill the run executes |
 | `preCallBriefMinIntervalSeconds` | Int | 120 | Floor between app-triggered runs |
+| `preCallBriefFiredIDs` | [String] | [] | Apple Event IDs already triggered (dedup) |
 
-Depends on `calendarNotionSyncReactiveEnabled` (the trigger signal source).
+**No dependency on `calendarNotionSyncReactiveEnabled`** — the catcher keys on EventKit.
 Surfaced in **Settings → Notion → Calendar Sync**, near the reactive-sync toggle.
 
-## Data flow (Option 2)
+## Data flow
 
 ```
-new meeting booked mid-day
-  → EKEventStoreChanged → reactive sync (30s debounce, 2-min floor) writes the
-    Calendar Events row (empty Pre-Call Briefing relation)
-  → PreCallBriefTriggerService: wrote-something? working hours? not backfill? no run in flight?
-  → background `claude --print` runs breifingskill.txt
-     → Step 0.0 sees work exists → Step 2B scopes to the net-new meeting only
-     → full pipeline: partner/WG/history/enrich/page + link-back + Reminders + iMessage + Run Log
-  → app logs the outcome
+new meeting booked 09:00–17:00 (after Co Work's 3am run)
+  → EKEventStoreChanged (CalendarService, always live) → fetchEvents()
+  → PreCallBriefTriggerService: new event id? starts today & future? working hours?
+    not already fired? no run in flight?
+  → background `claude --print` runs the DERIVED intraday skill
+     → same rules: Step 0.0/2B/4 dedup against Pre-Call Briefings DB (shared with Co Work)
+     → partner/WG/history/enrich/page + link-back
+     → delivery via CLIs: remctl (Reminders) + imessage-tools (Template C alert)
+     → Run Log row
+  → app records fired id + logs BRIEFING_CREATED/SKIPPED
 ```
 
-Idle cost with Option 2 = zero (no change → reactive sync writes nothing → no trigger).
+Idle cost = zero (no new meeting → no EventKit-new-id → no spawn). Co Work's 3am run and
+its schedule are untouched and own everything outside this path.
 
 ## Out of scope
-- Any change to `breifingskill.txt`'s logic (it is the source of truth; the app only
-  *triggers* it).
-- A simplified single-meeting briefing variant (rejected — violates "same ruleset").
-- Briefing meetings that never reach the Calendar Events DB (needs reactive sync on).
-- Reproducing any briefing logic in Swift.
+- Any change to Co Work's `breifingskill.txt` (source of truth; the app runs a *derived*
+  skill that follows the same rules with CLI delivery).
+- Briefings outside 09:00–17:00 (owned by Co Work's schedule).
+- Ad-hoc / uninvited meetings with no EventKit event.
+- Reproducing briefing logic in Swift (it stays in the skill/`claude`).
 
 ## Open questions
-1. **Deployment reality:** is `breifingskill.txt` currently deployed as a 15-min cloud
-   task, or only the older 3×/day simple skills? Determines whether Option 1 is "turn it
-   on" or "already on but too slow."
-2. **Headless parity:** ✅ RESOLVED (2026-07-28). Content pipeline works via MCP; the
-   Reminders + iMessage gaps are closed via the `remctl` + `imessage-tools` CLIs over Bash,
-   proven from a headless spawn. Full parity; no content-only compromise. Remaining work is
-   the `breifingskill.txt` Step 8 / 4B / 7B edits to call the CLIs.
-3. **`--allowedTools` identifiers** for the full server set, to avoid
-   `--dangerously-skip-permissions` in the app.
+1. ~~**Deployment reality**~~ — RESOLVED: Co Work runs ~3×/day (Run Log); this catcher
+   owns the 09:00–17:00 intraday gap. Co Work stays as-is.
+2. **Headless parity:** ✅ RESOLVED (2026-07-28) via `remctl` + `imessage-tools` CLIs,
+   proven from a headless spawn. Divergent delivery from Co Work is intentional and fine.
+3. **`--allowedTools` vs `--dangerously-skip-permissions`** for the app's `claude` spawn —
+   the CLIs run through Bash, so the spawn mainly needs Notion + Jira MCP + Bash allowed.
 4. **CLAUDE.md correction:** the "Co-Work pre-call-brief webhook fired by a Notion
    automation" line is inaccurate — there is no webhook; the trigger is the scheduled
    run reading the Calendar Events DB. Update it.
