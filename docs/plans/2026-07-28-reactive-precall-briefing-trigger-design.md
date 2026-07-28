@@ -1,9 +1,10 @@
 # Reactive pre-call briefing trigger (new meeting → briefing)
 
 **Date:** 2026-07-28
-**Status:** Design approved — **Hybrid chosen** (keep 3×/day cloud runs as backstop +
-add a Mac app reactive trigger). Not yet implemented. Gated on headless-MCP parity
-validation (see Open Question #2).
+**Status:** Design approved — **Hybrid chosen** (keep cloud runs as backstop + add a Mac
+app reactive trigger). Headless parity **validated** (delivery + Reminders gaps closed via
+`imessage-tools` + `remctl` CLIs over Bash). Not yet implemented. Next: ruleset CLI edits,
+then `PreCallBriefTriggerService`.
 
 ## Problem
 
@@ -97,37 +98,37 @@ briefing gets created") and respects the idle-cost constraint. **Gated on headle
 parity validation** before any Swift is written.
 
 ### Build sequence
-1. ~~**Validate headless-MCP parity (make-or-break).**~~ ✅ DONE 2026-07-28. Content
-   pipeline (Notion/Jira/ICS/web) works headless; delivery (iMessage/Mail) + Reminders do
-   not. Resolution baked into the design: **app owns delivery** (native
-   `NotificationService`), app-triggered run is **content-only**, Reminders heal on the
-   next scheduled run.
-2. **Confirm the trigger signal.** Verify `calendarNotionSyncReactiveEnabled` real state
+1. ~~**Validate headless parity (make-or-break).**~~ ✅ DONE 2026-07-28. Content pipeline
+   (Notion/Jira/ICS/web) works headless; the delivery + Reminders gaps are **closed via
+   CLI-over-Bash** (`imessage-tools` + `remctl`), proven from a headless spawn
+   (`HEADLESS_RESULT: imessage=ok reminder=ok`). Full parity — no content-only compromise.
+2. **Edit `breifingskill.txt`** to use the CLIs (Step 8 → `imessage-tools`, Step 4B/7B →
+   `remctl`) — see "Ruleset changes required". Benefits cloud runs too. Do this first; it's
+   independent of the app and immediately de-flakes the existing schedule.
+3. **Confirm the trigger signal.** Verify `calendarNotionSyncReactiveEnabled` real state
    and that `runReactive()` reliably writes new mid-day meetings to the Calendar Events DB
    (the varied morning `Last Synced` stamps suggest it does, but the default reads unset —
    reconcile this).
-3. **Build `PreCallBriefTriggerService`** per the design below.
-4. **Ship behind `preCallBriefTriggerEnabled` (default off);** keep cloud runs as backstop.
+4. **Build `PreCallBriefTriggerService`** per the design below.
+5. **Ship behind `preCallBriefTriggerEnabled` (default off);** keep cloud runs as backstop.
 
-## Hard dependency — headless MCP availability
+## Headless capability matrix (resolved 2026-07-28)
 
-The full ruleset needs many MCP servers available in a **headless `claude --print`** run.
-Validated / to-validate as of 2026-07-28 (`claude mcp list`):
+What a **headless `claude --print`** run needs, and how each is met:
 
-| Capability | Server | Headless status |
+| Capability | Mechanism | Headless status |
 |---|---|---|
-| Notion (read + write briefings) | claude.ai Notion | ✅ proven 2026-07-28 |
+| Notion (read + write briefings) | claude.ai Notion MCP | ✅ proven |
 | Web search (contact enrichment) | built-in | ✅ proven |
-| Jira PSCI (WG lookup/create) | claude.ai Atlassian Rovo | ✅ connected — verify write headless |
-| Apple Reminders (action-item sync) | *(none found)* | ⚠️ ruleset self-heals: `reminders_ok=False` → run logs `Partial`, iMessage carries items |
-| iMessage delivery | "Read and Send iMessages" | ⚠️ not in current `mcp list` — ruleset falls back to Apple Mail then Run Log |
-| Apple Mail fallback | `mcp__apple-mail__*` | ✘ currently "Failed to connect" |
+| Jira PSCI (WG lookup/create) | claude.ai Atlassian Rovo MCP | ✅ proven (lookup ran in the 15:42 full run) |
+| ICS recurrence expansion | Python (`icalendar`) over Bash | ✅ proven |
+| iMessage delivery | **`imessage-tools` CLI over Bash** | ✅ proven from a headless spawn |
+| Apple Reminders sync | **`remctl` CLI over Bash** | ✅ proven from a headless spawn |
 
-The ruleset degrades gracefully (Partial runs, delivery fallbacks), but **for a
-reactive app-triggered run to deliver like the scheduled run, the same servers must be
-reachable in the app's `claude` invocation environment.** This is the main risk for
-Option 2 and must be checked before building — a background app spawn may not inherit the
-same MCP auth/session as an interactive or cloud run.
+The lesson: **interactively-authenticated MCP servers (Reminders/iMessage/Mail) are absent
+in a background spawn; local CLIs over Bash are not.** Preferring CLIs removes the only
+real headless risk. TCC (FDA / Automation / Reminders) was confirmed to propagate through
+app → `claude` → `bun`/`remctl`.
 
 ## Feasibility validation (2026-07-28)
 
@@ -162,19 +163,42 @@ channels do not** — they are interactively-authenticated/local MCP servers tha
 background `claude --print` spawn does not load. The ruleset degraded exactly as designed
 (Partial, alert preserved in the Run Log). Nothing was lost; the brief is durable in Notion.
 
-### Design implication — the app owns delivery, not the ruleset
-This is a simplification, not a blocker. For an **app-triggered** reactive run we do NOT
-need iMessage/Reminders headless, because the Mac app already has native delivery:
-- **Notification:** use the app's existing `NotificationService` (and optionally a
-  `FloatingPromptView`/overlay) to surface "🆕 briefed: <meeting>" — replacing the
-  ruleset's iMessage for the same-day case.
-- **Reminders backlog:** leave to the next **scheduled** run, whose interactive context
-  can reach Macuse and heal the backlog (the ruleset's Step 4B heal path already does this
-  robustly — verified in the 09:52 cloud run).
-- The app-triggered run should therefore be treated as **content-only by design**; a
-  `Partial` status from missing delivery channels is expected and must NOT be surfaced as
-  an error. Consider passing a flag / using a content-only variant invocation so the run
-  doesn't spend time probing iMessage/Mail it knows won't be there.
+### Resolution — CLI-over-Bash closes BOTH headless gaps (validated 2026-07-28)
+Rather than accept degraded delivery, we close both gaps by replacing the
+interactively-auth'd MCP servers with **local CLIs invoked over Bash** — which the ruleset
+already does for Python/ICS, and which do not depend on any MCP server loading in a
+headless spawn:
+
+| Gap | CLI | Path | Headless test |
+|---|---|---|---|
+| iMessage delivery | `imessage-tools` ([benelser/imessage-tools](https://github.com/benelser/imessage-tools)) | `~/.bun/bin/imessage-tools` | ✅ `send "adamswbrown@gmail.com" …` sent via iMessage from a background `claude --print` |
+| Reminders sync | `remctl` ([viticci/remctl](https://github.com/viticci/remctl)) | `~/bin/remctl` | ✅ `add … -l "Daily Briefing"` created from a background `claude --print` |
+
+Validation chain: read (FDA / Reminders) ✅ → write from *this* context (Automation for
+Messages, EventKit for Reminders) ✅ → **write from a headless `claude --print` background
+spawn** ✅ (`HEADLESS_RESULT: imessage=ok reminder=ok`). So **TCC propagates through
+app → `claude` → `bun`/`remctl`** — the sole make-or-break. The email handle
+`adamswbrown@gmail.com` resolves directly (no Step 8 recipient rework); `remctl` already
+sees the existing **"Daily Briefing"** list (id 15).
+
+**Consequence:** the app-triggered reactive run gets **full parity** — brief + iMessage
+digest + Reminders sync — so the earlier native-notify compromise is **dropped**. The run
+is the complete ruleset.
+
+**Bonus:** adopting these CLIs also **stabilises the existing cloud scheduled runs**, which
+have been logging `Partial` because Macuse (Reminders) and the iMessage server are
+flaky/absent. Moving Step 4B/7B/8 to `remctl` + `imessage-tools` makes *every* run
+(cloud + app) deliver reliably; Macuse can be retired.
+
+### Ruleset changes required (in `breifingskill.txt`, not the app)
+- **Step 8 (iMessage):** replace the `mcp__Read_and_Send_iMessages__send_imessage` path
+  (and its `select:` ToolSearch) with a Bash call to
+  `~/.bun/bin/imessage-tools send "adamswbrown@gmail.com" "<digest>"`. Keep the Run-Log
+  fallback for the recoverable-verbatim case.
+- **Step 4B / 7B (Reminders):** replace the Macuse/AppleScript "find a backend, probe it"
+  block with `remctl` — `remctl show "Daily Briefing"` (pull open), `remctl add … -l
+  "Daily Briefing"` (create), `remctl done <id>` (complete). `#AI-xxxxxx` hash tags still
+  go in the reminder title/notes as the join key. Deletes need `--force` (non-interactive).
 
 ## Design (Option 2 specifics, if pursued)
 
@@ -233,10 +257,10 @@ Idle cost with Option 2 = zero (no change → reactive sync writes nothing → n
 1. **Deployment reality:** is `breifingskill.txt` currently deployed as a 15-min cloud
    task, or only the older 3×/day simple skills? Determines whether Option 1 is "turn it
    on" or "already on but too slow."
-2. **Headless MCP parity:** ✅ RESOLVED (2026-07-28 full-ruleset headless run). Notion +
-   Jira + ICS + web work headless; Reminders + iMessage + Apple Mail do **not** (absent in
-   the background spawn). Resolution: the app owns delivery via `NotificationService`;
-   Reminders backlog heals on the next scheduled run. App-triggered run = content-only.
+2. **Headless parity:** ✅ RESOLVED (2026-07-28). Content pipeline works via MCP; the
+   Reminders + iMessage gaps are closed via the `remctl` + `imessage-tools` CLIs over Bash,
+   proven from a headless spawn. Full parity; no content-only compromise. Remaining work is
+   the `breifingskill.txt` Step 8 / 4B / 7B edits to call the CLIs.
 3. **`--allowedTools` identifiers** for the full server set, to avoid
    `--dangerously-skip-permissions` in the app.
 4. **CLAUDE.md correction:** the "Co-Work pre-call-brief webhook fired by a Notion
