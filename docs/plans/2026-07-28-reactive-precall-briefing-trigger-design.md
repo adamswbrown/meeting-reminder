@@ -97,10 +97,11 @@ briefing gets created") and respects the idle-cost constraint. **Gated on headle
 parity validation** before any Swift is written.
 
 ### Build sequence
-1. **Validate headless-MCP parity (make-or-break).** Prove a background `claude --print`
-   run of the *full* `breifingskill.txt` (not the simplified prompt) completes with Jira
-   + Reminders + iMessage reachable — or characterise exactly how it degrades. Until this
-   passes, the app trigger would produce Partial/undelivered runs.
+1. ~~**Validate headless-MCP parity (make-or-break).**~~ ✅ DONE 2026-07-28. Content
+   pipeline (Notion/Jira/ICS/web) works headless; delivery (iMessage/Mail) + Reminders do
+   not. Resolution baked into the design: **app owns delivery** (native
+   `NotificationService`), app-triggered run is **content-only**, Reminders heal on the
+   next scheduled run.
 2. **Confirm the trigger signal.** Verify `calendarNotionSyncReactiveEnabled` real state
    and that `runReactive()` reliably writes new mid-day meetings to the Calendar Events DB
    (the varied morning `Last Synced` stamps suggest it does, but the default reads unset —
@@ -130,8 +131,9 @@ same MCP auth/session as an interactive or cloud run.
 
 ## Feasibility validation (2026-07-28)
 
-A headless `claude --print --dangerously-skip-permissions < prompt.md` run (simplified
-single-meeting prompt) proved the *mechanism*, not the full ruleset:
+Two headless `claude --print --dangerously-skip-permissions` runs were done.
+
+**Run 1 — simplified single-meeting prompt** (proved the mechanism):
 
 | Assumption | Result |
 |---|---|
@@ -140,8 +142,39 @@ single-meeting prompt) proved the *mechanism*, not the full ruleset:
 | Dedup / idempotency | ✅ "HMC DC Assessment" correctly **skipped** (already briefed 09:02) |
 | Create path | ✅ a page was created and independently re-fetched from Notion |
 
-Not yet validated headless: Jira write, Reminders, iMessage/Mail delivery, the Python
-ICS recurrence expansion, and the full Step 0.0/2B gating behaviour.
+**Run 2 — the FULL `breifingskill.txt` ruleset headless** (the make-or-break, 15:42 BST).
+Result: the run completed (exit 0, ~450s), correctly ran Step 0.0/2B, created 1 brief
+(BiotechUSA), linked both duplicate Calendar Events rows, raised a mapping suggestion, and
+wrote a Run Log row. **Clean split on MCP parity:**
+
+| Capability | Headless result |
+|---|---|
+| Notion (brief + suggestion + run log + link-back) | ✅ works |
+| Jira PSCI (WG lookup) | ✅ works |
+| ICS recurrence expansion (Python) | ✅ works |
+| Web enrichment | ✅ works |
+| **Apple Reminders sync** | ❌ backend absent → `reminders_ok=false`, run logs `Partial` |
+| **iMessage delivery** | ❌ server absent (confirmed via `select:` ToolSearch) |
+| **Apple Mail fallback** | ❌ absent |
+
+**Conclusion:** the **content pipeline works fully headless; the delivery + Reminders
+channels do not** — they are interactively-authenticated/local MCP servers that a
+background `claude --print` spawn does not load. The ruleset degraded exactly as designed
+(Partial, alert preserved in the Run Log). Nothing was lost; the brief is durable in Notion.
+
+### Design implication — the app owns delivery, not the ruleset
+This is a simplification, not a blocker. For an **app-triggered** reactive run we do NOT
+need iMessage/Reminders headless, because the Mac app already has native delivery:
+- **Notification:** use the app's existing `NotificationService` (and optionally a
+  `FloatingPromptView`/overlay) to surface "🆕 briefed: <meeting>" — replacing the
+  ruleset's iMessage for the same-day case.
+- **Reminders backlog:** leave to the next **scheduled** run, whose interactive context
+  can reach Macuse and heal the backlog (the ruleset's Step 4B heal path already does this
+  robustly — verified in the 09:52 cloud run).
+- The app-triggered run should therefore be treated as **content-only by design**; a
+  `Partial` status from missing delivery channels is expected and must NOT be surfaced as
+  an error. Consider passing a flag / using a content-only variant invocation so the run
+  doesn't spend time probing iMessage/Mail it knows won't be there.
 
 ## Design (Option 2 specifics, if pursued)
 
@@ -200,8 +233,10 @@ Idle cost with Option 2 = zero (no change → reactive sync writes nothing → n
 1. **Deployment reality:** is `breifingskill.txt` currently deployed as a 15-min cloud
    task, or only the older 3×/day simple skills? Determines whether Option 1 is "turn it
    on" or "already on but too slow."
-2. **Headless MCP parity:** will an app-spawned `claude` inherit Notion/Jira/Reminders/
-   iMessage auth? (Main Option-2 risk — verify before building.)
+2. **Headless MCP parity:** ✅ RESOLVED (2026-07-28 full-ruleset headless run). Notion +
+   Jira + ICS + web work headless; Reminders + iMessage + Apple Mail do **not** (absent in
+   the background spawn). Resolution: the app owns delivery via `NotificationService`;
+   Reminders backlog heals on the next scheduled run. App-triggered run = content-only.
 3. **`--allowedTools` identifiers** for the full server set, to avoid
    `--dangerously-skip-permissions` in the app.
 4. **CLAUDE.md correction:** the "Co-Work pre-call-brief webhook fired by a Notion
