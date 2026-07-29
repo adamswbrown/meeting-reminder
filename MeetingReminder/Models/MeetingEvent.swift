@@ -13,6 +13,12 @@ struct MeetingEvent: Identifiable, Equatable {
     let attendees: [String]?
     let notes: String?
     let location: String?
+    /// Exchange/ICS cross-system UID (`calendarItemExternalIdentifier`) — the key the
+    /// Notion Calendar Events DB and the briefing skill match on, unlike the local `id`.
+    let externalID: String?
+    /// True if the event is part of a recurring series (drives the `_YYYY-MM-DD`
+    /// occurrence-suffix convention when building the Notion "Apple Event ID").
+    let isRecurring: Bool
 
     var timeUntilStart: TimeInterval {
         startDate.timeIntervalSinceNow
@@ -110,6 +116,8 @@ struct MeetingEvent: Identifiable, Equatable {
         self.isAllDay = ekEvent.isAllDay
         self.notes = ekEvent.notes
         self.location = ekEvent.location
+        self.externalID = ekEvent.calendarItemExternalIdentifier
+        self.isRecurring = ekEvent.hasRecurrenceRules
 
         // Extract attendee names
         if let ekAttendees = ekEvent.attendees {
@@ -125,7 +133,8 @@ struct MeetingEvent: Identifiable, Equatable {
     init(id: String, title: String, startDate: Date, endDate: Date,
          calendar: String, calendarColor: String = "",
          videoLink: URL? = nil, isAllDay: Bool = false,
-         attendees: [String]? = nil, notes: String? = nil, location: String? = nil) {
+         attendees: [String]? = nil, notes: String? = nil, location: String? = nil,
+         externalID: String? = nil, isRecurring: Bool = false) {
         self.id = id
         self.title = title
         self.startDate = startDate
@@ -137,5 +146,7 @@ struct MeetingEvent: Identifiable, Equatable {
         self.attendees = attendees
         self.notes = notes
         self.location = location
+        self.externalID = externalID
+        self.isRecurring = isRecurring
     }
 }

@@ -110,6 +110,20 @@ final class NotificationService {
         }
     }
 
+    /// Generic informational banner (used by the intraday briefing catcher to announce
+    /// detection and completion). `id` lets a later post replace an earlier one.
+    func postInfo(id: String, title: String, body: String, sound: Bool = false) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = String(body.prefix(300))
+        if sound { content.sound = .default }
+
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error { print("Failed to post info notification: \(error)") }
+        }
+    }
+
     func removeNotifications(for eventID: String) {
         let center = UNUserNotificationCenter.current()
 

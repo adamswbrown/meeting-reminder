@@ -64,11 +64,22 @@ final class PreCallBriefTriggerService: ObservableObject {
 
     // MARK: Internal state
     private weak var calendarService: CalendarService?
+    private let notifications = NotificationService.shared
     private var cancellable: AnyCancellable?
-    private var baselineSeeded = false
-    private var firedIDs: Set<String>
+    /// The set of upcoming-today meeting IDs seen on the *previous* emission. A candidate
+    /// is an ID present now but absent then — updated on EVERY emission (incl. outside
+    /// working hours) so the midnight/day-rollover set is absorbed silently, not fired.
+    /// `nil` = not yet seeded.
+    private var previousUpcomingIDs: Set<String>?
+    private var seeded = false               // has the diff basis been established from a real (non-empty) emission?
+    private var lastSeenDay: Date?           // start-of-day of the last emission — detects rollover
+    private var firedIDs: Set<String>       // fast membership test
+    private var firedOrder: [String]        // insertion order, for bounded FIFO eviction
+    private var skillMissingLatched = false // stop retrying every poll when the skill file is absent
     private var lastRunTime: Date?
     private var debounceTask: Task<Void, Never>?
+    private var pending: [MeetingEvent] = []    // detected-but-not-yet-briefed, drained serially
+    private var permissionStore: EKEventStore?  // retained across the async consent callback
 
     private let logURL: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -79,7 +90,12 @@ final class PreCallBriefTriggerService: ObservableObject {
 
     init(calendarService: CalendarService) {
         self.calendarService = calendarService
-        self.firedIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.firedIDs) ?? [])
+        let saved = UserDefaults.standard.stringArray(forKey: Keys.firedIDs) ?? []
+        self.firedOrder = saved
+        self.firedIDs = Set(saved)
+        // A child that closes its stdin before we finish writing must not SIGPIPE-kill
+        // the whole app (M4). We handle the write error explicitly instead.
+        signal(SIGPIPE, SIG_IGN)
     }
 
     // MARK: Lifecycle
@@ -98,12 +114,18 @@ final class PreCallBriefTriggerService: ObservableObject {
 
     func requestPermissions() {
         // Reminders — surfaces the Reminders consent prompt + lists the app in the pane.
+        // Retain the store as a property so it can't deallocate before the async consent
+        // callback fires (M5).
         let store = EKEventStore()
+        permissionStore = store
         let handler: (Bool, Error?) -> Void = { [weak self] granted, error in
             Task { @MainActor in
                 let msg = "Reminders access: \(granted ? "granted" : "DENIED")\(error.map { " (\($0.localizedDescription))" } ?? "")"
                 self?.permissionStatus = msg
                 self?.log(msg)
+                // Only release if it's still our store (a rapid second tap may have
+                // replaced it — don't free that one out from under its callback).
+                if self?.permissionStore === store { self?.permissionStore = nil }
             }
         }
         if #available(macOS 14.0, *) {
@@ -111,16 +133,33 @@ final class PreCallBriefTriggerService: ObservableObject {
         } else {
             store.requestAccess(to: .reminder, completion: handler)
         }
-        // Automation (control Messages) — send one harmless Apple Event from the app
-        // process so macOS shows "MeetingReminder wants to control Messages" and adds
-        // the app to Automation → Messages.
+        // Automation (control Messages) — send one harmless Apple Event so macOS shows
+        // "MeetingReminder wants to control Messages" and lists the app in Automation.
+        // Spawn `osascript` (a child of the app, so TCC attributes the request to the app)
+        // rather than NSAppleScript, which is main-thread-only and blocks up to the consent
+        // timeout (M5).
+        // Blocks up to the consent-dialog timeout, so run it on a GCD thread (not the
+        // cooperative pool) to avoid starving Swift concurrency.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var err: NSDictionary?
-            let script = NSAppleScript(source: "tell application \"Messages\" to get name")
-            _ = script?.executeAndReturnError(&err)
-            let ok = (err == nil)
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            // Must be an automation-GATED command (reading `chats` requires controlling
+            // Messages) — a benign `get name` is not gated and never surfaces the prompt.
+            proc.arguments = ["-e", "tell application \"Messages\" to count of chats"]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            var ok = false
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                ok = (proc.terminationStatus == 0)
+            } catch { ok = false }
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             Task { @MainActor in
-                let m = "Messages automation: \(ok ? "prompt shown / already allowed" : "denied — \(err?[NSAppleScript.errorMessage] ?? "?")")"
+                let m = ok
+                    ? "Messages automation: prompt shown / already allowed"
+                    : "Messages automation: denied — \(out.trimmingCharacters(in: .whitespacesAndNewlines))"
                 self?.permissionStatus = m
                 self?.log(m)
             }
@@ -131,7 +170,11 @@ final class PreCallBriefTriggerService: ObservableObject {
         cancellable?.cancel()
         cancellable = nil
         debounceTask?.cancel()
-        baselineSeeded = false
+        previousUpcomingIDs = nil   // next real emission re-seeds the diff basis (absorb, don't fire)
+        seeded = false
+        lastSeenDay = nil
+        pending.removeAll()
+        skillMissingLatched = false
         guard isEnabled, let calendarService else { return }
 
         cancellable = calendarService.$events
@@ -145,32 +188,59 @@ final class PreCallBriefTriggerService: ObservableObject {
     // MARK: Candidate detection
 
     private func handleEventsChanged(_ events: [MeetingEvent]) {
-        // First emission after (re)start is the existing diary — seed the baseline so
-        // we never storm on launch. Co Work owns anything already in the calendar.
-        guard baselineSeeded else {
-            for e in upcomingTodayMeetings(events) { firedIDs.insert(e.id) }
-            persistFired()
-            baselineSeeded = true
+        let current = upcomingTodayMeetings(events)
+        let currentIDs = Set(current.map(\.id))
+        let previous = previousUpcomingIDs
+        // Always advance the diff basis (even outside hours) so pre-existing meetings are
+        // absorbed and only genuinely-new appearances ever fire.
+        previousUpcomingIDs = currentIDs
+
+        if skillMissingLatched { return }
+
+        // Day rollover — the whole new day's diary would otherwise diff as "new". Absorb it
+        // silently and clear any stale pending from yesterday (NEW-3).
+        let today = Calendar.current.startOfDay(for: Date())
+        let rolled = lastSeenDay != nil && lastSeenDay != today
+        lastSeenDay = today
+        if rolled {
+            pending.removeAll()
             return
         }
 
-        let candidates = upcomingTodayMeetings(events)
-            .filter { !firedIDs.contains($0.id) }
-            .sorted { $0.startDate < $1.startDate }
+        // Seed the diff basis on the first emission that carries REAL data. Until the
+        // calendar has actually loaded (`events` empty = access pending / not yet synced),
+        // keep waiting — otherwise the initial diary looks "new". Once seeded, a genuinely
+        // empty upcoming list is fine: a later booking still fires (NEW-1).
+        if !seeded {
+            if !events.isEmpty { seeded = true }
+            return
+        }
+        guard let previous else { return }
 
-        guard let target = candidates.first, withinWorkingHours(Date()) else { return }
+        // Enqueue every genuinely-new appearance (a batch sync can surface several at once);
+        // they drain one at a time. Dedup against the queue + already-fired.
+        let pendingIDs = Set(pending.map(\.id))
+        let newOnes = current.filter {
+            !previous.contains($0.id) && !firedIDs.contains($0.id) && !pendingIDs.contains($0.id)
+        }
+        guard !newOnes.isEmpty else { return }
+        pending.append(contentsOf: newOnes)
+        pending.sort { $0.startDate < $1.startDate }
 
-        // Debounce ~30s to let a burst of calendar writes settle, then run.
+        // Debounce ~30s to let a burst of calendar writes settle, then drain.
+        scheduleDrain(after: 30)
+    }
+
+    private func scheduleDrain(after seconds: TimeInterval) {
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            await self?.runIfAllowed(for: target)
+            await self?.drainPending()
         }
     }
 
-    /// Non-all-day meetings that start later today (future), used both for the baseline
-    /// seed and candidate detection.
+    /// Non-all-day meetings that start later today (future).
     private func upcomingTodayMeetings(_ events: [MeetingEvent]) -> [MeetingEvent] {
         let now = Date()
         let cal = Calendar.current
@@ -190,61 +260,148 @@ final class PreCallBriefTriggerService: ObservableObject {
         return isWeekday && (9..<17).contains(hour)
     }
 
+    /// Seconds until the next weekday 09:00 strictly after `now` (0 if already in-window).
+    /// Used to re-arm the drain when a booking lands outside working hours.
+    private func secondsUntilNextWorkingWindow(from now: Date = Date()) -> TimeInterval {
+        if withinWorkingHours(now) { return 0 }
+        let cal = Calendar.current
+        let startToday = cal.startOfDay(for: now)
+        for i in 0..<8 {
+            guard let day = cal.date(byAdding: .day, value: i, to: startToday),
+                  let nine = cal.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { continue }
+            let wd = cal.component(.weekday, from: nine)
+            if (2...6).contains(wd) && nine > now {
+                return max(60, nine.timeIntervalSince(now))
+            }
+        }
+        return 3600
+    }
+
     // MARK: Run
 
-    private func runIfAllowed(for target: MeetingEvent) async {
-        guard isEnabled, !isRunning else { return }
-        if let last = lastRunTime, Date().timeIntervalSince(last) < minInterval { return }
-        // Re-confirm it's still un-fired and still upcoming (it may have been briefed
-        // by Co Work in the meantime — the skill will dedup anyway, but skip the spawn).
-        guard !firedIDs.contains(target.id), target.startDate > Date() else { return }
+    /// Process the pending queue one meeting at a time, honouring the floor + working
+    /// hours + the single-in-flight guard. Re-arms itself while the queue is non-empty.
+    private func drainPending() async {
+        guard isEnabled, !isRunning, !skillMissingLatched else { return }
+        // Drop targets that are no longer relevant (already fired, or already started).
+        pending.removeAll { firedIDs.contains($0.id) || $0.startDate <= Date() }
+        // Outside working hours: don't fire, but DON'T strand the queue — re-arm for the
+        // next 09:00 window so an early-morning booking is briefed when hours open (NEW-2).
+        guard withinWorkingHours(Date()) else {
+            if !pending.isEmpty { scheduleDrain(after: secondsUntilNextWorkingWindow()) }
+            return
+        }
+        if let last = lastRunTime {
+            let elapsed = Date().timeIntervalSince(last)
+            if elapsed < minInterval {                      // floor not elapsed — retry later
+                scheduleDrain(after: minInterval - elapsed)
+                return
+            }
+        }
+        guard !pending.isEmpty else { return }
+        let target = pending.removeFirst()
+        await runOne(target)
+        if !pending.isEmpty { scheduleDrain(after: minInterval) }
+    }
 
+    private func runOne(_ target: MeetingEvent) async {
         isRunning = true
         lastRunTime = Date()
         defer { isRunning = false }
 
         log("firing intraday brief for: \(target.title) @ \(target.startDate)")
 
-        let filled = buildPrompt(for: target)
-        guard let filled else {
+        // Announce detection — a standard macOS notification so Adam knows a new meeting
+        // was picked up and a briefing is being generated.
+        let notifID = "intraday-\(target.id)"
+        notifications.postInfo(
+            id: notifID,
+            title: "🆕 New meeting detected",
+            body: "Generating a pre-call briefing for “\(target.title)”…")
+
+        guard let filled = buildPrompt(for: target) else {
+            // Skill file missing (it's gitignored) — latch so we don't retry every poll,
+            // and warn once. Do NOT mark fired; re-enabling the toggle clears the latch.
+            skillMissingLatched = true
             recordResult("skill file unreadable at \(skillPath)")
+            notifications.postInfo(id: notifID, title: "⚠️ Briefing not generated",
+                                   body: "Skill file missing at \(skillPath)", sound: true)
             return
         }
 
         let output = await Self.runClaude(cliPath: cliPath, promptStdin: filled)
         // Mark fired regardless of outcome — a failed run should not loop; Co Work's
-        // schedule is the backstop. (A transient failure is visible in lastResult/log.)
-        firedIDs.insert(target.id)
-        persistFired()
+        // schedule is the backstop.
+        markFired(target.id)
 
         let summary = Self.parseResult(output) ?? firstNonEmptyLine(output) ?? "(no output)"
         recordResult(summary)
-        log("result: \(summary)")
 
-        // Another new meeting may be waiting; re-check after the floor.
-        if let events = calendarService?.events {
-            let more = upcomingTodayMeetings(events).contains { !firedIDs.contains($0.id) }
-            if more {
-                Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: UInt64(self?.minInterval ?? 120) * 1_000_000_000)
-                    if let events = self?.calendarService?.events { self?.handleEventsChanged(events) }
-                }
-            }
+        // Completion banner — report a delivery failure even when a brief WAS created (M6).
+        let created = summary.contains("created=") && !summary.contains("created=0")
+        let deliveryFailed = summary.contains("imessage=failed")
+        if created && !deliveryFailed {
+            notifications.postInfo(id: notifID, title: "✅ Pre-call briefing ready",
+                                   body: "“\(target.title)” — briefing saved to Notion.")
+        } else if created {
+            notifications.postInfo(id: notifID, title: "⚠️ Briefing saved, alert not sent",
+                                   body: "“\(target.title)” — iMessage failed; check permissions / the Run Log.", sound: true)
+        } else if deliveryFailed || summary.lowercased().contains("fail") {
+            notifications.postInfo(id: notifID, title: "⚠️ Briefing generated with issues",
+                                   body: "“\(target.title)” — see the log / Notion Run Log.", sound: true)
+        } else {
+            // e.g. already-briefed / no change
+            notifications.postInfo(id: notifID, title: "Pre-call briefing",
+                                   body: "“\(target.title)” — \(summary)")
         }
+        log("result: \(summary)")
     }
 
     /// Read the skill, substitute the target meeting block.
     private func buildPrompt(for target: MeetingEvent) -> String? {
         guard let template = try? String(contentsOfFile: skillPath, encoding: .utf8) else { return nil }
+        let london = TimeZone(identifier: "Europe/London")
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd HH:mm"
-        fmt.timeZone = TimeZone(identifier: "Europe/London")
-        let appleID = target.id.components(separatedBy: "_").first ?? target.id
+        fmt.timeZone = london
+
+        // H2: build the "Apple Event ID" with the same convention as CalendarEventMapper —
+        // the Exchange external UID, suffixed `_YYYY-MM-DD` (Europe/London) for a recurring
+        // occurrence so the skill's reschedule CASE 1/2 discriminator works. Falls back to
+        // the title+start path only when EventKit gives us no external identifier.
+        let appleID: String
+        if let ext = target.externalID, !ext.isEmpty {
+            if target.isRecurring {
+                let df = DateFormatter()
+                df.dateFormat = "yyyy-MM-dd"
+                df.timeZone = london
+                df.locale = Locale(identifier: "en_US_POSIX")   // match CalendarEventMapper (H2)
+                appleID = "\(ext)_\(df.string(from: target.startDate))"
+            } else {
+                appleID = ext
+            }
+        } else {
+            appleID = "(unknown — match by title+start)"
+        }
+
+        // H3: the title/times come from a calendar invite anyone can send, and the skill
+        // is told to also read the (attacker-controllable) ICS description. Neutralise
+        // fence/placeholder tokens so injected control text can't break out of the data
+        // block. The skill header additionally frames the TARGET block as untrusted data.
+        func neutralise(_ s: String) -> String {
+            s.replacingOccurrences(of: "{{", with: "⦃⦃")
+                .replacingOccurrences(of: "}}", with: "⦄⦄")
+                .replacingOccurrences(of: "```", with: "ˋˋˋ")
+        }
+        // Title is free-form → also cap length. The Apple Event ID is app-generated (safe
+        // charset) → neutralise only, NEVER truncate (a clipped `_YYYY-MM-DD` suffix would
+        // flip the skill's reschedule discriminator, NEW-4).
+        let safeTitle = String(neutralise(target.title).prefix(300))
         return template
-            .replacingOccurrences(of: "{{MEETING_TITLE}}", with: target.title)
+            .replacingOccurrences(of: "{{MEETING_TITLE}}", with: safeTitle)
             .replacingOccurrences(of: "{{MEETING_START}}", with: fmt.string(from: target.startDate))
             .replacingOccurrences(of: "{{MEETING_END}}", with: fmt.string(from: target.endDate))
-            .replacingOccurrences(of: "{{APPLE_EVENT_ID}}", with: appleID)
+            .replacingOccurrences(of: "{{APPLE_EVENT_ID}}", with: neutralise(appleID))
     }
 
     // MARK: Process (runs off the main actor)
@@ -273,28 +430,52 @@ final class PreCallBriefTriggerService: ObservableObject {
                 process.standardOutput = stdout
                 process.standardError = stdout
 
+                // Resume the continuation exactly once, from whichever path finishes first
+                // (normal read, launch failure, or the watchdog). Guarantees `isRunning`
+                // is released even if a claude tool grandchild keeps the stdout pipe open
+                // after the parent is killed and `readDataToEndOfFile` never sees EOF (NEW-5).
+                let resumeLock = NSLock()
+                var didResume = false
+                func finish(_ result: String) {
+                    resumeLock.lock(); defer { resumeLock.unlock() }
+                    guard !didResume else { return }
+                    didResume = true
+                    continuation.resume(returning: result)
+                }
+
                 do {
                     try process.run()
                 } catch {
-                    continuation.resume(returning: "FAILED to launch \(cliPath): \(error.localizedDescription)")
+                    finish("FAILED to launch \(cliPath): \(error.localizedDescription)")
                     return
                 }
 
-                // Feed the prompt, then close stdin so `claude --print` proceeds.
-                if let data = promptStdin.data(using: .utf8) {
-                    stdin.fileHandleForWriting.write(data)
+                // Feed the prompt on a SEPARATE queue so the read loop below starts
+                // immediately — otherwise a child that emits >64KB before draining stdin
+                // would deadlock writer and reader (M4). SIGPIPE is ignored process-wide
+                // (see init); a closed pipe surfaces as a thrown error we swallow.
+                DispatchQueue.global(qos: .utility).async {
+                    if let data = promptStdin.data(using: .utf8) {
+                        try? stdin.fileHandleForWriting.write(contentsOf: data)
+                    }
+                    try? stdin.fileHandleForWriting.close()
                 }
-                stdin.fileHandleForWriting.closeFile()
 
-                // Watchdog: kill after 10 minutes.
-                let deadline = DispatchTime.now() + .seconds(600)
-                DispatchQueue.global().asyncAfter(deadline: deadline) {
-                    if process.isRunning { process.terminate() }
+                // Watchdog: SIGTERM at 10 min, SIGKILL 15s later, and resume regardless so a
+                // wedged read can't hang the queue forever (M3/NEW-5). The read thread may
+                // leak until the OS reaps it, but the feature keeps working.
+                DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(600)) {
+                    guard process.isRunning else { return }
+                    process.terminate()
+                    DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(15)) {
+                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                        finish("(intraday run timed out after ~10m — process terminated)")
+                    }
                 }
 
                 let data = stdout.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
-                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
+                finish(String(data: data, encoding: .utf8) ?? "")
             }
         }
     }
@@ -318,11 +499,16 @@ final class PreCallBriefTriggerService: ObservableObject {
         UserDefaults.standard.set(lastRunAt, forKey: Keys.lastRunAt)
     }
 
-    private func persistFired() {
-        // Cap the persisted set so it can't grow unbounded across days.
-        var arr = Array(firedIDs)
-        if arr.count > 500 { arr = Array(arr.suffix(500)); firedIDs = Set(arr) }
-        UserDefaults.standard.set(arr, forKey: Keys.firedIDs)
+    /// Record an ID as fired, preserving insertion order so the cap evicts the *oldest*
+    /// (not a random hash-ordered) entry (M2).
+    private func markFired(_ id: String) {
+        guard !firedIDs.contains(id) else { return }
+        firedIDs.insert(id)
+        firedOrder.append(id)
+        while firedOrder.count > 500 {
+            firedIDs.remove(firedOrder.removeFirst())
+        }
+        UserDefaults.standard.set(firedOrder, forKey: Keys.firedIDs)
     }
 
     private func log(_ message: String) {
