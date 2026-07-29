@@ -2,6 +2,17 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.3.0] - 2026-07-29
+
+### Added
+- **Intraday pre-call briefings** — an opt-in catcher that briefs a **new meeting the moment it lands in your work calendar during the day (09:00–17:00, Mon–Fri)**, instead of waiting for the next scheduled cloud run. It's the local counterpart to the scheduled "Co Work" Daily Pre-Call Briefing task: when a genuinely-new meeting appears, the app spawns a headless `claude` run of a derived briefing skill that researches the meeting (prior history, attendees, White Glove/Jira context) and writes the briefing — following the *same rules* as the scheduled task — then sends a short change-alert.
+  - **How it fires** — keys off EventKit (`CalendarService`'s always-live `.EKEventStoreChanged`), independent of the Notion sync toggle. Baseline-seeds the current diary at launch (no launch storm), then debounces 30s, floors runs at 120s, runs serially, and remembers what it's already briefed. Zero idle cost — it only runs when a new meeting actually appears. Only meetings on your **monitored** calendars qualify.
+  - **macOS notifications** — a standard banner fires the moment a new meeting is detected ("🆕 New meeting detected — generating a pre-call briefing for …"), then updates in place to the outcome ("✅ Pre-call briefing ready" or a warning if it degraded).
+  - **Generation transcript saved to Notion** — each run appends a collapsible **🧠 Generation Log** toggle to the briefing page recording what the agent did: the sources it queried, what it found, how it resolved the customer/partner and White Glove/Jira, and the delivery outcome — so every automated briefing is reviewable after the fact.
+  - **Divergent delivery by design** — the cloud task keeps its own delivery; the app path delivers through local CLIs (`imessage-tools` for the iMessage alert, `remctl` for Reminders) because those are reachable from a headless spawn where interactively-authenticated integrations are not. The two runners share the same Notion databases + action-item hashes, so neither double-briefs.
+  - **Setup** — off by default. Enable under **Settings → Notion → Calendar Sync → "Auto-brief new meetings during the day"**. A **"Grant permissions…"** button triggers the macOS **Automation (Messages)** and **Reminders** consent prompts (those System Settings panes have no “+”, so an app can only be added by requesting access programmatically); Full Disk Access is added manually. Full guide: [docs/INTRADAY-BRIEFINGS.md](docs/INTRADAY-BRIEFINGS.md).
+  - New `PreCallBriefTriggerService`; new `preCallBriefTriggerEnabled` / `preCallBriefCLIPath` / `preCallBriefSkillPath` / `preCallBriefMinIntervalSeconds` / `preCallBriefFiredIDs` UserDefaults keys; `NSAppleEventsUsageDescription` + `NSRemindersFullAccessUsageDescription` + the Apple-events hardened-runtime entitlement.
+
 ## [3.2.2] - 2026-07-22
 
 ### Fixed
