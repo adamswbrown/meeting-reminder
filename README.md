@@ -14,16 +14,14 @@ A native macOS menu bar app built for people who lose track of time. Reads your 
 
 ## Latest Release
 
-Current release: **v3.2.0** (2026-07-18)
+Current release: **v3.3.0** (2026-07-29)
 
-- **Customizable overlay timing** — choose when the full-screen overlay appears (1–15 min before), now in Settings → Alerts
-- **Snooze until a set time before the meeting** — "Snooze until" buttons (10/5/2 min before, or Start) hold the overlay and re-fire at that point, on top of the existing 30s / 1 min quick-snooze
-- **Settings streamlined** — consolidated from 11 tabs to 7, with a single Integrations tab and a two-column Calendars table
+- **Intraday pre-call briefings** — a new opt-in feature that briefs a meeting the moment it lands in your work calendar during the day (09:00–17:00), rather than waiting for a scheduled run. Runs a headless `claude` briefing for the new meeting and sends a short iMessage alert via local CLIs. See [docs/INTRADAY-BRIEFINGS.md](docs/INTRADAY-BRIEFINGS.md)
 - Signed and notarized DMG (full notes in [CHANGELOG.md](CHANGELOG.md))
 
 Download:
-- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.2.0/MeetingReminder-3.2.0.dmg
-- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.2.0/MeetingReminder-3.2.0.dmg.sha256
+- DMG: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.3.0/MeetingReminder-3.3.0.dmg
+- SHA256: https://github.com/adamswbrown/meeting-reminder/releases/download/v3.3.0/MeetingReminder-3.3.0.dmg.sha256
 
 ## Credits
 
@@ -107,6 +105,17 @@ Meeting Reminder's default story for recording and summarisation is to delegate 
 
 ---
 
+### Intraday Pre-Call Briefings (opt-in)
+If you drive pre-call briefings from a scheduled Claude task, a meeting booked *between* runs won't get briefed until the next run. This feature closes that same-day gap: when a genuinely-new meeting lands on a monitored calendar **during the working day (09:00–17:00, Mon–Fri)**, the app fires a headless `claude` run that briefs *just that meeting* — following the same rules as your scheduled task — and sends a short iMessage change-alert.
+
+- **Zero idle cost** — keys off EventKit, so it only runs when a new meeting actually appears (never on a timer).
+- **Delivery via local CLIs** — the briefing is written to Notion and delivered through [`imessage-tools`](https://github.com/benelser/imessage-tools) (iMessage) and [`remctl`](https://github.com/viticci/remctl) (Reminders), which work from a headless spawn.
+- **Off by default** — enable it, install the CLIs, and grant the permissions via the in-app **"Grant permissions…"** button. Full setup, testing, and troubleshooting: **[docs/INTRADAY-BRIEFINGS.md](docs/INTRADAY-BRIEFINGS.md)**.
+
+This is tailored to a personal briefing workflow (the derived skill embeds a private calendar feed and is kept local). It's genuinely optional — the app is fully functional without it.
+
+---
+
 ### Onboarding
 First-launch setup assistant walks through permissions step by step in a standalone window (not a sheet on the menu bar popover):
 
@@ -147,8 +156,9 @@ Re-runnable any time from Settings → General.
 |---|---|---|---|
 | [Notion](https://www.notion.so) (desktop app + API integration token) | Download from notion.so + create an internal integration at notion.so/my-integrations | Creating meeting pages on join; Notion's AI Meeting Notes handles recording + summarisation; Calendar → Notion sync | **Supported** (primary integration) |
 | [Supabase](https://supabase.com) | Create a project at supabase.com | Backing store for the public availability page (see [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md)) | **Optional** |
+| `claude` + [`imessage-tools`](https://github.com/benelser/imessage-tools) + [`remctl`](https://github.com/viticci/remctl) CLIs | Claude Code CLI; `bun link` imessage-tools; remctl `install.sh` | Intraday pre-call briefings (see [docs/INTRADAY-BRIEFINGS.md](docs/INTRADAY-BRIEFINGS.md)) | **Optional** |
 
-Both are optional — the app works without them.
+All are optional — the app works without them.
 
 ---
 
