@@ -3,6 +3,30 @@ import Combine
 import EventKit
 import Foundation
 
+/// Pure decision for whether a calendar event belongs in the app's menu-bar /
+/// alerting list. Kept free of `EKEvent` so it's unit-testable with plain values.
+///
+/// Excludes all-day events, events the user has **declined**, and — critically —
+/// events an organiser has **cancelled**. A cancelled Exchange meeting is not
+/// deleted from the local store; it lingers with `EKEventStatus.canceled` (the
+/// struck-through event in Calendar.app). Without this it would keep showing in the
+/// menu bar and driving alerts/overlays/busy-light for a meeting that's off.
+enum CalendarEventInclusion {
+    static func shouldInclude(
+        isAllDay: Bool,
+        status: EKEventStatus,
+        myParticipantStatus: EKParticipantStatus?,
+        calendarID: String,
+        enabledCalendarIDs: Set<String>
+    ) -> Bool {
+        if isAllDay { return false }
+        if status == .canceled { return false }
+        if myParticipantStatus == .declined { return false }
+        if !enabledCalendarIDs.isEmpty { return enabledCalendarIDs.contains(calendarID) }
+        return true
+    }
+}
+
 @MainActor
 final class CalendarService: ObservableObject {
     @Published var events: [MeetingEvent] = []
@@ -94,22 +118,16 @@ final class CalendarService: ObservableObject {
 
         events = ekEvents
             .filter { event in
-                // Filter out all-day events
-                guard !event.isAllDay else { return false }
-
-                // Filter out declined events
-                if let attendees = event.attendees,
-                   let me = attendees.first(where: { $0.isCurrentUser }),
-                   me.participantStatus == .declined {
-                    return false
-                }
-
-                // Filter by enabled calendars (if any are configured)
-                if !enabledCalendarIDs.isEmpty {
-                    return enabledCalendarIDs.contains(event.calendar.calendarIdentifier)
-                }
-
-                return true
+                let me = event.attendees?.first(where: { $0.isCurrentUser })
+                // Excludes all-day, declined, and organiser-cancelled events, and
+                // honours the enabled-calendars list. See `CalendarEventInclusion`.
+                return CalendarEventInclusion.shouldInclude(
+                    isAllDay: event.isAllDay,
+                    status: event.status,
+                    myParticipantStatus: me?.participantStatus,
+                    calendarID: event.calendar.calendarIdentifier,
+                    enabledCalendarIDs: enabledCalendarIDs
+                )
             }
             .map { ekEvent in
                 let videoLink = VideoLinkDetector.detectLink(in: ekEvent)

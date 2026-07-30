@@ -2,6 +2,84 @@ import Combine
 import EventKit
 import Foundation
 
+/// Pure decision for the intraday brief catcher: given a meeting's start time and
+/// the current time, should we brief it **now**, **wait** until a later time, or
+/// **drop** it?
+///
+/// This exists to close the working-hours "dead zone": a meeting that starts at (or
+/// just after) the 09:00 window-open used to be un-briefable — before 09:00 the gate
+/// deferred it to 09:00, and at 09:00 the "already-started" drop discarded it before
+/// it could fire. Two rules fix that:
+///   - **(A) imminent exemption** — a meeting that starts *before* the next working
+///     window opens can't wait, so it's briefed now even outside hours; a meeting
+///     that starts *at/after* the open waits for the window (kept in-hours, no
+///     antisocial-hours Slack for an evening booking).
+///   - **(C) started-grace** — the "already-started" drop tolerates a short grace
+///     (default 5 min) so a meeting isn't discarded in the seconds between detection,
+///     the debounce, and the drain — and a brief for a just-started meeting is still
+///     worth sending.
+struct IntradayBriefGate {
+    var calendar: Calendar
+    var workStartHour: Int
+    var workEndHour: Int              // exclusive upper bound (matches 9..<17)
+    var workdays: ClosedRange<Int>    // Calendar weekday: 1=Sun … 7=Sat → Mon–Fri = 2...6
+    var startedGrace: TimeInterval    // (C) tolerance past a meeting's start before we drop it
+
+    init(calendar: Calendar = .current,
+         workStartHour: Int = 9,
+         workEndHour: Int = 17,
+         workdays: ClosedRange<Int> = 2...6,
+         startedGrace: TimeInterval = 300) {
+        self.calendar = calendar
+        self.workStartHour = workStartHour
+        self.workEndHour = workEndHour
+        self.workdays = workdays
+        self.startedGrace = startedGrace
+    }
+
+    enum Decision: Equatable {
+        case fireNow
+        case waitUntil(Date)
+        case drop
+    }
+
+    func decide(meetingStart: Date, now: Date) -> Decision {
+        // (C) Started beyond the grace window → no longer a pre-call brief.
+        if meetingStart <= now.addingTimeInterval(-startedGrace) { return .drop }
+        // In working hours → brief now (the caller still applies its min-interval floor).
+        if isWithinWorkingHours(now) { return .fireNow }
+        // Outside hours. (A) A meeting that starts *before* the next window opens can't
+        // wait — brief it now. One that starts *at/after* the open waits for the window,
+        // so an evening/early-morning booking doesn't fire an antisocial-hours alert.
+        let open = nextWorkingWindowOpen(after: now)
+        if meetingStart < open { return .fireNow }
+        return .waitUntil(open)
+    }
+
+    func isWithinWorkingHours(_ date: Date) -> Bool {
+        let comps = calendar.dateComponents([.weekday, .hour], from: date)
+        guard let weekday = comps.weekday, let hour = comps.hour else { return false }
+        return workdays.contains(weekday) && (workStartHour..<workEndHour).contains(hour)
+    }
+
+    /// Soonest workday `workStartHour:00` strictly after `now`. Returns `now` when
+    /// already in-window (callers gate on `isWithinWorkingHours` first, but this keeps
+    /// the function total).
+    func nextWorkingWindowOpen(after now: Date) -> Date {
+        if isWithinWorkingHours(now) { return now }
+        let startToday = calendar.startOfDay(for: now)
+        for i in 0..<8 {
+            guard let day = calendar.date(byAdding: .day, value: i, to: startToday),
+                  let open = calendar.date(bySettingHour: workStartHour, minute: 0, second: 0, of: day)
+            else { continue }
+            if workdays.contains(calendar.component(.weekday, from: open)) && open > now {
+                return open
+            }
+        }
+        return now.addingTimeInterval(3600)   // pathological fallback
+    }
+}
+
 /// Intraday pre-call briefing catcher.
 ///
 /// The counterpart to the cloud "Co Work" Daily Pre-Call Briefing task (which runs
@@ -18,6 +96,46 @@ import Foundation
 /// no Notion Calendar Events row need pre-exist. Dedup is owned by the skill's Step 3
 /// property-filter check, which is what keeps it from double-briefing meetings Co Work
 /// already handled.
+/// Classifies a debounce window's worth of calendar appearances (`added`) and
+/// disappearances (`removed`) into new meetings, **reschedules**, and
+/// **cancellations**. A move typically surfaces as a same-title event vanishing at
+/// one time and reappearing at another; pairing those into a single reschedule is
+/// what stops a moved meeting from firing both a "cancelled" and a "new meeting"
+/// alert — the user wants one "moved" post instead.
+struct IntradayCalendarDiff {
+    struct Reschedule { let old: MeetingEvent; let new: MeetingEvent }
+    var newMeetings: [MeetingEvent]
+    var reschedules: [Reschedule]
+    var cancellations: [MeetingEvent]
+}
+
+enum IntradayDiffClassifier {
+    static func classify(added: [MeetingEvent], removed: [MeetingEvent]) -> IntradayCalendarDiff {
+        var remainingAdded = added
+        var reschedules: [IntradayCalendarDiff.Reschedule] = []
+        var cancellations: [MeetingEvent] = []
+        for r in removed {
+            // A move = same title, different start. Same title + same start isn't a
+            // move (ambiguous duplicate) — leave both as separate signals.
+            if let idx = remainingAdded.firstIndex(where: {
+                normalizedTitle($0.title) == normalizedTitle(r.title) && $0.startDate != r.startDate
+            }) {
+                reschedules.append(.init(old: r, new: remainingAdded.remove(at: idx)))
+            } else {
+                cancellations.append(r)
+            }
+        }
+        return IntradayCalendarDiff(newMeetings: remainingAdded,
+                                    reschedules: reschedules,
+                                    cancellations: cancellations)
+    }
+
+    /// Case/whitespace-insensitive title key used to pair a move's two halves.
+    static func normalizedTitle(_ s: String) -> String {
+        s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 @MainActor
 final class PreCallBriefTriggerService: ObservableObject {
 
@@ -28,6 +146,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         static let skillPath = "preCallBriefSkillPath"
         static let minInterval = "preCallBriefMinIntervalSeconds"
         static let firedIDs = "preCallBriefFiredIDs"
+        static let removalFiredIDs = "preCallBriefRemovalFiredIDs"
         static let lastResult = "preCallBriefLastResult"
         static let lastRunAt = "preCallBriefLastRunAt"
     }
@@ -62,23 +181,38 @@ final class PreCallBriefTriggerService: ObservableObject {
         return v > 0 ? TimeInterval(v) : 120
     }
 
+    /// Working-hours gate + imminent-exemption + started-grace. Defaults match the
+    /// original hardcoded policy (Mon–Fri 09:00–17:00) with a 5-min started grace.
+    private let gate = IntradayBriefGate()
+
     // MARK: Internal state
     private weak var calendarService: CalendarService?
     private let notifications = NotificationService.shared
     private var cancellable: AnyCancellable?
-    /// The set of upcoming-today meeting IDs seen on the *previous* emission. A candidate
-    /// is an ID present now but absent then — updated on EVERY emission (incl. outside
-    /// working hours) so the midnight/day-rollover set is absorbed silently, not fired.
-    /// `nil` = not yet seeded.
-    private var previousUpcomingIDs: Set<String>?
+    /// Upcoming-today meetings seen on the *previous* emission, keyed by id — retained
+    /// as full events (not just ids) so a meeting that *disappears* can still be
+    /// described to the removal skill (title/start/appleID). Advanced on EVERY emission
+    /// (incl. outside working hours) so the midnight/day-rollover set is absorbed
+    /// silently, not fired. `nil` = not yet seeded.
+    private var previousUpcoming: [String: MeetingEvent]?
     private var seeded = false               // has the diff basis been established from a real (non-empty) emission?
     private var lastSeenDay: Date?           // start-of-day of the last emission — detects rollover
-    private var firedIDs: Set<String>       // fast membership test
+    private var firedIDs: Set<String>       // fast membership test (briefs)
     private var firedOrder: [String]        // insertion order, for bounded FIFO eviction
+    private var firedRemovalIDs: Set<String> // fast membership test (removals/reschedules)
+    private var firedRemovalOrder: [String]  // insertion order for bounded eviction
     private var skillMissingLatched = false // stop retrying every poll when the skill file is absent
     private var lastRunTime: Date?
     private var debounceTask: Task<Void, Never>?
     private var pending: [MeetingEvent] = []    // detected-but-not-yet-briefed, drained serially
+
+    /// A meeting that vanished from the diary during the day (cancelled or moved).
+    /// `likelyReschedule` only tunes the local macOS banner wording — the skill
+    /// re-derives cancel-vs-moved authoritatively from the ICS + Notion and posts one
+    /// Slack line either way.
+    private struct RemovalJob { let meeting: MeetingEvent; let likelyReschedule: Bool }
+    private var pendingRemovals: [RemovalJob] = []
+
     private var permissionStore: EKEventStore?  // retained across the async consent callback
 
     private let logURL: URL = {
@@ -93,6 +227,9 @@ final class PreCallBriefTriggerService: ObservableObject {
         let saved = UserDefaults.standard.stringArray(forKey: Keys.firedIDs) ?? []
         self.firedOrder = saved
         self.firedIDs = Set(saved)
+        let savedRemovals = UserDefaults.standard.stringArray(forKey: Keys.removalFiredIDs) ?? []
+        self.firedRemovalOrder = savedRemovals
+        self.firedRemovalIDs = Set(savedRemovals)
         // A child that closes its stdin before we finish writing must not SIGPIPE-kill
         // the whole app (M4). We handle the write error explicitly instead.
         signal(SIGPIPE, SIG_IGN)
@@ -170,10 +307,11 @@ final class PreCallBriefTriggerService: ObservableObject {
         cancellable?.cancel()
         cancellable = nil
         debounceTask?.cancel()
-        previousUpcomingIDs = nil   // next real emission re-seeds the diff basis (absorb, don't fire)
+        previousUpcoming = nil   // next real emission re-seeds the diff basis (absorb, don't fire)
         seeded = false
         lastSeenDay = nil
         pending.removeAll()
+        pendingRemovals.removeAll()
         skillMissingLatched = false
         guard isEnabled, let calendarService else { return }
 
@@ -188,22 +326,24 @@ final class PreCallBriefTriggerService: ObservableObject {
     // MARK: Candidate detection
 
     private func handleEventsChanged(_ events: [MeetingEvent]) {
+        let now = Date()
         let current = upcomingTodayMeetings(events)
         let currentIDs = Set(current.map(\.id))
-        let previous = previousUpcomingIDs
+        let previous = previousUpcoming
         // Always advance the diff basis (even outside hours) so pre-existing meetings are
-        // absorbed and only genuinely-new appearances ever fire.
-        previousUpcomingIDs = currentIDs
+        // absorbed and only genuinely-new appearances/disappearances ever fire.
+        previousUpcoming = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
 
         if skillMissingLatched { return }
 
         // Day rollover — the whole new day's diary would otherwise diff as "new". Absorb it
         // silently and clear any stale pending from yesterday (NEW-3).
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = Calendar.current.startOfDay(for: now)
         let rolled = lastSeenDay != nil && lastSeenDay != today
         lastSeenDay = today
         if rolled {
             pending.removeAll()
+            pendingRemovals.removeAll()
             return
         }
 
@@ -217,15 +357,42 @@ final class PreCallBriefTriggerService: ObservableObject {
         }
         guard let previous else { return }
 
-        // Enqueue every genuinely-new appearance (a batch sync can surface several at once);
-        // they drain one at a time. Dedup against the queue + already-fired.
+        // Genuinely-new appearances (a batch sync can surface several at once).
         let pendingIDs = Set(pending.map(\.id))
-        let newOnes = current.filter {
-            !previous.contains($0.id) && !firedIDs.contains($0.id) && !pendingIDs.contains($0.id)
+        let added = current.filter {
+            previous[$0.id] == nil && !firedIDs.contains($0.id) && !pendingIDs.contains($0.id)
         }
-        guard !newOnes.isEmpty else { return }
-        pending.append(contentsOf: newOnes)
+        // Genuine disappearances: present before, absent now, AND still in the future.
+        // A meeting whose start has passed left "upcoming" because it STARTED, not
+        // because it was removed — never treat that as a cancellation.
+        let pendingRemovalIDs = Set(pendingRemovals.map(\.meeting.id))
+        let removed = previous.values.filter {
+            currentIDs.contains($0.id) == false
+                && $0.startDate > now
+                && !firedRemovalIDs.contains($0.id)
+                && !pendingRemovalIDs.contains($0.id)
+        }
+
+        guard !added.isEmpty || !removed.isEmpty else { return }
+
+        // Pair a same-title move into a single reschedule so it doesn't fire both a
+        // "cancelled" and a "new meeting" alert (user wants one "moved" post).
+        let diff = IntradayDiffClassifier.classify(added: added, removed: removed)
+
+        // New meetings → brief queue. Also drop any new meeting whose title matches a
+        // still-pending removal at a different time (a reschedule split across emissions):
+        // the removal job will report the move, so don't also brief the new occurrence.
+        let removalTitles = Set(pendingRemovals.map { IntradayDiffClassifier.normalizedTitle($0.meeting.title) })
+        let freshBriefs = diff.newMeetings.filter {
+            !removalTitles.contains(IntradayDiffClassifier.normalizedTitle($0.title))
+        }
+        pending.append(contentsOf: freshBriefs)
         pending.sort { $0.startDate < $1.startDate }
+
+        // Reschedules + cancellations → removal queue (the skill decides which it is).
+        pendingRemovals.append(contentsOf: diff.reschedules.map { RemovalJob(meeting: $0.old, likelyReschedule: true) })
+        pendingRemovals.append(contentsOf: diff.cancellations.map { RemovalJob(meeting: $0, likelyReschedule: false) })
+        pendingRemovals.sort { $0.meeting.startDate < $1.meeting.startDate }
 
         // Debounce ~30s to let a burst of calendar writes settle, then drain.
         scheduleDrain(after: 30)
@@ -251,57 +418,66 @@ final class PreCallBriefTriggerService: ObservableObject {
         }
     }
 
-    private func withinWorkingHours(_ date: Date) -> Bool {
-        let cal = Calendar.current
-        let comps = cal.dateComponents([.weekday, .hour], from: date)
-        guard let weekday = comps.weekday, let hour = comps.hour else { return false }
-        // weekday: 1=Sun … 7=Sat. Working days Mon(2)–Fri(6).
-        let isWeekday = (2...6).contains(weekday)
-        return isWeekday && (9..<17).contains(hour)
-    }
-
-    /// Seconds until the next weekday 09:00 strictly after `now` (0 if already in-window).
-    /// Used to re-arm the drain when a booking lands outside working hours.
-    private func secondsUntilNextWorkingWindow(from now: Date = Date()) -> TimeInterval {
-        if withinWorkingHours(now) { return 0 }
-        let cal = Calendar.current
-        let startToday = cal.startOfDay(for: now)
-        for i in 0..<8 {
-            guard let day = cal.date(byAdding: .day, value: i, to: startToday),
-                  let nine = cal.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { continue }
-            let wd = cal.component(.weekday, from: nine)
-            if (2...6).contains(wd) && nine > now {
-                return max(60, nine.timeIntervalSince(now))
-            }
-        }
-        return 3600
-    }
-
     // MARK: Run
 
-    /// Process the pending queue one meeting at a time, honouring the floor + working
-    /// hours + the single-in-flight guard. Re-arms itself while the queue is non-empty.
+    /// Process the brief + removal queues one meeting at a time, honouring the
+    /// min-interval floor + the `IntradayBriefGate` (working hours, imminent exemption,
+    /// started grace) + the single-in-flight guard (only ever one `claude` running).
+    /// Re-arms itself while either queue is non-empty.
     private func drainPending() async {
         guard isEnabled, !isRunning, !skillMissingLatched else { return }
-        // Drop targets that are no longer relevant (already fired, or already started).
-        pending.removeAll { firedIDs.contains($0.id) || $0.startDate <= Date() }
-        // Outside working hours: don't fire, but DON'T strand the queue — re-arm for the
-        // next 09:00 window so an early-morning booking is briefed when hours open (NEW-2).
-        guard withinWorkingHours(Date()) else {
-            if !pending.isEmpty { scheduleDrain(after: secondsUntilNextWorkingWindow()) }
-            return
+        let now = Date()
+        // Drop already-fired items and those the gate says are too far past their start.
+        pending.removeAll { firedIDs.contains($0.id) || gate.decide(meetingStart: $0.startDate, now: now) == .drop }
+        pendingRemovals.removeAll {
+            firedRemovalIDs.contains($0.meeting.id)
+                || gate.decide(meetingStart: $0.meeting.startDate, now: now) == .drop
         }
+        guard !pending.isEmpty || !pendingRemovals.isEmpty else { return }
+
+        // Respect the floor between runs (retry once it elapses).
         if let last = lastRunTime {
-            let elapsed = Date().timeIntervalSince(last)
-            if elapsed < minInterval {                      // floor not elapsed — retry later
+            let elapsed = now.timeIntervalSince(last)
+            if elapsed < minInterval {
                 scheduleDrain(after: minInterval - elapsed)
                 return
             }
         }
-        guard !pending.isEmpty else { return }
-        let target = pending.removeFirst()
-        await runOne(target)
-        if !pending.isEmpty { scheduleDrain(after: minInterval) }
+
+        // Fire the earliest-starting item the gate clears *now* — brief or removal,
+        // whichever meeting starts soonest. A meeting starting at/after the next
+        // window-open is left to wait (kept in-hours); one starting before the window
+        // opens fires now even outside hours (closes the 09:00 dead zone).
+        let firableBrief = pending
+            .filter { gate.decide(meetingStart: $0.startDate, now: now) == .fireNow }
+            .min { $0.startDate < $1.startDate }
+        let firableRemoval = pendingRemovals
+            .filter { gate.decide(meetingStart: $0.meeting.startDate, now: now) == .fireNow }
+            .min { $0.meeting.startDate < $1.meeting.startDate }
+
+        switch (firableBrief, firableRemoval) {
+        case let (brief?, removal?):
+            if brief.startDate <= removal.meeting.startDate {
+                pending.removeAll { $0.id == brief.id }; await runOne(brief)
+            } else {
+                pendingRemovals.removeAll { $0.meeting.id == removal.meeting.id }; await runRemoval(removal)
+            }
+        case let (brief?, nil):
+            pending.removeAll { $0.id == brief.id }; await runOne(brief)
+        case let (nil, removal?):
+            pendingRemovals.removeAll { $0.meeting.id == removal.meeting.id }; await runRemoval(removal)
+        case (nil, nil):
+            // Nothing eligible now — re-arm for the soonest window-open across both queues.
+            let soonest = ([pending.map(\.startDate), pendingRemovals.map(\.meeting.startDate)]
+                .flatMap { $0 })
+                .compactMap { start -> Date? in
+                    if case .waitUntil(let t) = gate.decide(meetingStart: start, now: now) { return t }
+                    return nil
+                }.min()
+            if let soonest { scheduleDrain(after: max(60, soonest.timeIntervalSince(now))) }
+            return
+        }
+        if !pending.isEmpty || !pendingRemovals.isEmpty { scheduleDrain(after: minInterval) }
     }
 
     private func runOne(_ target: MeetingEvent) async {
@@ -319,7 +495,7 @@ final class PreCallBriefTriggerService: ObservableObject {
             title: "🆕 New meeting detected",
             body: "Generating a pre-call briefing for “\(target.title)”…")
 
-        guard let filled = buildPrompt(for: target) else {
+        guard let filled = buildPrompt(for: target, mode: "NEW") else {
             // Skill file missing (it's gitignored) — latch so we don't retry every poll,
             // and warn once. Do NOT mark fired; re-enabling the toggle clears the latch.
             skillMissingLatched = true
@@ -357,8 +533,51 @@ final class PreCallBriefTriggerService: ObservableObject {
         log("result: \(summary)")
     }
 
-    /// Read the skill, substitute the target meeting block.
-    private func buildPrompt(for target: MeetingEvent) -> String? {
+    /// Fire the skill in REMOVED mode for a meeting that vanished from the diary. The
+    /// skill re-derives cancel-vs-moved from the ICS + Notion and posts one Slack line;
+    /// the app just reports which it looked like locally.
+    private func runRemoval(_ job: RemovalJob) async {
+        isRunning = true
+        lastRunTime = Date()
+        defer { isRunning = false }
+
+        let target = job.meeting
+        let verb = job.likelyReschedule ? "moved" : "removed"
+        log("firing intraday removal (\(verb)) for: \(target.title) @ \(target.startDate)")
+
+        let notifID = "intraday-removal-\(target.id)"
+        notifications.postInfo(
+            id: notifID,
+            title: job.likelyReschedule ? "🔁 Meeting moved" : "🗑️ Meeting removed",
+            body: "Checking “\(target.title)” and posting an update…")
+
+        guard let filled = buildPrompt(for: target, mode: "REMOVED") else {
+            skillMissingLatched = true
+            recordResult("skill file unreadable at \(skillPath)")
+            notifications.postInfo(id: notifID, title: "⚠️ Update not sent",
+                                   body: "Skill file missing at \(skillPath)", sound: true)
+            return
+        }
+
+        let output = await Self.runClaude(cliPath: cliPath, promptStdin: filled)
+        markFiredRemoval(target.id)   // never loop, regardless of outcome
+        let summary = Self.parseResult(output) ?? firstNonEmptyLine(output) ?? "(no output)"
+        recordResult(summary)
+
+        let deliveryFailed = summary.contains("imessage=failed")
+        if deliveryFailed || summary.lowercased().contains("fail") {
+            notifications.postInfo(id: notifID, title: "⚠️ Update generated with issues",
+                                   body: "“\(target.title)” — see the log / Notion Run Log.", sound: true)
+        } else {
+            notifications.postInfo(id: notifID, title: "✅ Calendar update sent",
+                                   body: "“\(target.title)” — \(summary)")
+        }
+        log("removal result: \(summary)")
+    }
+
+    /// Read the skill, substitute the target meeting block. `mode` is `NEW` (brief) or
+    /// `REMOVED` (cancellation/reschedule).
+    private func buildPrompt(for target: MeetingEvent, mode: String) -> String? {
         guard let template = try? String(contentsOfFile: skillPath, encoding: .utf8) else { return nil }
         let london = TimeZone(identifier: "Europe/London")
         let fmt = DateFormatter()
@@ -398,6 +617,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         // flip the skill's reschedule discriminator, NEW-4).
         let safeTitle = String(neutralise(target.title).prefix(300))
         return template
+            .replacingOccurrences(of: "{{TRIGGER_MODE}}", with: mode)
             .replacingOccurrences(of: "{{MEETING_TITLE}}", with: safeTitle)
             .replacingOccurrences(of: "{{MEETING_START}}", with: fmt.string(from: target.startDate))
             .replacingOccurrences(of: "{{MEETING_END}}", with: fmt.string(from: target.endDate))
@@ -509,6 +729,18 @@ final class PreCallBriefTriggerService: ObservableObject {
             firedIDs.remove(firedOrder.removeFirst())
         }
         UserDefaults.standard.set(firedOrder, forKey: Keys.firedIDs)
+    }
+
+    /// As `markFired`, but for removal/reschedule runs (separate dedup set so a briefed
+    /// meeting that later gets cancelled can still fire its removal update).
+    private func markFiredRemoval(_ id: String) {
+        guard !firedRemovalIDs.contains(id) else { return }
+        firedRemovalIDs.insert(id)
+        firedRemovalOrder.append(id)
+        while firedRemovalOrder.count > 500 {
+            firedRemovalIDs.remove(firedRemovalOrder.removeFirst())
+        }
+        UserDefaults.standard.set(firedRemovalOrder, forKey: Keys.removalFiredIDs)
     }
 
     private func log(_ message: String) {
