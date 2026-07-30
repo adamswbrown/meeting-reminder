@@ -100,7 +100,7 @@ MeetingReminder/
 │   ├── ChecklistItem.swift               # Pre-meeting checklist data model (Codable)
 │   └── PreCallBrief.swift                # Notion-fed pre-call brief model
 ├── Services/
-│   ├── CalendarService.swift             # EventKit: access, fetch, filter, meeting stats
+│   ├── CalendarService.swift             # EventKit: access, fetch, filter, meeting stats. Filters all-day/declined/**cancelled** (`.canceled`) events via the pure `CalendarEventInclusion` predicate so an organiser-cancelled meeting stops showing in the menu bar
 │   ├── MeetingMonitor.swift              # Core orchestrator: timers, alerts, end detection, ad-hoc meetings, mic state
 │   ├── MeetingLauncher.swift             # Opens/join video links
 │   ├── VideoLinkDetector.swift           # Regex detection: Zoom, Meet, Teams, Webex, Slack
@@ -127,7 +127,7 @@ MeetingReminder/
 │   ├── CalendarSyncMigrations.swift      # Idempotent Notion schema migrations
 │   ├── RelationLinker.swift              # Auto-link Meeting Notes / Pre-Call Briefings
 │   ├── CalendarChangeWatcher.swift       # Reactive .EKEventStoreChanged watcher (opt-in)
-│   └── PreCallBriefTriggerService.swift  # Intraday pre-call briefing catcher: on a new work-calendar meeting during 09:00–17:00, spawns headless `claude` running the derived skill (CLI delivery via imessage-tools + remctl). See docs/INTRADAY-BRIEFINGS.md
+│   └── PreCallBriefTriggerService.swift  # Intraday pre-call briefing catcher: on a new work-calendar meeting during 09:00–17:00, spawns headless `claude` running the derived skill (delivery via Slack `chat.postMessage` + `remctl` for Reminders). Also fires the skill in REMOVED mode when a meeting *disappears* (cancelled/moved) → Slack update; `IntradayBriefGate` gates fire/wait/drop (imminent exemption + started grace), `IntradayDiffClassifier` pairs a move into one reschedule. See docs/INTRADAY-BRIEFINGS.md
 ├── Views/
 │   ├── MenuBarView.swift                 # Window-style popover (event list, meeting load, previews, ad-hoc start)
 │   ├── OverlayWindow.swift               # NSPanel wrappers for meeting + break overlays
