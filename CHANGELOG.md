@@ -2,6 +2,19 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.4.0] - 2026-07-30
+
+### Added
+- **Slack updates when a meeting is removed or moved during the day** — the intraday catcher now watches for meetings that *disappear* from your work calendar, not just new ones. When a meeting is cancelled or rescheduled between the scheduled cloud runs, the app fires the briefing skill in a new **REMOVED mode** and posts a single change-alert to `#daily-breifings`.
+  - A removal is only a meeting that was present, is now absent, **and still starts in the future** — a meeting that merely *started* is never mistaken for a cancellation.
+  - A reschedule (a same-title meeting vanishing at one time and reappearing at another) is paired into **one `🔁 moved` post** rather than a `❌ cancelled` *and* a `🆕 new meeting` (new `IntradayDiffClassifier`).
+  - The skill re-derives cancel-vs-moved **authoritatively** from the Outlook ICS + Notion (never trusting the app's guess), updates the Notion row/brief (`Meeting Outcome = Cancelled`, or the brief's new `Date & Time`), and never briefs or creates a page in this mode.
+  - Removals share the briefing queue's debounce, floor, working-hours gate, and single-in-flight guard (only ever one `claude` at a time), with their own persisted dedup set (`preCallBriefRemovalFiredIDs`). Rides on the existing **"Auto-brief new meetings during the day"** toggle — no new setting. Full detail: [docs/INTRADAY-BRIEFINGS.md](docs/INTRADAY-BRIEFINGS.md).
+
+### Fixed
+- **Meetings starting at the 09:00 boundary were never briefed** — a meeting booked that morning for a 09:00 start fell into a dead zone: before 09:00 the working-hours gate deferred it to 09:00, and at 09:00 the "already-started" drop discarded it before it could fire. A new `IntradayBriefGate` decides fire/wait/drop per meeting: an **imminent** meeting (one starting before the next working-window opens) is briefed now even outside hours, while a non-imminent early booking still waits for 09:00; the already-started drop gains a 5-minute grace so a boundary meeting isn't lost in the detection→debounce→drain race.
+- **Cancelled meetings lingered in the menu bar** — an organiser-cancelled Exchange meeting is not deleted from the local store; it stays as a `.canceled` event (struck-through in Calendar.app) and was never filtered, so it kept showing in the menu bar and driving alerts, overlays, and the busy light. `CalendarService` now excludes cancelled events (alongside all-day and declined) via a new pure, unit-tested `CalendarEventInclusion` predicate.
+
 ## [3.3.0] - 2026-07-29
 
 ### Added
