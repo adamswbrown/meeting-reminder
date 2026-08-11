@@ -73,4 +73,11 @@ enum CalendarSyncCascade {
               let name = sel["name"] as? String else { return false }
         return name == "Cancelled"
     }
+
+    /// True when a row's incoming start differs from what Notion currently has
+    /// (both non-nil). Used to cascade a one-off move onto the linked brief.
+    static func startChanged(incoming: Date, existing: Date?) -> Bool {
+        guard let existing else { return false }
+        return abs(incoming.timeIntervalSince(existing)) >= 60
+    }
 }

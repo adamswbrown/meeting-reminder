@@ -571,6 +571,26 @@ final class CalendarSyncUpserter {
                         body["archived"] = false
                         _ = try await client.patch(path: "/pages/\(existingRow.pageID)", body: body)
                         counts.updated += 1
+                        // Reschedule cascade: when a one-off meeting moves, push
+                        // the new start onto the linked brief's Date & Time so
+                        // the brief stays aligned. Recurring occurrences are
+                        // excluded (their appleID is date-suffixed; a moved
+                        // occurrence would otherwise rewrite a prior brief).
+                        if cascadeStatus,
+                           !CalendarSyncCascade.isRecurringAppleID(appleID),
+                           let briefID = existingRow.preCallBriefingPageID,
+                           CalendarSyncCascade.startChanged(incoming: row.event.eventStart,
+                                                            existing: existingRow.eventDate) {
+                            let london = TimeZone(identifier: "Europe/London")!
+                            let iso = ISO8601DateFormatter(); iso.timeZone = london
+                            iso.formatOptions = [.withInternetDateTime]
+                            let start = iso.string(from: row.event.eventStart)
+                            let end = iso.string(from: row.event.eventEnd)
+                            _ = try? await client.patch(path: "/pages/\(briefID)", body: ["properties": [
+                                "Date & Time": ["date": ["start": start, "end": end]]
+                            ]])
+                            logger.info("cascade: re-dated brief \(briefID) → \(start)")
+                        }
                     }
                     resultPageID = existingRow.pageID
                     needsMN = !existingRow.hasMeetingNotesLink

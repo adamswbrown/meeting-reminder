@@ -1,6 +1,12 @@
 import XCTest
 @testable import MeetingReminder
 
+private func iso(_ s: String) -> Date {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime]
+    return f.date(from: s)!
+}
+
 final class CalendarSyncCascadeTests: XCTestCase {
 
     // MARK: briefPageID(fromRelation:)
@@ -85,5 +91,15 @@ final class CalendarSyncCascadeTests: XCTestCase {
     func testIsCancelledStatusFalseForOther() {
         XCTAssertFalse(CalendarSyncCascade.isCancelledStatus(["select": ["name": "Upcoming"]]))
         XCTAssertFalse(CalendarSyncCascade.isCancelledStatus(nil))
+    }
+
+    // MARK: startChanged
+
+    func testDateChangedDetectsMove() {
+        let old = iso("2026-08-11T13:00:00Z")
+        let new = iso("2026-08-12T08:00:00Z")
+        XCTAssertTrue(CalendarSyncCascade.startChanged(incoming: new, existing: old))
+        XCTAssertFalse(CalendarSyncCascade.startChanged(incoming: old, existing: old))
+        XCTAssertFalse(CalendarSyncCascade.startChanged(incoming: new, existing: nil))
     }
 }
