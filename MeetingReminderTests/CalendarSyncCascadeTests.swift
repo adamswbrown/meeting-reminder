@@ -29,4 +29,50 @@ final class CalendarSyncCascadeTests: XCTestCase {
     func testRecurringAppleIDFalseForPlainUUID() {
         XCTAssertFalse(CalendarSyncCascade.isRecurringAppleID("0277BA37-EDB2-46DF-B159-D97DEDC48C5E"))
     }
+
+    // MARK: classifyDisappearance
+
+    private func decide(manual: Bool, recurring: Bool, reactive: Bool,
+                        cascade: Bool = true, archive: Bool = true) -> CalendarSyncCascade.Disappearance {
+        CalendarSyncCascade.classifyDisappearance(
+            hasManualRelations: manual, isRecurring: recurring,
+            isReactive: reactive, cascadeEnabled: cascade, archiveEnabled: archive)
+    }
+
+    func testCleanCancellationCascades() {
+        let d = decide(manual: false, recurring: false, reactive: false)
+        XCTAssertEqual(d.syncState, "Orphaned")
+        XCTAssertEqual(d.rowStatus, "Cancelled")
+        XCTAssertTrue(d.cascadeBriefCancelled)
+    }
+
+    func testManualRelationsRowGoesStaleNotCancelled() {
+        let d = decide(manual: true, recurring: false, reactive: false)
+        XCTAssertEqual(d.syncState, "Stale")
+        XCTAssertNil(d.rowStatus)              // never mark a manually-worked row Cancelled
+        XCTAssertFalse(d.cascadeBriefCancelled)
+    }
+
+    func testRecurringSkippedOnReactive() {
+        let d = decide(manual: false, recurring: true, reactive: true)
+        XCTAssertTrue(d.skip)                  // moved recurring occurrence — not a cancellation
+    }
+
+    func testRecurringSweptOnFullRun() {
+        let d = decide(manual: false, recurring: true, reactive: false)
+        XCTAssertFalse(d.skip)
+        XCTAssertEqual(d.rowStatus, "Cancelled")
+    }
+
+    func testCascadeDisabledStillWritesSyncStateWhenArchiveOn() {
+        let d = decide(manual: false, recurring: false, reactive: false, cascade: false, archive: true)
+        XCTAssertEqual(d.syncState, "Orphaned")
+        XCTAssertNil(d.rowStatus)              // Status/brief writes are cascade-gated
+        XCTAssertFalse(d.cascadeBriefCancelled)
+    }
+
+    func testBothDisabledSkips() {
+        let d = decide(manual: false, recurring: false, reactive: false, cascade: false, archive: false)
+        XCTAssertTrue(d.skip)
+    }
 }

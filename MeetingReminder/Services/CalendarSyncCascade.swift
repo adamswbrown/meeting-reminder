@@ -23,4 +23,44 @@ enum CalendarSyncCascade {
         if id.contains("/RID=") { return true }
         return id.range(of: "_[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil
     }
+
+    /// Decision for a row whose event has disappeared from the calendar
+    /// (already filtered to in-window, not-touched by the caller).
+    struct Disappearance {
+        /// Target `Sync State` select, or nil to leave unchanged.
+        let syncState: String?
+        /// Target `Status` select (only "Cancelled"), or nil to leave unchanged.
+        let rowStatus: String?
+        /// Whether to PATCH the linked brief's Meeting Outcome = Cancelled.
+        let cascadeBriefCancelled: Bool
+        /// Whether the caller should do nothing for this row.
+        let skip: Bool
+    }
+
+    static func classifyDisappearance(hasManualRelations: Bool,
+                                      isRecurring: Bool,
+                                      isReactive: Bool,
+                                      cascadeEnabled: Bool,
+                                      archiveEnabled: Bool) -> Disappearance {
+        let noop = Disappearance(syncState: nil, rowStatus: nil,
+                                 cascadeBriefCancelled: false, skip: true)
+        // Neither behaviour enabled → nothing to do.
+        guard cascadeEnabled || archiveEnabled else { return noop }
+        // A moved recurring occurrence vanishes from EventKit without being
+        // cancelled; the reactive window can't disambiguate, so defer to the
+        // daily full run.
+        if isReactive && isRecurring { return noop }
+
+        // A row carrying manual work is marked Stale, never Cancelled.
+        if hasManualRelations {
+            return Disappearance(syncState: "Stale", rowStatus: nil,
+                                 cascadeBriefCancelled: false, skip: false)
+        }
+        // A clean disappearance: Orphaned always; Cancelled + brief cascade
+        // only when the cascade behaviour is enabled.
+        return Disappearance(syncState: "Orphaned",
+                             rowStatus: cascadeEnabled ? "Cancelled" : nil,
+                             cascadeBriefCancelled: cascadeEnabled,
+                             skip: false)
+    }
 }
