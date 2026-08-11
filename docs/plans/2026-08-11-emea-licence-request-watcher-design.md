@@ -108,11 +108,24 @@ This protocol is saved to Claude memory so the capability persists across sessio
   morning digest beats 30 dismissable banners).
 - No writes to Salesforce — read-only throughout.
 
-## Setup / open items before build
+## Build status (2026-08-11)
 
-1. Create the Notion **watchlist DB** (schema above); capture its data source ID.
-2. Create the Slack channel `#emea-licence-requests` (mute it) + decide the loud-ping target
-   (DM vs a `#emea-licence-watchlist` channel).
-3. Confirm the cloud routine environment has: Salesforce read-only creds, `SLACK_BOT_TOKEN`,
-   Notion token, Todoist API token (`/api/v1`, not the dead `/rest/v2`).
-4. Author the routine (schedule skill / CronCreate) implementing the run loop above.
+Done and committed:
+- ✅ Notion **watchlist DB** created under Operations — data source `1d72ac2d-853f-43ad-b7dc-a505a210c534`. Seeded with an `ADC` example row (Active, Create Todoist on).
+- ✅ Slack channel `#emea-licence-requests` — `C0BP0TZTAG7`. Loud-ping/digest/failure-alert target = DM to `U0BLN3B8TCZ`. Setup notice + a sample feed line posted.
+- ✅ Watcher script `scripts/licence-watcher/watcher.py` (+ README). `selftest` validated live: 8 EMEA / 1 review / 5 skip.
+- ✅ Salesforce client-credentials path proven end-to-end (token + query).
+
+## DEPLOYMENT BLOCKER — Salesforce access from the cloud
+
+The clean "cloud routine polls Salesforce" plan hits a wall: **cloud routines can't reach Salesforce as-is.**
+- No Salesforce MCP connector is connected at claude.ai (only Slack/Notion/Todoist/Supabase/Gmail/Drive/Atlassian).
+- Cloud agents can't read local files/env, so the SF client-creds in `~/Developer/Tools/salesforce-readonly-mcp-PROD/.env` aren't available.
+- Cloud cron minimum interval is **1 hour** (so cadence is hourly, not 15 min).
+
+Everything downstream (Slack/Notion/Todoist) is cloud-ready. Deployment options (undecided):
+1. **Cloud routine + secrets on the environment** — routine clones this repo, runs `watcher.py run` hourly; Adam adds SF + Slack/Notion/Todoist secrets to the routine environment via claude.ai/code. Mac-independent.
+2. **Local launchd** — deliverable immediately (SF creds already local; drop Slack/Notion/Todoist tokens in a local env file). Every 15 min while awake; on-wake catch-up sweeps overnight into the muted feed + digest. Not independent if Mac is off all day.
+3. **Bridge via Supabase** — Mac pushes new SF requests to Supabase (already used for availability); cloud routine reads Supabase + posts. Mac-independent reads, SF→Supabase push still needs the Mac.
+
+Status: **deployment on hold pending Adam's runtime choice.** Everything else is built and tested.
