@@ -1053,6 +1053,9 @@ struct SettingsView: View {
                 Toggle("Archive orphaned rows",
                        isOn: Binding(get: { calendarNotionSync.archiveOrphansEnabled },
                                      set: { calendarNotionSync.archiveOrphansEnabled = $0 }))
+                Toggle("Reflect cancellations/reschedules in Notion (row + brief)",
+                       isOn: Binding(get: { calendarNotionSync.cascadeStatusEnabled },
+                                     set: { calendarNotionSync.cascadeStatusEnabled = $0 }))
                 Toggle("Skip Free / Out-of-Office events",
                        isOn: Binding(get: { calendarNotionSync.skipFreeAndOOOEnabled },
                                      set: { calendarNotionSync.skipFreeAndOOOEnabled = $0 }))
@@ -1067,6 +1070,7 @@ struct SettingsView: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Archive orphaned rows: rows in Notion whose source calendar event has disappeared get classified as Orphaned and archived. Rows with manual Meeting Notes or Pre-Call Briefing relations are marked Stale instead — never archived. Both states are reversible from Notion.")
+                    Text("Reflect cancellations/reschedules: when a briefed meeting is cancelled, stamp the Calendar Events row Status = Cancelled / Sync State = Orphaned and set the linked Pre-Call Briefing’s Meeting Outcome = Cancelled. When a one-off meeting moves, push the new start onto the brief’s Date & Time. Only flips status metadata — never archives. On by default; independent of “Archive orphaned rows”.")
                     Text("Skip Free / OOO: drops events marked Free or Out of Office (e.g. Annual Leave) before they reach Notion. Off by default — keeps holidays in the ledger.")
                     Text("Auto-link: after each upsert, query Meeting Notes and Pre-Call Briefings for a single same-day-same-title match and link it. Append-only — manual links are never overwritten. Ambiguous matches (>1 candidate) are skipped with a log warning.")
                     Text("Watch for changes (reactive sync): sync changed events to Notion within ~2 min of a calendar change, instead of waiting for the daily 06:00 run. Feeds Co-Work pre-call briefs via a Notion automation.")

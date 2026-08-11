@@ -922,7 +922,11 @@ final class CalendarNotionSyncService: ObservableObject {
     /// true when the key is unset — this only flips status metadata, never
     /// archives, so it's safe on by default. Independent of archive-orphans.
     var cascadeStatusEnabled: Bool {
-        UserDefaults.standard.object(forKey: CalendarSyncConstants.prefCascadeStatusKey) as? Bool ?? true
+        get { UserDefaults.standard.object(forKey: CalendarSyncConstants.prefCascadeStatusKey) as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: CalendarSyncConstants.prefCascadeStatusKey)
+            objectWillChange.send()
+        }
     }
 
     /// When on, drops EKEventAvailability == .free / .unavailable (OOO) before
