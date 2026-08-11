@@ -460,6 +460,26 @@ final class MeetingMonitor: ObservableObject {
                 }
             }
 
+            // Catch-up overlay: if the app wasn't running during either fire
+            // window above (e.g. it launched or was redeployed after the
+            // meeting already started), a meeting still underway would be
+            // silently missed. Fire once, bounded to `OverlayCatchUp.window`
+            // after start so a long-running meeting the user is already in
+            // isn't nudged on every launch. triggerOverlay downgrades to the
+            // screen-share-safe minimal alert when the mic is hot.
+            if OverlayCatchUp.shouldFire(
+                timeUntilStart: timeUntil,
+                isInProgress: event.isInProgress,
+                hasEnded: event.hasEnded,
+                alreadyShown: shownEventIDs.contains(event.id),
+                isSnoozed: snoozedEvents[event.id] != nil,
+                isCurrentMeeting: currentMeetingInProgress?.id == event.id,
+                blockingAllowed: blockingAllowed
+            ) {
+                triggerOverlay(for: event)
+                return
+            }
+
             // Last-chance tier: the overlay fired earlier and was dismissed, but
             // the user never joined. Re-fire it once as the meeting starts.
             if progressiveAlertsEnabled && AlertTier.lastChance.isEnabled &&
