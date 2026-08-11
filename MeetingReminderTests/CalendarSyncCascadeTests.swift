@@ -75,4 +75,15 @@ final class CalendarSyncCascadeTests: XCTestCase {
         let d = decide(manual: false, recurring: false, reactive: false, cascade: false, archive: false)
         XCTAssertTrue(d.skip)
     }
+
+    // MARK: isCancelledStatus
+
+    func testIsCancelledStatusTrueForCancelled() {
+        XCTAssertTrue(CalendarSyncCascade.isCancelledStatus(["select": ["name": "Cancelled"]]))
+    }
+
+    func testIsCancelledStatusFalseForOther() {
+        XCTAssertFalse(CalendarSyncCascade.isCancelledStatus(["select": ["name": "Upcoming"]]))
+        XCTAssertFalse(CalendarSyncCascade.isCancelledStatus(nil))
+    }
 }

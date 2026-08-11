@@ -458,15 +458,21 @@ final class CalendarSyncUpserter {
     private let logger: CalendarSyncLogger
     private let dryRun: Bool
     private let archiveOrphans: Bool
+    private let cascadeStatus: Bool
+    private let isReactive: Bool
 
     init(client: CalendarSyncNotionClient,
          logger: CalendarSyncLogger,
          dryRun: Bool,
-         archiveOrphans: Bool) {
+         archiveOrphans: Bool,
+         cascadeStatus: Bool = false,
+         isReactive: Bool = false) {
         self.client = client
         self.logger = logger
         self.dryRun = dryRun
         self.archiveOrphans = archiveOrphans
+        self.cascadeStatus = cascadeStatus
+        self.isReactive = isReactive
     }
 
     /// Outcome of one run, including the link targets the auto-linker can
@@ -615,7 +621,7 @@ final class CalendarSyncUpserter {
             }
         }
 
-        if archiveOrphans {
+        if archiveOrphans || cascadeStatus {
             await processOrphans(touched: touched,
                                  existing: existing,
                                  orphanWindow: orphanWindow,
@@ -667,24 +673,50 @@ final class CalendarSyncUpserter {
         logger.info("orphans: \(orphanIDs.count) rows in Notion not in source")
         for appleID in orphanIDs {
             guard let row = existing[appleID] else { continue }
-            let stale = row.hasManualRelations
-            let target = stale ? "Stale" : "Orphaned"
-            // Orphans stay queryable, so they show up in `existing` on every
-            // run — skip rows already in their target state to avoid
-            // re-PATCHing (and re-tripping Notion automations) each sync.
-            if row.syncState == target { continue }
+            let decision = CalendarSyncCascade.classifyDisappearance(
+                hasManualRelations: row.hasManualRelations,
+                isRecurring: CalendarSyncCascade.isRecurringAppleID(appleID),
+                isReactive: isReactive,
+                cascadeEnabled: cascadeStatus,
+                archiveEnabled: archiveOrphans)
+            if decision.skip { continue }
+
+            // Build the row PATCH. Skip when already in target state to avoid
+            // re-PATCH churn (transition-only) — covers both Sync State and Status.
+            var rowProps: [String: Any] = [:]
+            if let ss = decision.syncState, row.syncState != ss {
+                rowProps["Sync State"] = ["select": ["name": ss]]
+            }
+            let alreadyCancelled = CalendarSyncCascade
+                .isCancelledStatus(row.properties["Status"])
+            if let st = decision.rowStatus, !alreadyCancelled {
+                rowProps["Status"] = ["select": ["name": st]]
+            }
+
+            // The brief cascade fires only on the transition into Cancelled
+            // (i.e. the row wasn't already Cancelled) so it runs exactly once.
+            let doBriefCascade = decision.cascadeBriefCancelled
+                && !alreadyCancelled
+                && row.preCallBriefingPageID != nil
+
+            if rowProps.isEmpty && !doBriefCascade { continue }
+
             do {
-                let body: [String: Any] = [
-                    "properties": ["Sync State": ["select": ["name": target]]]
-                ]
                 if dryRun {
-                    logger.info("DRY \(stale ? "STALE" : "ORPHAN") \(appleID) :: \(row.pageID)")
+                    logger.info("DRY \(decision.rowStatus ?? decision.syncState ?? "?") \(appleID) :: \(row.pageID)\(doBriefCascade ? " +brief" : "")")
                 } else {
-                    _ = try await client.patch(path: "/pages/\(row.pageID)", body: body)
+                    if !rowProps.isEmpty {
+                        _ = try await client.patch(path: "/pages/\(row.pageID)",
+                                                   body: ["properties": rowProps])
+                    }
+                    if doBriefCascade, let briefID = row.preCallBriefingPageID {
+                        _ = try await client.patch(path: "/pages/\(briefID)",
+                            body: ["properties": ["Meeting Outcome": ["select": ["name": "Cancelled"]]]])
+                    }
                 }
-                if stale { counts.staled += 1 } else { counts.orphaned += 1 }
+                if decision.rowStatus == "Cancelled" { counts.orphaned += 1 } else { counts.staled += 1 }
             } catch {
-                logger.error("orphan handling failed for \(appleID): \(error)")
+                logger.error("cascade/orphan failed for \(appleID): \(error)")
                 counts.failed += 1
             }
         }
@@ -863,6 +895,14 @@ final class CalendarNotionSyncService: ObservableObject {
             UserDefaults.standard.set(newValue, forKey: CalendarSyncConstants.prefArchiveOrphansKey)
             objectWillChange.send()
         }
+    }
+
+    /// When on (the default), cancellations/reschedules are cascaded onto the
+    /// Calendar Events row Status + the linked Pre-Call Briefing. Defaults to
+    /// true when the key is unset — this only flips status metadata, never
+    /// archives, so it's safe on by default. Independent of archive-orphans.
+    var cascadeStatusEnabled: Bool {
+        UserDefaults.standard.object(forKey: CalendarSyncConstants.prefCascadeStatusKey) as? Bool ?? true
     }
 
     /// When on, drops EKEventAvailability == .free / .unavailable (OOO) before
@@ -1106,7 +1146,9 @@ final class CalendarNotionSyncService: ObservableObject {
             let upserter = CalendarSyncUpserter(client: client,
                                                 logger: logger,
                                                 dryRun: dryRun,
-                                                archiveOrphans: mode == .full && archiveOrphansEnabled)
+                                                archiveOrphans: mode == .full && archiveOrphansEnabled,
+                                                cascadeStatus: cascadeStatusEnabled && (mode == .full),
+                                                isReactive: mode != .full)
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
                                              orphanWindow: (start: windowStart, end: windowEnd),

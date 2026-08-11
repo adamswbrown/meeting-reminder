@@ -63,4 +63,14 @@ enum CalendarSyncCascade {
                              cascadeBriefCancelled: cascadeEnabled,
                              skip: false)
     }
+
+    /// True when a Notion `Status` property payload (read-format
+    /// `{"select":{"name":"..."}}`) currently reads "Cancelled". Used to make
+    /// the cancel cascade transition-only (fire exactly once).
+    static func isCancelledStatus(_ any: Any?) -> Bool {
+        guard let dict = any as? [String: Any],
+              let sel = dict["select"] as? [String: Any],
+              let name = sel["name"] as? String else { return false }
+        return name == "Cancelled"
+    }
 }
