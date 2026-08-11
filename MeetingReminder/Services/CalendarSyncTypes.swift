@@ -97,6 +97,12 @@ enum CalendarSyncConstants {
     /// reactive sync whenever the calendar store changes (debounced + floored).
     /// Default false — opt-in. The 06:00 full run is unaffected.
     static let prefReactiveEnabledKey = "calendarNotionSyncReactiveEnabled"
+    /// When true, cancel/reschedule status changes are cascaded onto the
+    /// Calendar Events row (Status = Cancelled / Sync State) AND the linked
+    /// Pre-Call Briefing (Meeting Outcome = Cancelled / Date & Time). Default
+    /// TRUE — this only ever flips status metadata, never archives. Independent
+    /// of `prefArchiveOrphansKey`. See docs/plans/2026-08-11-calendar-status-cascade-to-notion-design.md
+    static let prefCascadeStatusKey = "calendarNotionSyncCascadeStatus"
 
     /// Notion data source IDs and property names for B1 auto-linking.
     /// Both resolve per-user (see the override keys above) and fall back to the

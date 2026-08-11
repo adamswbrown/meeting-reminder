@@ -140,6 +140,10 @@ enum CalendarSyncNotionQueries {
         /// archived even though its event still exists. `nil` when the row has
         /// no parseable Date (such rows are never swept).
         let eventDate: Date?
+        /// Page ID of the first linked Pre-Call Briefing (read from the
+        /// relation payload), or nil. Used by the status cascade to PATCH the
+        /// brief's Meeting Outcome / Date & Time. No extra Notion query.
+        let preCallBriefingPageID: String?
     }
 
     struct ExistingEventsResult {
@@ -187,7 +191,9 @@ enum CalendarSyncNotionQueries {
                     archived: archived,
                     syncState: extractSelectName(props["Sync State"]),
                     properties: props,
-                    eventDate: extractDateStart(props["Date"]))
+                    eventDate: extractDateStart(props["Date"]),
+                    preCallBriefingPageID: CalendarSyncCascade.briefPageID(
+                        fromRelation: props[CalendarSyncConstants.calendarEventsPreCallBriefingRelation]))
 
                 if let existing = map[appleID] {
                     // Record both page IDs as a duplicate set.
@@ -452,15 +458,21 @@ final class CalendarSyncUpserter {
     private let logger: CalendarSyncLogger
     private let dryRun: Bool
     private let archiveOrphans: Bool
+    private let cascadeStatus: Bool
+    private let isReactive: Bool
 
     init(client: CalendarSyncNotionClient,
          logger: CalendarSyncLogger,
          dryRun: Bool,
-         archiveOrphans: Bool) {
+         archiveOrphans: Bool,
+         cascadeStatus: Bool = false,
+         isReactive: Bool = false) {
         self.client = client
         self.logger = logger
         self.dryRun = dryRun
         self.archiveOrphans = archiveOrphans
+        self.cascadeStatus = cascadeStatus
+        self.isReactive = isReactive
     }
 
     /// Outcome of one run, including the link targets the auto-linker can
@@ -559,6 +571,26 @@ final class CalendarSyncUpserter {
                         body["archived"] = false
                         _ = try await client.patch(path: "/pages/\(existingRow.pageID)", body: body)
                         counts.updated += 1
+                        // Reschedule cascade: when a one-off meeting moves, push
+                        // the new start onto the linked brief's Date & Time so
+                        // the brief stays aligned. Recurring occurrences are
+                        // excluded (their appleID is date-suffixed; a moved
+                        // occurrence would otherwise rewrite a prior brief).
+                        if cascadeStatus,
+                           !CalendarSyncCascade.isRecurringAppleID(appleID),
+                           let briefID = existingRow.preCallBriefingPageID,
+                           CalendarSyncCascade.startChanged(incoming: row.event.eventStart,
+                                                            existing: existingRow.eventDate) {
+                            let london = TimeZone(identifier: "Europe/London")!
+                            let iso = ISO8601DateFormatter(); iso.timeZone = london
+                            iso.formatOptions = [.withInternetDateTime]
+                            let start = iso.string(from: row.event.eventStart)
+                            let end = iso.string(from: row.event.eventEnd)
+                            _ = try? await client.patch(path: "/pages/\(briefID)", body: ["properties": [
+                                "Date & Time": ["date": ["start": start, "end": end]]
+                            ]])
+                            logger.info("cascade: re-dated brief \(briefID) → \(start)")
+                        }
                     }
                     resultPageID = existingRow.pageID
                     needsMN = !existingRow.hasMeetingNotesLink
@@ -609,7 +641,7 @@ final class CalendarSyncUpserter {
             }
         }
 
-        if archiveOrphans {
+        if archiveOrphans || cascadeStatus {
             await processOrphans(touched: touched,
                                  existing: existing,
                                  orphanWindow: orphanWindow,
@@ -661,24 +693,50 @@ final class CalendarSyncUpserter {
         logger.info("orphans: \(orphanIDs.count) rows in Notion not in source")
         for appleID in orphanIDs {
             guard let row = existing[appleID] else { continue }
-            let stale = row.hasManualRelations
-            let target = stale ? "Stale" : "Orphaned"
-            // Orphans stay queryable, so they show up in `existing` on every
-            // run — skip rows already in their target state to avoid
-            // re-PATCHing (and re-tripping Notion automations) each sync.
-            if row.syncState == target { continue }
+            let decision = CalendarSyncCascade.classifyDisappearance(
+                hasManualRelations: row.hasManualRelations,
+                isRecurring: CalendarSyncCascade.isRecurringAppleID(appleID),
+                isReactive: isReactive,
+                cascadeEnabled: cascadeStatus,
+                archiveEnabled: archiveOrphans)
+            if decision.skip { continue }
+
+            // Build the row PATCH. Skip when already in target state to avoid
+            // re-PATCH churn (transition-only) — covers both Sync State and Status.
+            var rowProps: [String: Any] = [:]
+            if let ss = decision.syncState, row.syncState != ss {
+                rowProps["Sync State"] = ["select": ["name": ss]]
+            }
+            let alreadyCancelled = CalendarSyncCascade
+                .isCancelledStatus(row.properties["Status"])
+            if let st = decision.rowStatus, !alreadyCancelled {
+                rowProps["Status"] = ["select": ["name": st]]
+            }
+
+            // The brief cascade fires only on the transition into Cancelled
+            // (i.e. the row wasn't already Cancelled) so it runs exactly once.
+            let doBriefCascade = decision.cascadeBriefCancelled
+                && !alreadyCancelled
+                && row.preCallBriefingPageID != nil
+
+            if rowProps.isEmpty && !doBriefCascade { continue }
+
             do {
-                let body: [String: Any] = [
-                    "properties": ["Sync State": ["select": ["name": target]]]
-                ]
                 if dryRun {
-                    logger.info("DRY \(stale ? "STALE" : "ORPHAN") \(appleID) :: \(row.pageID)")
+                    logger.info("DRY \(decision.rowStatus ?? decision.syncState ?? "?") \(appleID) :: \(row.pageID)\(doBriefCascade ? " +brief" : "")")
                 } else {
-                    _ = try await client.patch(path: "/pages/\(row.pageID)", body: body)
+                    if !rowProps.isEmpty {
+                        _ = try await client.patch(path: "/pages/\(row.pageID)",
+                                                   body: ["properties": rowProps])
+                    }
+                    if doBriefCascade, let briefID = row.preCallBriefingPageID {
+                        _ = try await client.patch(path: "/pages/\(briefID)",
+                            body: ["properties": ["Meeting Outcome": ["select": ["name": "Cancelled"]]]])
+                    }
                 }
-                if stale { counts.staled += 1 } else { counts.orphaned += 1 }
+                if decision.rowStatus == "Cancelled" { counts.orphaned += 1 } else { counts.staled += 1 }
             } catch {
-                logger.error("orphan handling failed for \(appleID): \(error)")
+                logger.error("cascade/orphan failed for \(appleID): \(error)")
                 counts.failed += 1
             }
         }
@@ -855,6 +913,18 @@ final class CalendarNotionSyncService: ObservableObject {
         get { UserDefaults.standard.bool(forKey: CalendarSyncConstants.prefArchiveOrphansKey) }
         set {
             UserDefaults.standard.set(newValue, forKey: CalendarSyncConstants.prefArchiveOrphansKey)
+            objectWillChange.send()
+        }
+    }
+
+    /// When on (the default), cancellations/reschedules are cascaded onto the
+    /// Calendar Events row Status + the linked Pre-Call Briefing. Defaults to
+    /// true when the key is unset — this only flips status metadata, never
+    /// archives, so it's safe on by default. Independent of archive-orphans.
+    var cascadeStatusEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: CalendarSyncConstants.prefCascadeStatusKey) as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: CalendarSyncConstants.prefCascadeStatusKey)
             objectWillChange.send()
         }
     }
@@ -1100,7 +1170,9 @@ final class CalendarNotionSyncService: ObservableObject {
             let upserter = CalendarSyncUpserter(client: client,
                                                 logger: logger,
                                                 dryRun: dryRun,
-                                                archiveOrphans: mode == .full && archiveOrphansEnabled)
+                                                archiveOrphans: mode == .full && archiveOrphansEnabled,
+                                                cascadeStatus: cascadeStatusEnabled,
+                                                isReactive: mode != .full)
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
                                              orphanWindow: (start: windowStart, end: windowEnd),
