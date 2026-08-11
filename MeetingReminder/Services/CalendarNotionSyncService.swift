@@ -140,6 +140,10 @@ enum CalendarSyncNotionQueries {
         /// archived even though its event still exists. `nil` when the row has
         /// no parseable Date (such rows are never swept).
         let eventDate: Date?
+        /// Page ID of the first linked Pre-Call Briefing (read from the
+        /// relation payload), or nil. Used by the status cascade to PATCH the
+        /// brief's Meeting Outcome / Date & Time. No extra Notion query.
+        let preCallBriefingPageID: String?
     }
 
     struct ExistingEventsResult {
@@ -187,7 +191,9 @@ enum CalendarSyncNotionQueries {
                     archived: archived,
                     syncState: extractSelectName(props["Sync State"]),
                     properties: props,
-                    eventDate: extractDateStart(props["Date"]))
+                    eventDate: extractDateStart(props["Date"]),
+                    preCallBriefingPageID: CalendarSyncCascade.briefPageID(
+                        fromRelation: props[CalendarSyncConstants.calendarEventsPreCallBriefingRelation]))
 
                 if let existing = map[appleID] {
                     // Record both page IDs as a duplicate set.
