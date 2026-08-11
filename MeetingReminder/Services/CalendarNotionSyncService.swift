@@ -1147,7 +1147,7 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 logger: logger,
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled,
-                                                cascadeStatus: cascadeStatusEnabled && (mode == .full),
+                                                cascadeStatus: cascadeStatusEnabled,
                                                 isReactive: mode != .full)
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
