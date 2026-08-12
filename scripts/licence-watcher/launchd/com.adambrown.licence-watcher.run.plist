@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.adambrown.licence-watcher.run</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/adambrown/Developer/meeting-reminder/scripts/licence-watcher/run-local.sh</string>
+        <string>run</string>
+    </array>
+    <!-- Fires every 15 min while the Mac is awake; a missed interval runs once on wake
+         (the overnight gap is covered by the 08:00 digest's 15h lookback). -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Users/adambrown/.local/state/licence-watcher/launchd-run.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/adambrown/.local/state/licence-watcher/launchd-run.log</string>
+</dict>
+</plist>

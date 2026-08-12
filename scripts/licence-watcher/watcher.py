@@ -24,18 +24,24 @@ Config (env):
   LICENCE_WINDOW_MINUTES    (default 30)                         run lookback window
   LICENCE_DIGEST_HOURS      (default 15)                         digest lookback window
   LICENCE_STATE_DIR         (default ~/.local/state/licence-watcher)  logs + heartbeat
+  LICENCE_SMTP_HOST, LICENCE_SMTP_PORT (587), LICENCE_SMTP_USER, LICENCE_SMTP_PASS
+  LICENCE_EMAIL_TO (default adam@askadam.cloud), LICENCE_EMAIL_FROM (default SMTP_USER)
+                          digest emails the overnight action list when SMTP is configured
 """
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
+import smtplib
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 
 # --- Salesforce fields we pull ------------------------------------------------
@@ -43,7 +49,26 @@ SF_FIELDS = [
     "Id", "Name", "CreatedDate", "Status__c", "Country__c", "Region__c",
     "CusomerAccount__r.Name", "AMM_Partner_Account__r.Name",
     "Partner_Domains__c", "Customer_Segment__c", "Licence_GUID__c",
+    # Contacts for easy emailing (Customer_Contact__c is the customer's email).
+    "Customer_Name__c", "Customer_Contact__c", "Requestor__c",
+    "Email_contact_at_Assessment_Partner__c",
+    "Partner_First_Name__c", "Partner_Last_Name__c",
 ]
+
+# --- Deployment__c fields for the overnight deployments section ----------------
+SF_DEPLOY_FIELDS = [
+    "Id", "Customer_Name__c", "Deployment_Type__c", "Licence_Management_Type__c",
+    "Plan__c", "Licence_GUID__c", "Deployment_Status__c", "Provisioning_Status__c",
+    "CreatedDate",
+    # Contact for easy emailing — resolved via the linked Lead.
+    "Lead__r.Name", "Lead__r.Email",
+]
+# Channel split (see design 2026-08-12): Assessment Desk = deployment's Licence_GUID
+# matches a Licence_Requests__c row; Partner = Licence_Management_Type__c 'Partner
+# Managed'; everything else = Public plan (Direct / MarketPlace self-service).
+DEPLOY_CHANNELS = [("desk", "🏛️  ASSESSMENT DESK"),
+                   ("partner", "🤝  PARTNER"),
+                   ("public", "🌐  PUBLIC PLAN")]
 
 # --- EMEA: country -> Microsoft Area (authoritative; see altra-licence-emea.md) -
 COUNTRY_ALIASES = {
@@ -156,6 +181,118 @@ def sf_link(instance_hint: str, rec_id: str) -> str:
     return f"https://altra.my.salesforce.com/{rec_id}"
 
 
+def sf_deployments_since(cutoff_iso: str) -> list[dict]:
+    token, instance = sf_token()
+    api = os.environ.get("SF_API_VERSION", "v61.0")
+    soql = (f"SELECT {', '.join(SF_DEPLOY_FIELDS)} FROM Deployment__c "
+            f"WHERE CreatedDate >= {cutoff_iso} ORDER BY CreatedDate DESC")
+    url = f"{instance}/services/data/{api}/query?q={urllib.parse.quote(soql)}"
+    headers = {"Authorization": f"Bearer {token}"}
+    records: list[dict] = []
+    while True:
+        res = _http("GET", url, headers)
+        records.extend(res.get("records", []))
+        nxt = res.get("nextRecordsUrl")
+        if not nxt:
+            break
+        url = f"{instance}{nxt}"
+    return records
+
+
+def sf_licence_names_for_guids(guids: list[str]) -> dict[str, dict]:
+    """Map deployment Licence_GUIDs to their Licence_Requests__c row (name + id),
+    so a deployment can be tagged Assessment Desk even if its request is older than
+    the digest window. Returns {guid: {"name": ..., "id": ...}}."""
+    guids = [g for g in {g for g in guids if g}]
+    if not guids:
+        return {}
+    token, instance = sf_token()
+    api = os.environ.get("SF_API_VERSION", "v61.0")
+    quoted = ", ".join("'" + g.replace("'", "") + "'" for g in guids)
+    soql = (f"SELECT Id, Name, Licence_GUID__c FROM Licence_Requests__c "
+            f"WHERE Licence_GUID__c IN ({quoted})")
+    url = f"{instance}/services/data/{api}/query?q={urllib.parse.quote(soql)}"
+    res = _http("GET", url, {"Authorization": f"Bearer {token}"})
+    out: dict[str, dict] = {}
+    for r in res.get("records", []):
+        out[r["Licence_GUID__c"]] = {"name": r.get("Name"), "id": r["Id"]}
+    return out
+
+
+def deploy_channel(dep: dict, lr_by_guid: dict) -> str:
+    guid = dep.get("Licence_GUID__c")
+    if guid and guid in lr_by_guid:
+        return "desk"
+    if (dep.get("Licence_Management_Type__c") or "") == "Partner Managed":
+        return "partner"
+    return "public"
+
+
+def deploy_status(dep: dict) -> str:
+    return (dep.get("Deployment_Status__c") or dep.get("Provisioning_Status__c")
+            or "new")
+
+
+def bucket_deployments(deps: list[dict], lr_by_guid: dict) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = {"desk": [], "partner": [], "public": []}
+    for dep in deps:
+        groups[deploy_channel(dep, lr_by_guid)].append(dep)
+    return groups
+
+
+# --- contacts (for easy emailing) ---------------------------------------------
+def _dedupe_name(first: str | None, last: str | None) -> str:
+    parts = [p for p in [(first or "").strip(), (last or "").strip()] if p]
+    if len(parts) == 2 and parts[0].lower() == parts[1].lower():
+        return parts[0]  # SF often stores first==last (e.g. "Teemu"/"Teemu")
+    return " ".join(parts)
+
+
+def customer_display(rec: dict) -> str:
+    """Org name if the account is linked, else the contact person, else em dash."""
+    return ((rec.get("CusomerAccount__r") or {}).get("Name")
+            or (rec.get("Customer_Name__c") or "").strip() or "—")
+
+
+def licence_contacts(rec: dict) -> list[tuple[str, str]]:
+    """(name, email) pairs to email about a licence request: customer, then partner."""
+    out: list[tuple[str, str]] = []
+    ce = (rec.get("Customer_Contact__c") or "").strip()
+    if "@" in ce:
+        out.append(((rec.get("Customer_Name__c") or "").strip() or ce, ce))
+    pe = (rec.get("Email_contact_at_Assessment_Partner__c")
+          or rec.get("Requestor__c") or "").strip()
+    if "@" in pe and pe.lower() != ce.lower():
+        pname = _dedupe_name(rec.get("Partner_First_Name__c"),
+                             rec.get("Partner_Last_Name__c"))
+        out.append((pname or pe, pe))
+    return out
+
+
+def deploy_contacts(dep: dict) -> list[tuple[str, str]]:
+    lead = dep.get("Lead__r") or {}
+    email = (lead.get("Email") or "").strip()
+    return [((lead.get("Name") or "").strip() or email, email)] if "@" in email else []
+
+
+def contacts_text(contacts: list[tuple[str, str]]) -> str:
+    return " · ".join((f"✉ {e}" if n == e else f"✉ {n} <{e}>") for n, e in contacts)
+
+
+def contacts_slack(contacts: list[tuple[str, str]]) -> str:
+    return " · ".join(f"✉ <mailto:{e}|{n}>" for n, e in contacts)
+
+
+def contacts_html(contacts: list[tuple[str, str]]) -> str:
+    if not contacts:
+        return ""
+    inner = " · ".join(
+        f'✉&nbsp;<a href="mailto:{html.escape(e)}" '
+        f'style="color:#0f766e;text-decoration:none;">{_esc(n)}</a>'
+        for n, e in contacts)
+    return f'<div style="font-size:12px;margin-top:3px;color:#0f766e;">{inner}</div>'
+
+
 # --- Slack --------------------------------------------------------------------
 SLACK = "https://slack.com/api"
 
@@ -246,6 +383,196 @@ def todoist_task(content: str, description: str) -> None:
     _http("POST", "https://api.todoist.com/api/v1/tasks",
           {"Authorization": f"Bearer {token}",
            "Content-Type": "application/json"}, json.dumps(body).encode())
+
+
+# --- Email (SMTP) -------------------------------------------------------------
+def smtp_configured() -> bool:
+    return bool(os.environ.get("LICENCE_SMTP_HOST")
+                and os.environ.get("LICENCE_SMTP_USER")
+                and os.environ.get("LICENCE_SMTP_PASS"))
+
+
+def send_email(subject: str, text_body: str, html_body: str | None = None) -> None:
+    """Send the digest via SMTP+STARTTLS. Config comes from the local secrets file.
+    Sends multipart/alternative when html_body is given (plaintext stays the fallback)."""
+    host = os.environ["LICENCE_SMTP_HOST"]
+    port = int(os.environ.get("LICENCE_SMTP_PORT", "587"))
+    user = os.environ["LICENCE_SMTP_USER"]
+    password = os.environ["LICENCE_SMTP_PASS"]
+    sender = os.environ.get("LICENCE_EMAIL_FROM", user)
+    # LICENCE_EMAIL_TO may be a comma-separated list; send_message reads the To header.
+    recipients = [a.strip() for a in
+                  os.environ.get("LICENCE_EMAIL_TO", "adam@askadam.cloud").split(",")
+                  if a.strip()]
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    msg.set_content(text_body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
+    with smtplib.SMTP(host, port, timeout=30) as s:
+        s.starttls()
+        s.login(user, password)
+        s.send_message(msg)
+
+
+def deploy_email_lines(groups: dict, lr_by_guid: dict) -> list[str]:
+    """Deployments section for the email — one bucket per channel, each row linked."""
+    total = sum(len(v) for v in groups.values())
+    lines = [f"DEPLOYMENTS ({total}):"]
+    for key, label in DEPLOY_CHANNELS:
+        rows = groups.get(key, [])
+        if not rows:
+            continue
+        lines.append(f"\n  {label} ({len(rows)}):")
+        for dep in rows:
+            cust = dep.get("Customer_Name__c") or "—"
+            meta = " · ".join(filter(None, [
+                dep.get("Licence_Management_Type__c") or dep.get("Deployment_Type__c"),
+                deploy_status(dep)]))
+            lines.append(f"    • {cust} · {meta}")
+            lines.append(f"      {sf_link('', dep['Id'])}   guid:{dep.get('Licence_GUID__c') or '-'}")
+            cts = contacts_text(deploy_contacts(dep))
+            if cts:
+                lines.append(f"      {cts}")
+            lr = lr_by_guid.get(dep.get("Licence_GUID__c") or "")
+            if lr:
+                lines.append(f"      ↳ licence request {lr['name']}: {sf_link('', lr['id'])}")
+    return lines
+
+
+def digest_email_body(emea: list, hits: list, hours: int, hb: dict,
+                      deploy_groups: dict | None = None,
+                      lr_by_guid: dict | None = None) -> str:
+    """Action-first plaintext hit-list for the overnight email. Every row carries a
+    Salesforce link (and a guid tag) for follow-up / referencing back in chat."""
+    lines = [f"Overnight — {len(emea)} EMEA licence requests in the last {hours}h",
+             f"Watcher last ran: {hb.get('at', '?')} (ok={hb.get('ok', '?')})", ""]
+    if hits:
+        lines.append(f">>> ACTION NEEDED — watchlist hits ({len(hits)}):")
+        for rec, cls, rule in hits:
+            lines.append(f"  • [{rule['match']}] {customer_display(rec)} · "
+                         f"{cls.area or 'review'} · {rec.get('Status__c')}")
+            lines.append(f"    {sf_link('', rec['Id'])}")
+        lines.append("")
+    else:
+        lines.append(">>> No watchlist hits overnight — nothing flagged to action.")
+        lines.append("")
+    lines.append(f"EMEA LICENCE REQUESTS ({len(emea)}):")
+    for rec, cls, _ in emea:
+        lines.append(f"  • {customer_display(rec)} · {rec.get('Country__c') or '?'} / "
+                     f"{cls.area or 'review'} · {rec.get('Status__c')}")
+        lines.append(f"    {sf_link('', rec['Id'])}   guid:{rec.get('Licence_GUID__c') or '-'}")
+        cts = contacts_text(licence_contacts(rec))
+        if cts:
+            lines.append(f"    {cts}")
+    if deploy_groups is not None:
+        lines.append("")
+        lines.extend(deploy_email_lines(deploy_groups, lr_by_guid or {}))
+    return "\n".join(lines)
+
+
+# --- HTML email ---------------------------------------------------------------
+CHANNEL_COLOUR = {"desk": "#7c3aed", "partner": "#0891b2", "public": "#16a34a"}
+
+
+def _esc(v) -> str:
+    return html.escape(str(v if v not in (None, "") else "—"))
+
+
+def _row(link_url: str, title: str, meta: str, extra: str = "") -> str:
+    """One record row: linked title, muted meta line, optional extra (guid / LR link)."""
+    return (
+        '<tr><td style="padding:9px 14px;border-bottom:1px solid #eceef1;">'
+        f'<a href="{html.escape(link_url)}" style="color:#1a56db;text-decoration:none;'
+        f'font-weight:600;font-size:14px;">{_esc(title)}</a>'
+        f'<div style="color:#697386;font-size:12px;margin-top:2px;">{meta}</div>'
+        f'{extra}</td></tr>')
+
+
+def digest_html_body(emea: list, hits: list, hours: int, hb: dict,
+                     deploy_groups: dict, lr_by_guid: dict) -> str:
+    deps_total = sum(len(v) for v in deploy_groups.values())
+    px = ("font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,"
+          "Arial,sans-serif;")
+    out = [
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '</head><body style="margin:0;padding:0;background:#f4f5f7;">',
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="background:#f4f5f7;padding:20px 0;{px}"><tr><td align="center">',
+        '<table role="presentation" width="640" cellpadding="0" cellspacing="0" '
+        'style="max-width:640px;width:100%;background:#ffffff;border-radius:10px;'
+        'overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">',
+        # header
+        '<tr><td style="background:#0f172a;padding:18px 22px;">'
+        '<div style="color:#ffffff;font-size:17px;font-weight:700;">Overnight Altra activity</div>'
+        f'<div style="color:#94a3b8;font-size:12px;margin-top:3px;">Last {hours}h · watcher '
+        f'last ran {_esc(hb.get("at", "?"))} (ok={_esc(hb.get("ok", "?"))})</div></td></tr>',
+    ]
+    # action banner
+    if hits:
+        rows = "".join(
+            f'<div style="font-size:13px;margin-top:4px;">🎯 <b>{_esc(r["match"])}</b> → '
+            f'{_esc(customer_display(rec))} ({_esc(cls.area or "review")})</div>'
+            for rec, cls, r in hits)
+        out.append('<tr><td style="background:#fef3c7;border-left:4px solid #f59e0b;'
+                   f'padding:12px 18px;"><b style="color:#92400e;">⚠️ Action needed — '
+                   f'{len(hits)} watchlist hit(s)</b>{rows}</td></tr>')
+    else:
+        out.append('<tr><td style="background:#ecfdf5;border-left:4px solid #10b981;'
+                   'padding:12px 18px;color:#065f46;font-size:13px;">'
+                   '✓ No watchlist hits overnight — nothing flagged to action.</td></tr>')
+
+    def section(title: str) -> str:
+        return ('<tr><td style="padding:16px 18px 4px;"><div style="font-size:12px;'
+                'font-weight:700;letter-spacing:.5px;color:#697386;text-transform:uppercase;">'
+                f'{title}</div></td></tr>')
+
+    # licence requests
+    out.append(section(f"EMEA licence requests ({len(emea)})"))
+    out.append('<tr><td style="padding:0 4px;"><table role="presentation" width="100%" '
+               'cellpadding="0" cellspacing="0">')
+    for rec, cls, _ in emea:
+        meta = (f'{_esc(rec.get("Country__c") or "?")} / {_esc(cls.area or "review")} · '
+                f'{_esc(rec.get("Status__c"))}')
+        out.append(_row(sf_link("", rec["Id"]), customer_display(rec), meta,
+                        contacts_html(licence_contacts(rec))))
+    out.append('</table></td></tr>')
+
+    # deployments
+    out.append(section(f"Deployments ({deps_total})"))
+    out.append('<tr><td style="padding:0 4px 8px;"><table role="presentation" width="100%" '
+               'cellpadding="0" cellspacing="0">')
+    for key, label in DEPLOY_CHANNELS:
+        drows = deploy_groups.get(key, [])
+        if not drows:
+            continue
+        out.append(f'<tr><td style="padding:10px 14px 4px;"><span style="display:inline-block;'
+                   f'background:{CHANNEL_COLOUR[key]};color:#fff;font-size:11px;font-weight:700;'
+                   f'padding:2px 8px;border-radius:10px;">{label} · {len(drows)}</span></td></tr>')
+        for dep in drows:
+            meta = (f'{_esc(dep.get("Licence_Management_Type__c") or dep.get("Deployment_Type__c"))}'
+                    f' · {_esc(deploy_status(dep))}')
+            extra = contacts_html(deploy_contacts(dep))
+            lr = lr_by_guid.get(dep.get("Licence_GUID__c") or "")
+            if lr:
+                extra += (f'<div style="font-size:11px;margin-top:2px;">↳ '
+                          f'<a href="{html.escape(sf_link("", lr["id"]))}" '
+                          f'style="color:#7c3aed;text-decoration:none;">licence request '
+                          f'{_esc(lr["name"])}</a></div>')
+            out.append(_row(sf_link("", dep["Id"]), dep.get("Customer_Name__c"), meta, extra))
+    out.append('</table></td></tr>')
+
+    # footer
+    dc = {k: len(v) for k, v in deploy_groups.items()}
+    out.append('<tr><td style="background:#f8fafc;padding:12px 18px;color:#697386;'
+               f'font-size:12px;border-top:1px solid #eceef1;">{len(emea)} licence requests · '
+               f'{deps_total} deployments ({dc["public"]} public / {dc["desk"]} desk / '
+               f'{dc["partner"]} partner)</td></tr>')
+    out.append('</table></td></tr></table></body></html>')
+    return "".join(out)
 
 
 # --- formatting ---------------------------------------------------------------
@@ -374,6 +701,13 @@ def do_digest(dry: bool) -> None:
             continue
         emea.append((rec, cls, match_watchlist(rec, cls.area, rules)))
 
+    # Overnight deployments, split into Assessment Desk / Partner / Public plan.
+    deps = sf_deployments_since(cutoff)
+    lr_by_guid = sf_licence_names_for_guids(
+        [d.get("Licence_GUID__c") for d in deps])
+    groups = bucket_deployments(deps, lr_by_guid)
+    dep_counts = {k: len(v) for k, v in groups.items()}
+
     hits = [e for e in emea if e[2]]
     lines = [f"*Overnight EMEA licence requests* — {len(emea)} in the last {hours}h"]
     hb = json.loads((state_dir() / "heartbeat.json").read_text()) \
@@ -382,20 +716,56 @@ def do_digest(dry: bool) -> None:
     if hits:
         lines.append(f"\n🎯 *Watchlist ({len(hits)}):*")
         for rec, cls, rule in hits:
-            cust = (rec.get("CusomerAccount__r") or {}).get("Name") or "—"
-            lines.append(f"• *{rule['match']}* → {cust} ({cls.area or 'review'})")
-    lines.append("\n*All:*")
+            lines.append(f"• *{rule['match']}* → {customer_display(rec)} ({cls.area or 'review'})")
+    lines.append("\n*Licence requests:*")
     for rec, cls, _ in emea:
-        cust = (rec.get("CusomerAccount__r") or {}).get("Name") or "—"
-        lines.append(f"• {cust} · {rec.get('Country__c') or '?'} / "
+        lines.append(f"• <{sf_link('', rec['Id'])}|{customer_display(rec)}> · "
+                     f"{rec.get('Country__c') or '?'} / "
                      f"{cls.area or '⚠️ review'} · {rec.get('Status__c')}")
+        cts = contacts_slack(licence_contacts(rec))
+        if cts:
+            lines.append(f"    {cts}")
+    lines.append(f"\n*Deployments ({len(deps)}):*")
+    for key, label in DEPLOY_CHANNELS:
+        rows = groups.get(key, [])
+        if not rows:
+            continue
+        lines.append(f"{label} ({len(rows)}):")
+        for dep in rows:
+            cust = dep.get("Customer_Name__c") or "—"
+            lines.append(f"• <{sf_link('', dep['Id'])}|{cust}> · "
+                         f"{dep.get('Licence_Management_Type__c') or dep.get('Deployment_Type__c') or '?'} "
+                         f"· {deploy_status(dep)}")
+            cts = contacts_slack(deploy_contacts(dep))
+            if cts:
+                lines.append(f"    {cts}")
     text = "\n".join(lines)
+    dep_total = len(deps)
+    email_subject = (f"Overnight — {len(emea)} EMEA licence requests · {dep_total} deployments "
+                     f"({dep_counts['public']} public / {dep_counts['desk']} desk / "
+                     f"{dep_counts['partner']} partner)"
+                     f"{f' · {len(hits)} to action' if hits else ''}")
+    email_body = digest_email_body(emea, hits, hours, hb, groups, lr_by_guid)
+    email_html = digest_html_body(emea, hits, hours, hb, groups, lr_by_guid)
     if dry:
         log("WOULD POST DIGEST:\n" + text)
+        preview = state_dir() / "digest-preview.html"
+        preview.write_text(email_html, encoding="utf-8")
+        log(f"WOULD EMAIL (smtp_configured={smtp_configured()}) subject={email_subject!r}"
+            f"; HTML preview → {preview}\n" + email_body)
     else:
         dm = slack_dm_channel(ping_user)
         slack_post(dm, text)
-        log(f"digest posted: {len(emea)} emea, {len(hits)} watchlist hits")
+        log(f"digest posted: {len(emea)} emea, {len(hits)} watchlist hits, "
+            f"{len(deps)} deployments {dep_counts}")
+        if smtp_configured():
+            try:
+                send_email(email_subject, email_body, email_html)
+                log(f"digest emailed to {os.environ.get('LICENCE_EMAIL_TO', 'adam@askadam.cloud')}")
+            except Exception as e:  # noqa: BLE001 - email is best-effort, Slack already sent
+                log(f"WARNING digest email failed: {type(e).__name__}: {e}")
+        else:
+            log("digest email skipped (SMTP not configured)")
 
 
 def do_selftest() -> None:
