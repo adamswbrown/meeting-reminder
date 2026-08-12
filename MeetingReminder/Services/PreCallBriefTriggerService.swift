@@ -2,6 +2,42 @@ import Combine
 import EventKit
 import Foundation
 
+/// Pure text builder for the **instant** Slack ping fired the moment a new meeting is
+/// detected — a lightweight "something landed" alert that reaches Slack within the ~2 min
+/// detection window, ahead of the full headless briefing (which takes ~8 min to compose).
+/// Kept pure (no Keychain/network) so it is unit-testable; the actual POST lives on
+/// `PreCallBriefTriggerService.postSlackPing`.
+enum IntradaySlackPing {
+    static func message(title: String, start: Date, now: Date,
+                        timeZone: TimeZone = TimeZone(identifier: "Europe/London") ?? .current) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
+
+        let timeFmt = DateFormatter()
+        timeFmt.locale = Locale(identifier: "en_GB")
+        timeFmt.timeZone = timeZone
+        timeFmt.dateFormat = "HH:mm"
+        let timeStr = timeFmt.string(from: start)
+
+        let dayWord: String
+        if cal.isDate(start, inSameDayAs: now) {
+            dayWord = "today"
+        } else if let tomorrow = cal.date(byAdding: .day, value: 1, to: now),
+                  cal.isDate(start, inSameDayAs: tomorrow) {
+            dayWord = "tomorrow"
+        } else {
+            let dateFmt = DateFormatter()
+            dateFmt.locale = Locale(identifier: "en_GB")
+            dateFmt.timeZone = timeZone
+            dateFmt.dateFormat = "EEE d MMM"
+            dayWord = dateFmt.string(from: start)
+        }
+
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "📅 New meeting just landed — *\(cleanTitle)* @ \(timeStr) \(dayWord). Full brief to follow."
+    }
+}
+
 /// Pure decision for the intraday brief catcher: given a meeting's start time and
 /// the current time, should we brief it **now**, **wait** until a later time, or
 /// **drop** it?
@@ -495,6 +531,12 @@ final class PreCallBriefTriggerService: ObservableObject {
             title: "🆕 New meeting detected",
             body: "Generating a pre-call briefing for “\(target.title)”…")
 
+        // Instant Slack ping — reaches #daily-breifings within the ~2 min detection window,
+        // ahead of the ~8 min full brief, so Adam knows "as soon as humanly possible".
+        // Fire-and-forget; does not block the brief below.
+        postSlackPing(text: IntradaySlackPing.message(
+            title: target.title, start: target.startDate, now: Date()))
+
         guard let filled = buildPrompt(for: target, mode: "NEW") else {
             // Skill file missing (it's gitignored) — latch so we don't retry every poll,
             // and warn once. Do NOT mark fired; re-enabling the toggle clears the latch.
@@ -741,6 +783,38 @@ final class PreCallBriefTriggerService: ObservableObject {
             firedRemovalIDs.remove(firedRemovalOrder.removeFirst())
         }
         UserDefaults.standard.set(firedRemovalOrder, forKey: Keys.removalFiredIDs)
+    }
+
+    /// #daily-breifings — the same channel the intraday briefing skill posts to.
+    private static let slackChannelID = "C0BMEG01M1N"
+
+    /// Fire-and-forget instant Slack ping on detection. Reuses the `slackBotToken`
+    /// Keychain entry the briefing skill uses. Non-blocking — never delays the brief;
+    /// the full brief (with its own delivery + error handling) remains the durable path.
+    /// Posts as whatever bot the token belongs to; no `username` override (that needs the
+    /// `chat:write.customize` scope), so rebrand the bot in the Slack app config to change it.
+    private func postSlackPing(text: String) {
+        guard let token = KeychainHelper.read(key: "slackBotToken"), !token.isEmpty else {
+            log("intraday ping: no slackBotToken in Keychain — instant ping skipped")
+            return
+        }
+        guard let url = URL(string: "https://slack.com/api/chat.postMessage") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "channel": Self.slackChannelID, "text": text,
+            "unfurl_links": false, "unfurl_media": false])
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
+            let ok = (data
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["ok"] as? Bool) ?? false
+            Task { @MainActor in
+                if ok { self?.log("intraday ping: instant Slack alert sent") }
+                else { self?.log("intraday ping: instant Slack alert FAILED (\(err?.localizedDescription ?? "ok=false"))") }
+            }
+        }.resume()
     }
 
     private func log(_ message: String) {

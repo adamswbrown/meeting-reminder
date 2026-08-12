@@ -68,3 +68,45 @@ final class IntradayDiffClassifierTests: XCTestCase {
         XCTAssertEqual(d.reschedules.count, 1)
     }
 }
+
+// MARK: - Instant Slack ping text builder
+// Co-located here (rather than a new SlackPingTests.swift) to avoid pbxproj surgery;
+// move to its own file if this grows. Times are asserted in Europe/London.
+final class IntradaySlackPingTests: XCTestCase {
+    private func at(_ iso: String) -> Date {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]
+        return f.date(from: iso)!
+    }
+
+    func testTodayMeetingSaysTodayInLondonTime() {
+        let now = at("2026-08-12T09:00:00Z")
+        let start = at("2026-08-12T14:00:00Z")   // 15:00 Europe/London (BST)
+        let msg = IntradaySlackPing.message(title: "Markerstudy Q&A", start: start, now: now)
+        XCTAssertTrue(msg.contains("Markerstudy Q&A"), msg)
+        XCTAssertTrue(msg.contains("@ 15:00 today"), msg)
+    }
+
+    func testTomorrowMeetingSaysTomorrow() {
+        let now = at("2026-08-12T09:00:00Z")
+        let start = at("2026-08-13T10:30:00Z")   // 11:30 BST, next day
+        let msg = IntradaySlackPing.message(title: "Sync", start: start, now: now)
+        XCTAssertTrue(msg.contains("tomorrow"), msg)
+        XCTAssertTrue(msg.contains("11:30"), msg)
+    }
+
+    func testDistantMeetingUsesAbsoluteDate() {
+        let now = at("2026-08-12T09:00:00Z")
+        let start = at("2026-08-20T08:00:00Z")   // 8 days out
+        let msg = IntradaySlackPing.message(title: "Board", start: start, now: now)
+        XCTAssertFalse(msg.contains(" today"), msg)
+        XCTAssertFalse(msg.contains("tomorrow"), msg)
+        XCTAssertTrue(msg.contains("20 Aug"), msg)
+    }
+
+    func testTitleIsTrimmed() {
+        let now = at("2026-08-12T09:00:00Z")
+        let start = at("2026-08-12T14:00:00Z")
+        let msg = IntradaySlackPing.message(title: "  Padded  ", start: start, now: now)
+        XCTAssertTrue(msg.contains("*Padded*"), msg)
+    }
+}
