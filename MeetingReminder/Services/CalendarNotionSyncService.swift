@@ -35,6 +35,10 @@ final class CalendarSyncNotionClient {
         try await request(method: "PATCH", path: path, body: body)
     }
 
+    func get(path: String) async throws -> [String: Any] {
+        try await request(method: "GET", path: path, body: nil)
+    }
+
     private func request(method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
         let url = URL(string: "https://api.notion.com/v1\(path)")!
         var attempt = 0

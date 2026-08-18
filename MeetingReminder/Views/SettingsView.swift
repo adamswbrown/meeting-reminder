@@ -26,6 +26,7 @@ struct SettingsView: View {
     @ObservedObject var calComSyncService: CalComSyncService
     @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
+    @AppStorage("intradayUseOnDeviceModel") private var intradayUseOnDeviceModel: Bool = false
 
     @State private var launchAtLogin = false
     @State private var enabledCalendarIDs: Set<String> = []
@@ -1083,6 +1084,11 @@ struct SettingsView: View {
                 Toggle("Auto-brief new meetings during the day (09:00–17:00)",
                        isOn: Binding(get: { preCallBriefTrigger.isEnabled },
                                      set: { preCallBriefTrigger.isEnabled = $0 }))
+                if #available(macOS 26.0, *) {
+                    Toggle("Generate on-device (Apple Intelligence, no Claude)",
+                           isOn: $intradayUseOnDeviceModel)
+                        .disabled(!preCallBriefTrigger.isEnabled)
+                }
                 if !preCallBriefTrigger.lastResult.isEmpty {
                     LabeledContent("Last run") {
                         VStack(alignment: .trailing, spacing: 2) {
@@ -1112,6 +1118,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("When a new meeting lands in your calendar during the working day, this runs the pre-call briefing agent for it within ~2 minutes — the local counterpart to the 03:00 cloud task. It follows the same rules and delivers via the local iMessage + Reminders CLIs.")
                     Text("Requires the `claude` CLI plus the `imessage-tools` + `remctl` CLIs. Click **Grant permissions** to trigger the Reminders + Automation (Messages) prompts — those two panes have no “+” so they can only be added this way. Full Disk Access must be added manually: System Settings → Privacy & Security → Full Disk Access → add MeetingReminder. Off by default.")
+                    Text("Generate on-device (macOS 26+): uses Apple Intelligence's on-device model instead of the `claude` CLI — free, offline, ~5s, and posts a short brief to Slack. It reads the most recent matching Notion Meeting Notes for context but skips the full agent (no Todoist/Jira/skip-list). Falls back to Claude when off.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -42,6 +42,8 @@
 		A1000072 /* GraphMailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000072 /* GraphMailService.swift */; };
 		A1000050 /* BusyLightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000050 /* BusyLightService.swift */; };
 		A1000091 /* PreCallBriefTriggerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000091 /* PreCallBriefTriggerService.swift */; };
+		A10000F1 /* FoundationModelsBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F1 /* FoundationModelsBriefService.swift */; };
+		A10000F2 /* NotionPriorNotesReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F2 /* NotionPriorNotesReader.swift */; };
 		AABB0001 /* AudioProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABB0002 /* AudioProcessMonitor.swift */; };
 		A1000051 /* BusyLightSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000051 /* BusyLightSettingsView.swift */; };
 		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
@@ -66,6 +68,8 @@
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
 		T2000008 /* IntradayBriefGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000008 /* IntradayBriefGateTests.swift */; };
+		T2000045 /* TokenBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000045 /* TokenBudgetTests.swift */; };
+		T2000046 /* NotionPriorNotesReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000046 /* NotionPriorNotesReaderTests.swift */; };
 		T2000009 /* CalendarEventInclusionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000009 /* CalendarEventInclusionTests.swift */; };
 		T2000011 /* IntradayDiffClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000011 /* IntradayDiffClassifierTests.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
@@ -124,6 +128,8 @@
 		B1000072 /* GraphMailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphMailService.swift; sourceTree = "<group>"; };
 		B1000050 /* BusyLightService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightService.swift; sourceTree = "<group>"; };
 		B1000091 /* PreCallBriefTriggerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefTriggerService.swift; sourceTree = "<group>"; };
+		B10000F1 /* FoundationModelsBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationModelsBriefService.swift; sourceTree = "<group>"; };
+		B10000F2 /* NotionPriorNotesReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReader.swift; sourceTree = "<group>"; };
 		AABB0002 /* AudioProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProcessMonitor.swift; sourceTree = "<group>"; };
 		B1000051 /* BusyLightSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightSettingsView.swift; sourceTree = "<group>"; };
 		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
@@ -148,6 +154,8 @@
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
 		T1000008 /* IntradayBriefGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayBriefGateTests.swift; sourceTree = "<group>"; };
+		T1000045 /* TokenBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenBudgetTests.swift; sourceTree = "<group>"; };
+		T1000046 /* NotionPriorNotesReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReaderTests.swift; sourceTree = "<group>"; };
 		T1000009 /* CalendarEventInclusionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventInclusionTests.swift; sourceTree = "<group>"; };
 		T1000011 /* IntradayDiffClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayDiffClassifierTests.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
@@ -231,6 +239,8 @@
 				B1000072 /* GraphMailService.swift */,
 				B1000050 /* BusyLightService.swift */,
 				B1000091 /* PreCallBriefTriggerService.swift */,
+				B10000F1 /* FoundationModelsBriefService.swift */,
+				B10000F2 /* NotionPriorNotesReader.swift */,
 				AABB0002 /* AudioProcessMonitor.swift */,
 				B1000040 /* CalendarSyncTypes.swift */,
 				B1000053 /* CalendarSyncCascade.swift */,
@@ -300,6 +310,8 @@
 				T1000020 /* OverlayCatchUpTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
 				T1000008 /* IntradayBriefGateTests.swift */,
+				T1000045 /* TokenBudgetTests.swift */,
+				T1000046 /* NotionPriorNotesReaderTests.swift */,
 				T1000009 /* CalendarEventInclusionTests.swift */,
 				T1000011 /* IntradayDiffClassifierTests.swift */,
 				T1000007 /* BookingSupportTests.swift */,
@@ -425,6 +437,8 @@
 				A1000072 /* GraphMailService.swift in Sources */,
 				A1000050 /* BusyLightService.swift in Sources */,
 				A1000091 /* PreCallBriefTriggerService.swift in Sources */,
+				A10000F1 /* FoundationModelsBriefService.swift in Sources */,
+				A10000F2 /* NotionPriorNotesReader.swift in Sources */,
 				AABB0001 /* AudioProcessMonitor.swift in Sources */,
 				A1000051 /* BusyLightSettingsView.swift in Sources */,
 				A1000040 /* CalendarSyncTypes.swift in Sources */,
@@ -459,6 +473,8 @@
 				T2000020 /* OverlayCatchUpTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,
+				T2000045 /* TokenBudgetTests.swift in Sources */,
+				T2000046 /* NotionPriorNotesReaderTests.swift in Sources */,
 				T2000009 /* CalendarEventInclusionTests.swift in Sources */,
 				T2000011 /* IntradayDiffClassifierTests.swift in Sources */,
 				T2000007 /* BookingSupportTests.swift in Sources */,

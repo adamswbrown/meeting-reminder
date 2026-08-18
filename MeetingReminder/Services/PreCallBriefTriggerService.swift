@@ -495,6 +495,31 @@ final class PreCallBriefTriggerService: ObservableObject {
             title: "🆕 New meeting detected",
             body: "Generating a pre-call briefing for “\(target.title)”…")
 
+        // Experimental: on-device Foundation Models generator (thin slice — Slack only,
+        // no Notion/Todoist/dedup). Off by default; needs macOS 26. Falls back to the
+        // Claude path on older macOS or when the flag is unset.
+        // Enable via EITHER the UserDefaults flag OR a marker file. The marker file avoids
+        // cfprefsd cache races when toggling an already-running app from the CLI:
+        //   touch ~/.meetingreminder-ondevice-brief
+        let markerPath = (NSHomeDirectory() as NSString).appendingPathComponent(".meetingreminder-ondevice-brief")
+        let onDeviceFlag = UserDefaults.standard.bool(forKey: "intradayUseOnDeviceModel")
+            || FileManager.default.fileExists(atPath: markerPath)
+        var macOS26 = false
+        if #available(macOS 26.0, *) { macOS26 = true }
+        log("intraday path check: macOS26=\(macOS26) onDeviceFlag=\(onDeviceFlag)")
+        if #available(macOS 26.0, *), onDeviceFlag {
+            let summary = await Self.runOnDeviceBrief(for: target, logPath: logURL.path)
+            markFired(target.id)
+            recordResult(summary)
+            let ok = summary.contains("imessage=ok")
+            notifications.postInfo(
+                id: notifID,
+                title: ok ? "✅ Pre-call briefing sent (on-device)" : "⚠️ On-device briefing issue",
+                body: "“\(target.title)” — \(summary)", sound: !ok)
+            log("on-device result: \(summary)")
+            return
+        }
+
         guard let filled = buildPrompt(for: target, mode: "NEW") else {
             // Skill file missing (it's gitignored) — latch so we don't retry every poll,
             // and warn once. Do NOT mark fired; re-enabling the toggle clears the latch.
@@ -622,6 +647,41 @@ final class PreCallBriefTriggerService: ObservableObject {
             .replacingOccurrences(of: "{{MEETING_START}}", with: fmt.string(from: target.startDate))
             .replacingOccurrences(of: "{{MEETING_END}}", with: fmt.string(from: target.endDate))
             .replacingOccurrences(of: "{{APPLE_EVENT_ID}}", with: neutralise(appleID))
+    }
+
+    // MARK: On-device generation (experimental thin slice)
+
+    /// Generate a brief with the on-device Foundation Models system model and post the
+    /// one-line alert to Slack. Returns a summary in the same `created=/imessage=` shape
+    /// the Claude path uses so the completion banners keep working.
+    /// Append a single timestamped line to the intraday log from a nonisolated context.
+    nonisolated private static func appendLine(_ path: String, _ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(stamp)] \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let url = URL(fileURLWithPath: path)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
+    @available(macOS 26.0, *)
+    nonisolated private static func runOnDeviceBrief(for target: MeetingEvent, logPath: String) async -> String {
+        let priorNotes = await NotionPriorNotesReader.fetch(
+            title: target.title, before: target.startDate, logPath: logPath)
+        appendLine(logPath, "on-device: prior-notes \(priorNotes.map { "found (\($0.count) chars)" } ?? "none — using invite body")")
+        let ctx = IntradayBriefContext.from(target, priorNotes: priorNotes)
+        do {
+            let brief = try await FoundationModelsBriefService.generate(ctx)
+            let ok = await SlackPoster().post(brief.slackLine)
+            return "created=1 imessage=\(ok ? "ok" : "failed") (on-device)"
+        } catch {
+            return "created=0 imessage=none on-device-error: \(error)"
+        }
     }
 
     // MARK: Process (runs off the main actor)
