@@ -665,6 +665,51 @@ def expiry_html_rows(rows: list[dict], ahead: int, behind: int) -> str:
     return "".join(out)
 
 
+def expiry_counts(rows: list[dict]) -> tuple[int, int]:
+    g = _expiry_grouped(rows)
+    return len(g["expiring"]), len(g["expired"])
+
+
+def expiry_subject(rows: list[dict]) -> str:
+    exp, expd = expiry_counts(rows)
+    return f"Licence renewals — {exp} expiring / {expd} expired (EMEA)"
+
+
+def expiry_email_text_doc(rows: list[dict], ahead: int, behind: int) -> str:
+    exp, expd = expiry_counts(rows)
+    head = [f"EMEA licence renewals — {exp} expiring (next {ahead}d), "
+            f"{expd} expired (last {behind}d)", ""]
+    return "\n".join(head + expiry_email_lines(rows, ahead, behind)[1:])  # drop dup title
+
+
+def expiry_email_html_doc(rows: list[dict], ahead: int, behind: int) -> str:
+    """Standalone renewals email — own header/subject, same styling as the digest."""
+    exp, expd = expiry_counts(rows)
+    px = ("font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,"
+          "Arial,sans-serif;")
+    return "".join([
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '</head><body style="margin:0;padding:0;background:#f4f5f7;">',
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="background:#f4f5f7;padding:20px 0;{px}"><tr><td align="center">',
+        '<table role="presentation" width="640" cellpadding="0" cellspacing="0" '
+        'style="max-width:640px;width:100%;background:#ffffff;border-radius:10px;'
+        'overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">',
+        '<tr><td style="background:#7c2d12;padding:18px 22px;">'
+        '<div style="color:#ffffff;font-size:17px;font-weight:700;">'
+        'EMEA licence renewals</div>'
+        f'<div style="color:#fed7aa;font-size:12px;margin-top:3px;">'
+        f'{exp} expiring (next {ahead}d) · {expd} expired (last {behind}d) · '
+        'renewal follow-up</div></td></tr>',
+        expiry_html_rows(rows, ahead, behind),
+        '<tr><td style="background:#f8fafc;padding:12px 18px;color:#697386;'
+        f'font-size:12px;border-top:1px solid #eceef1;">{exp + expd} EMEA licences '
+        f'to follow up ({exp} expiring / {expd} expired)</td></tr>',
+        '</table></td></tr></table></body></html>',
+    ])
+
+
 # --- Notion watchlist ---------------------------------------------------------
 def notion_watchlist() -> list[dict]:
     token = os.environ.get("NOTION_TOKEN") or os.environ["NOTION_API_TOKEN"]
@@ -819,8 +864,7 @@ def _row(link_url: str, title: str, meta: str, extra: str = "") -> str:
 
 
 def digest_html_body(emea: list, hits: list, hours: int, hb: dict,
-                     deploy_groups: dict, lr_by_guid: dict,
-                     expiry_html: str = "") -> str:
+                     deploy_groups: dict, lr_by_guid: dict) -> str:
     deps_total = sum(len(v) for v in deploy_groups.values())
     px = ("font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,"
           "Arial,sans-serif;")
@@ -892,10 +936,6 @@ def digest_html_body(emea: list, hits: list, hours: int, hb: dict,
                           f'{_esc(lr["name"])}</a></div>')
             out.append(_row(sf_link("", dep["Id"]), dep.get("Customer_Name__c"), meta, extra))
     out.append('</table></td></tr>')
-
-    # licence renewals (expiring / expired)
-    if expiry_html:
-        out.append(expiry_html)
 
     # footer
     dc = {k: len(v) for k, v in deploy_groups.items()}
@@ -1083,7 +1123,6 @@ def do_digest(dry: bool) -> None:
             cts = contacts_slack(deploy_contacts(dep))
             if cts:
                 lines.append(f"    {cts}")
-    lines.extend(expiry_slack_lines(expiry, ahead, behind))
     text = "\n".join(lines)
     dep_total = len(deps)
     email_subject = (f"Overnight — {len(emea)} EMEA licence requests · {dep_total} deployments "
@@ -1091,16 +1130,27 @@ def do_digest(dry: bool) -> None:
                      f"{dep_counts['partner']} partner)"
                      f"{f' · {len(hits)} to action' if hits else ''}")
     email_body = digest_email_body(emea, hits, hours, hb, groups, lr_by_guid)
-    if expiry:
-        email_body += "\n" + "\n".join(expiry_email_lines(expiry, ahead, behind))
-    email_html = digest_html_body(emea, hits, hours, hb, groups, lr_by_guid,
-                                  expiry_html_rows(expiry, ahead, behind))
+    email_html = digest_html_body(emea, hits, hours, hb, groups, lr_by_guid)
+    # Licence renewals go out as their OWN email + Slack message (separate subject
+    # and header), not folded into the overnight digest.
+    expiry_subj = expiry_subject(expiry) if expiry else ""
+    expiry_text = ("\n".join([f"*{expiry_subj}*"] + expiry_slack_lines(expiry, ahead, behind))
+                   if expiry else "")
+    expiry_body = expiry_email_text_doc(expiry, ahead, behind) if expiry else ""
+    expiry_html = expiry_email_html_doc(expiry, ahead, behind) if expiry else ""
     if dry:
         log("WOULD POST DIGEST:\n" + text)
         preview = state_dir() / "digest-preview.html"
         preview.write_text(email_html, encoding="utf-8")
         log(f"WOULD EMAIL (smtp_configured={smtp_configured()}) subject={email_subject!r}"
             f"; HTML preview → {preview}\n" + email_body)
+        if expiry:
+            xpreview = state_dir() / "expiry-preview.html"
+            xpreview.write_text(expiry_html, encoding="utf-8")
+            log(f"WOULD POST + EMAIL RENEWALS subject={expiry_subj!r}; "
+                f"HTML preview → {xpreview}\n" + expiry_text)
+        else:
+            log("no new licence renewals to send")
     else:
         dm = slack_dm_channel(ping_user)
         slack_post(dm, text)
@@ -1116,12 +1166,21 @@ def do_digest(dry: bool) -> None:
                 log(f"WARNING digest email failed: {type(e).__name__}: {e}")
         else:
             log("digest email skipped (SMTP not configured)")
+        # Separate licence-renewals email + Slack DM (own subject/header).
+        if expiry:
+            slack_post(dm, expiry_text)
+            if smtp_configured():
+                try:
+                    send_email(expiry_subj, expiry_body, expiry_html)
+                    log(f"renewals emailed: {expiry_subj}")
+                except Exception as e:  # noqa: BLE001 - best-effort, Slack already sent
+                    log(f"WARNING renewals email failed: {type(e).__name__}: {e}")
 
 
 def do_expiry(dry: bool, full: bool) -> None:
-    """Standalone renewal view. --full ignores the seen-state and prints the whole
-    current EMEA expiring/expired list; otherwise it's the same changes-only delta
-    the daily digest uses. Live (non-dry) posts the list to the ping DM."""
+    """Standalone renewal view — its own Slack DM + email (separate subject/header).
+    --full ignores the seen-state and sends the whole current EMEA expiring/expired
+    list; otherwise it's the same changes-only delta the daily digest uses."""
     ahead = int(os.environ.get("LICENCE_EXPIRY_AHEAD_DAYS", "30"))
     behind = int(os.environ.get("LICENCE_EXPIRY_BEHIND_DAYS", "30"))
     ping_user = os.environ.get("LICENCE_PING_USER_ID", "U0BLN3B8TCZ")
@@ -1129,14 +1188,27 @@ def do_expiry(dry: bool, full: bool) -> None:
     rows = expiry_rows(now, ahead, behind)
     if not full:
         rows = expiry_new_only(rows, expiry_load_seen())
-    lines = ([f"*Licence renewals* — {len(rows)} "
-              f"{'(full snapshot)' if full else 'new since last run'}"]
-             + expiry_slack_lines(rows, ahead, behind))
-    text = "\n".join(lines) if rows else "No EMEA licences expiring/expired in window."
+    if not rows:
+        log("expiry: no EMEA licences expiring/expired in window (nothing to send)")
+        return
+    subject = expiry_subject(rows) + (" — full snapshot" if full else "")
+    header = f"*{subject}*"
+    text = "\n".join([header] + expiry_slack_lines(rows, ahead, behind))
+    body = expiry_email_text_doc(rows, ahead, behind)
+    html_doc = expiry_email_html_doc(rows, ahead, behind)
     if dry:
-        log("WOULD POST EXPIRY:\n" + text)
+        preview = state_dir() / "expiry-preview.html"
+        preview.write_text(html_doc, encoding="utf-8")
+        log(f"WOULD POST + EMAIL RENEWALS subject={subject!r} "
+            f"(smtp_configured={smtp_configured()}); HTML preview → {preview}\n" + text)
     else:
         slack_post(slack_dm_channel(ping_user), text)
+        if smtp_configured():
+            try:
+                send_email(subject, body, html_doc)
+                log(f"renewals emailed: {subject}")
+            except Exception as e:  # noqa: BLE001 - best-effort, Slack already sent
+                log(f"WARNING renewals email failed: {type(e).__name__}: {e}")
         if not full:
             expiry_save_seen(expiry_rows(now, ahead, behind))
         log(f"expiry posted: {len(rows)} rows (full={full})")
