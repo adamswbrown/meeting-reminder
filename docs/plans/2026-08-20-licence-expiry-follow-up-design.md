@@ -40,8 +40,15 @@ list is useless — hence the filters below.
    - everything else dropped. (~4,283 → ~300)
 4. **EMEA regional constraint:** batch surviving `LicenceGuid`s into a SOQL `IN`
    query against `Licence_Requests__c` for `Country__c` / `Region__c`, then run
-   the existing `classify()`. Keep `emea` + `review` (unknown region); drop
-   non-EMEA `skip`. The same join yields the SF link + follow-up contacts.
+   the existing `classify()`. The same join yields the SF link + follow-up contacts.
+   **Fallback for licences with no licence request:** join `LicenceGuid` to
+   `Deployment__c` and classify from its linked `Account.Country__c` (Azure
+   `Lead.Location__c` as a region hint). Keep `emea` + `review` (still-unknown
+   region); drop non-EMEA `skip` at whichever stage resolves the country. This
+   fallback removed ~90 non-EMEA licences that would otherwise show as "region
+   unknown" (264 → 172 kept).
+5. **Guid required:** licences with no `LicenceGuid` are dropped — they can join
+   to neither Salesforce (no region filter) nor the dedupe store (would repeat).
 
 ## Output & placement
 
@@ -86,9 +93,16 @@ run if ever needed.
 | `LICENCE_EXPIRY_BEHIND_DAYS` | 30 | "expired" lookback |
 | `SUPPORT_CENTRAL_*` | (existing) | how `license_info` is reached (see below) |
 
-## Open implementation note
+## Access path (resolved)
 
-`license_info` was read here via the support-central MCP. The watcher is a
-standalone Python script (no MCP client). Implementation must reach the same
-data over whatever HTTP/CLI the support-central server wraps, or a cached export.
-Resolve the concrete access path during implementation before wiring the mode in.
+The watcher is standalone Python (no MCP client). It calls Support Central
+directly: `GET {SUPC_BASE_URL}/api/license-information` with an `X-API-Key`
+header (bare-list response, all rows in one call). Key from
+`SUPPORT_CENTRAL_API_KEY`, else extracted from `SUPC_KEY_FILE` (may be an HTML
+page wrapping the token) — mirrors `supc_mcp.key_loader`.
+
+## Seeding
+
+`expiry-seen.json` was seeded with the current in-window set on rollout, so the
+first live digest shows no renewals and only surfaces deltas thereafter. Delete
+the file to re-show everything once, or use `expiry --full` for the standing list.

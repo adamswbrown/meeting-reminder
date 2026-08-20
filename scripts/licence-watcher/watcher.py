@@ -418,19 +418,17 @@ def expiry_window(lic: list[dict], now: datetime, ahead: int, behind: int) -> li
             continue
         out.append({**row, "_bucket": bucket, "_days": days, "_renewal": rd})
     # license_info can carry the same LicenceGuid twice — collapse to the soonest
-    # renewal per guid so a licence is chased once. Rows without a guid are kept.
+    # renewal per guid so a licence is chased once. Rows with no guid are dropped:
+    # they can't join to Salesforce (no region filter) nor dedupe (would repeat).
     by_guid: dict[str, dict] = {}
-    deduped: list[dict] = []
     for r in out:
         guid = r.get("LicenceGuid")
         if not guid:
-            deduped.append(r)
             continue
         prev = by_guid.get(guid)
         if prev is None or r["_days"] < prev["_days"]:
             by_guid[guid] = r
-    deduped.extend(by_guid.values())
-    return deduped
+    return list(by_guid.values())
 
 
 def sf_licence_rows_for_guids(guids: list[str]) -> dict[str, dict]:
@@ -460,22 +458,62 @@ def sf_licence_rows_for_guids(guids: list[str]) -> dict[str, dict]:
     return out
 
 
+def sf_deploy_geo_for_guids(guids: list[str]) -> dict[str, dict]:
+    """Fallback geo for licences with no Licence_Requests__c row: map LicenceGuid ->
+    a classify()-shaped dict {Country__c, Region__c} from Deployment__c's linked
+    Account (Country__c) and Lead (Location__c, an Azure region hint). Rows with a
+    country win; chunked to keep the SOQL/URL within limits."""
+    guids = [g for g in {g for g in guids if g}]
+    if not guids:
+        return {}
+    token, instance = sf_token()
+    api = os.environ.get("SF_API_VERSION", "v61.0")
+    out: dict[str, dict] = {}
+    for i in range(0, len(guids), 150):
+        chunk = guids[i:i + 150]
+        quoted = ", ".join("'" + g.replace("'", "") + "'" for g in chunk)
+        soql = ("SELECT Licence_GUID__c, Account__r.Country__c, Lead__r.Location__c "
+                f"FROM Deployment__c WHERE Licence_GUID__c IN ({quoted})")
+        url = f"{instance}/services/data/{api}/query?q={urllib.parse.quote(soql)}"
+        res = _http("GET", url, {"Authorization": f"Bearer {token}"})
+        for r in res.get("records", []):
+            guid = r["Licence_GUID__c"]
+            country = (r.get("Account__r") or {}).get("Country__c")
+            region = (r.get("Lead__r") or {}).get("Location__c")
+            prev = out.get(guid)
+            # Keep the first row, but let a later row with a country override a blank.
+            if prev is None or (not prev.get("Country__c") and country):
+                out[guid] = {"Country__c": country, "Region__c": region}
+    return out
+
+
 def expiry_rows(now: datetime, ahead: int, behind: int,
                 suppress_guids: set[str] | None = None) -> list[dict]:
     """Full pipeline: fetch, window-filter, EMEA-classify, enrich. Returns rows
     (both buckets) that are EMEA or region-unknown, sorted expiring-soonest first.
-    suppress_guids drops licences already shown elsewhere in the digest."""
+    suppress_guids drops licences already shown elsewhere in the digest.
+
+    Region is resolved first from Licence_Requests__c (also gives link + contacts),
+    then falling back to Deployment__c's Account/Lead geo, then 'region unknown'.
+    Non-EMEA licences are dropped at whichever stage resolves their country."""
     suppress = suppress_guids or set()
-    windowed = expiry_window(supc_license_info(), now, ahead, behind)
+    windowed = [r for r in expiry_window(supc_license_info(), now, ahead, behind)
+                if (r.get("LicenceGuid") or "") not in suppress]
     lr_by_guid = sf_licence_rows_for_guids([r.get("LicenceGuid") for r in windowed])
+    unmatched = [r.get("LicenceGuid") for r in windowed
+                 if (r.get("LicenceGuid") or "") not in lr_by_guid]
+    geo_by_guid = sf_deploy_geo_for_guids(unmatched)
     rows: list[dict] = []
     for r in windowed:
         guid = r.get("LicenceGuid") or ""
-        if guid and guid in suppress:
-            continue
         lr = lr_by_guid.get(guid)
-        cls = classify(lr) if lr else EmeaResult("review", None, "no licence request")
-        if cls.kind == "skip":
+        if lr:
+            cls = classify(lr)
+        elif geo_by_guid.get(guid):
+            cls = classify(geo_by_guid[guid])
+        else:
+            cls = EmeaResult("review", None, "no SF record")
+        if cls.kind == "skip":  # resolved to a non-EMEA country — drop it
             continue
         rows.append({**r, "_lr": lr, "_cls": cls})
     rows.sort(key=lambda x: x["_days"])

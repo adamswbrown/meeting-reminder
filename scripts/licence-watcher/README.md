@@ -53,7 +53,9 @@ the digest's 15h lookback, not by 24/7 uptime.
   - **Licence renewals** — EMEA licences **expiring in the next 30 days** or
     **expired in the last 30 days** (renewal follow-up). Source is Support Central's
     `license_info` (RenewalDate per deployment), joined to `Licence_Requests__c` on
-    `LicenceGuid` for the EMEA filter + contacts. Excludes `Cancel License`.
+    `LicenceGuid` for the EMEA filter + contacts, falling back to `Deployment__c`'s
+    linked `Account.Country__c` when there's no licence request. Excludes
+    `Cancel License` and rows with no `LicenceGuid`.
     **Changes-only:** only licences newly entering a bucket since the last run appear,
     and any licence already shown in the requests/deployments sections is suppressed —
     so nothing repeats day-to-day or within a digest. State: `expiry-seen.json`.
