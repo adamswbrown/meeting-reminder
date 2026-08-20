@@ -10,7 +10,10 @@ Design: docs/plans/2026-08-11-emea-licence-request-watcher-design.md
 
 Modes:
   run      one polling cycle (default). Use --dry-run to print without posting.
-  digest   post the morning overnight summary.
+  digest   post the morning overnight summary (now includes a licence-renewals
+           section: EMEA licences expiring soon / recently expired, changes-only).
+  expiry   standalone renewal view. --full prints the whole current EMEA
+           expiring/expired list (ignores changes-only state); otherwise the delta.
   selftest SF + EMEA classification only (no Slack/Notion/Todoist needed).
 
 Config (env):
@@ -27,6 +30,10 @@ Config (env):
   LICENCE_SMTP_HOST, LICENCE_SMTP_PORT (587), LICENCE_SMTP_USER, LICENCE_SMTP_PASS
   LICENCE_EMAIL_TO (default adam@askadam.cloud), LICENCE_EMAIL_FROM (default SMTP_USER)
                           digest emails the overnight action list when SMTP is configured
+  SUPPORT_CENTRAL_API_KEY / SUPC_KEY_FILE   Support Central key for licence expiry
+  SUPC_BASE_URL             (default prod)   Support Central API base URL
+  LICENCE_EXPIRY_AHEAD_DAYS (default 30)     "expiring" lookahead window
+  LICENCE_EXPIRY_BEHIND_DAYS(default 30)     "expired" lookback window
 """
 from __future__ import annotations
 
@@ -338,6 +345,288 @@ def slack_dm_channel(user_id: str) -> str:
     return slack_call("conversations.open", {"users": user_id})["channel"]["id"]
 
 
+# --- Support Central: licence expiry ------------------------------------------
+# license_info (bare list, one row per deployment) is the authoritative renewal
+# source. It carries no country — the EMEA constraint is applied by joining
+# LicenceGuid back to Licence_Requests__c (same classify() as the daily watcher).
+SUPC_BASE_URL = os.environ.get(
+    "SUPC_BASE_URL", "https://app-drm-prd-ase-supc-api.azurewebsites.net")
+# Licence types that are dead / not worth a renewal conversation.
+EXPIRY_EXCLUDE_LICENCES = {"Cancel License"}
+_KEY_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def supc_api_key() -> str:
+    """Resolve the Support Central key: env var, else SUPC_KEY_FILE (may be an
+    HTML page wrapping the token — mirrors supc_mcp.key_loader.extract_key)."""
+    direct = os.environ.get("SUPPORT_CENTRAL_API_KEY")
+    if direct:
+        return direct.strip()
+    key_file = os.environ.get(
+        "SUPC_KEY_FILE",
+        str(Path.home() / "Developer/Altra/drm-support-central/key.txt.html"))
+    if key_file and os.path.isfile(key_file):
+        with open(key_file, encoding="utf-8", errors="replace") as fh:
+            text = html.unescape(_KEY_TAG_RE.sub(" ", fh.read()))
+        for tok in text.split():
+            if len(tok) >= 16:
+                return tok
+    raise RuntimeError("No Support Central API key: set SUPPORT_CENTRAL_API_KEY "
+                       "or point SUPC_KEY_FILE at the key file.")
+
+
+def supc_license_info() -> list[dict]:
+    """GET /api/license-information — every licence row (bare list)."""
+    url = f"{SUPC_BASE_URL.rstrip('/')}/api/license-information?limit=200&page=1"
+    body = _http("GET", url, {"X-API-Key": supc_api_key(),
+                              "Accept": "application/json"})
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        data = body.get("data") or body.get("metrics")
+        if isinstance(data, list):
+            return data
+    return []
+
+
+def _parse_iso_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def expiry_window(lic: list[dict], now: datetime, ahead: int, behind: int) -> list[dict]:
+    """Filter licences to the chase-worthy renewal window. Returns rows augmented
+    with bucket ('expiring' | 'expired') and days (+ = ahead, - = elapsed)."""
+    out: list[dict] = []
+    for row in lic:
+        ctype = row.get("CurrentLicence")
+        if not ctype or ctype in EXPIRY_EXCLUDE_LICENCES:
+            continue
+        rd = _parse_iso_date(row.get("RenewalDate"))
+        if rd is None:
+            continue
+        days = (rd - now).days
+        if 0 <= days <= ahead:
+            bucket = "expiring"
+        elif -behind <= days < 0:
+            bucket = "expired"
+        else:
+            continue
+        out.append({**row, "_bucket": bucket, "_days": days, "_renewal": rd})
+    # license_info can carry the same LicenceGuid twice — collapse to the soonest
+    # renewal per guid so a licence is chased once. Rows without a guid are kept.
+    by_guid: dict[str, dict] = {}
+    deduped: list[dict] = []
+    for r in out:
+        guid = r.get("LicenceGuid")
+        if not guid:
+            deduped.append(r)
+            continue
+        prev = by_guid.get(guid)
+        if prev is None or r["_days"] < prev["_days"]:
+            by_guid[guid] = r
+    deduped.extend(by_guid.values())
+    return deduped
+
+
+def sf_licence_rows_for_guids(guids: list[str]) -> dict[str, dict]:
+    """Map LicenceGuid -> a Licence_Requests__c record (country/region/contacts)
+    for EMEA classification and follow-up. Newest row wins per guid. Chunked to
+    keep the SOQL/URL within limits."""
+    guids = [g for g in {g for g in guids if g}]
+    if not guids:
+        return {}
+    token, instance = sf_token()
+    api = os.environ.get("SF_API_VERSION", "v61.0")
+    fields = ["Id", "Name", "Licence_GUID__c", "CreatedDate", "Status__c",
+              "Country__c", "Region__c", "CusomerAccount__r.Name",
+              "Customer_Name__c", "Customer_Contact__c", "Requestor__c",
+              "Email_contact_at_Assessment_Partner__c",
+              "Partner_First_Name__c", "Partner_Last_Name__c"]
+    out: dict[str, dict] = {}
+    for i in range(0, len(guids), 150):
+        chunk = guids[i:i + 150]
+        quoted = ", ".join("'" + g.replace("'", "") + "'" for g in chunk)
+        soql = (f"SELECT {', '.join(fields)} FROM Licence_Requests__c "
+                f"WHERE Licence_GUID__c IN ({quoted}) ORDER BY CreatedDate DESC")
+        url = f"{instance}/services/data/{api}/query?q={urllib.parse.quote(soql)}"
+        res = _http("GET", url, {"Authorization": f"Bearer {token}"})
+        for r in res.get("records", []):
+            out.setdefault(r["Licence_GUID__c"], r)  # newest first, keep it
+    return out
+
+
+def expiry_rows(now: datetime, ahead: int, behind: int,
+                suppress_guids: set[str] | None = None) -> list[dict]:
+    """Full pipeline: fetch, window-filter, EMEA-classify, enrich. Returns rows
+    (both buckets) that are EMEA or region-unknown, sorted expiring-soonest first.
+    suppress_guids drops licences already shown elsewhere in the digest."""
+    suppress = suppress_guids or set()
+    windowed = expiry_window(supc_license_info(), now, ahead, behind)
+    lr_by_guid = sf_licence_rows_for_guids([r.get("LicenceGuid") for r in windowed])
+    rows: list[dict] = []
+    for r in windowed:
+        guid = r.get("LicenceGuid") or ""
+        if guid and guid in suppress:
+            continue
+        lr = lr_by_guid.get(guid)
+        cls = classify(lr) if lr else EmeaResult("review", None, "no licence request")
+        if cls.kind == "skip":
+            continue
+        rows.append({**r, "_lr": lr, "_cls": cls})
+    rows.sort(key=lambda x: x["_days"])
+    return rows
+
+
+def expiry_state_path() -> Path:
+    return state_dir() / "expiry-seen.json"
+
+
+def expiry_load_seen() -> dict[str, str]:
+    p = expiry_state_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except (OSError, ValueError):
+            return {}
+    return {}
+
+
+def expiry_new_only(rows: list[dict], seen: dict[str, str]) -> list[dict]:
+    """Changes-only: keep rows whose (guid, bucket) pair differs from last run."""
+    fresh = []
+    for r in rows:
+        guid = r.get("LicenceGuid") or ""
+        if not guid or seen.get(guid) != r["_bucket"]:
+            fresh.append(r)
+    return fresh
+
+
+def expiry_save_seen(rows: list[dict]) -> None:
+    """Persist the current in-window map (guid -> bucket). Rewriting to the live
+    set both dedupes and prunes rows that have left the window."""
+    try:
+        expiry_state_path().write_text(json.dumps(
+            {r["LicenceGuid"]: r["_bucket"] for r in rows if r.get("LicenceGuid")}))
+    except OSError:
+        pass
+
+
+def expiry_customer(r: dict) -> str:
+    lr = r.get("_lr")
+    if lr:
+        return customer_display(lr)
+    return (r.get("CustomerName") or "").strip() or "—"
+
+
+def expiry_when(r: dict) -> str:
+    d = r["_days"]
+    if d > 0:
+        return f"renews in {d}d"
+    if d == 0:
+        return "renews today"
+    return f"expired {-d}d ago"
+
+
+EXPIRY_GROUPS = [("expiring", "⏳ EXPIRING (next {ahead}d)"),
+                 ("expired", "🔴 EXPIRED (last {behind}d)")]
+
+
+def _expiry_grouped(rows: list[dict]) -> dict[str, list[dict]]:
+    g: dict[str, list[dict]] = {"expiring": [], "expired": []}
+    for r in rows:
+        g[r["_bucket"]].append(r)
+    return g
+
+
+def expiry_slack_lines(rows: list[dict], ahead: int, behind: int) -> list[str]:
+    if not rows:
+        return []
+    g = _expiry_grouped(rows)
+    lines = [f"\n*Licence renewals ({len(rows)}):*"]
+    for key, label in EXPIRY_GROUPS:
+        grp = g[key]
+        if not grp:
+            continue
+        lines.append(label.format(ahead=ahead, behind=behind) + f" ({len(grp)}):")
+        for r in grp:
+            cls = r["_cls"]
+            area = cls.area or "⚠️ region unknown"
+            lr = r.get("_lr")
+            name = expiry_customer(r)
+            title = (f"<{sf_link('', lr['Id'])}|{name}>" if lr else name)
+            lines.append(f"• {title} · {r.get('CurrentLicence')} · "
+                         f"{expiry_when(r)} · {area}")
+            cts = contacts_slack(licence_contacts(lr)) if lr else ""
+            if cts:
+                lines.append(f"    {cts}")
+    return lines
+
+
+def expiry_email_lines(rows: list[dict], ahead: int, behind: int) -> list[str]:
+    if not rows:
+        return []
+    g = _expiry_grouped(rows)
+    lines = ["", f"LICENCE RENEWALS ({len(rows)}):"]
+    for key, label in EXPIRY_GROUPS:
+        grp = g[key]
+        if not grp:
+            continue
+        lines.append(f"\n  {label.format(ahead=ahead, behind=behind)} ({len(grp)}):")
+        for r in grp:
+            cls = r["_cls"]
+            area = cls.area or "region unknown"
+            lines.append(f"    • {expiry_customer(r)} · {r.get('CurrentLicence')} · "
+                         f"{expiry_when(r)} · {area}")
+            lr = r.get("_lr")
+            if lr:
+                lines.append(f"      {sf_link('', lr['Id'])}   "
+                             f"guid:{r.get('LicenceGuid') or '-'}")
+                cts = contacts_text(licence_contacts(lr))
+                if cts:
+                    lines.append(f"      {cts}")
+            else:
+                lines.append(f"      guid:{r.get('LicenceGuid') or '-'}  "
+                             f"deployment:{r.get('DeploymentId') or '-'}")
+    return lines
+
+
+EXPIRY_COLOUR = {"expiring": "#d97706", "expired": "#dc2626"}
+
+
+def expiry_html_rows(rows: list[dict], ahead: int, behind: int) -> str:
+    if not rows:
+        return ""
+    g = _expiry_grouped(rows)
+    out = [('<tr><td style="padding:16px 18px 4px;"><div style="font-size:12px;'
+            'font-weight:700;letter-spacing:.5px;color:#697386;text-transform:uppercase;">'
+            f'Licence renewals ({len(rows)})</div></td></tr>'),
+           '<tr><td style="padding:0 4px 8px;"><table role="presentation" width="100%" '
+           'cellpadding="0" cellspacing="0">']
+    for key, label in EXPIRY_GROUPS:
+        grp = g[key]
+        if not grp:
+            continue
+        out.append(f'<tr><td style="padding:10px 14px 4px;"><span style="display:inline-block;'
+                   f'background:{EXPIRY_COLOUR[key]};color:#fff;font-size:11px;font-weight:700;'
+                   f'padding:2px 8px;border-radius:10px;">'
+                   f'{_esc(label.format(ahead=ahead, behind=behind))} · {len(grp)}</span></td></tr>')
+        for r in grp:
+            cls = r["_cls"]
+            area = cls.area or "region unknown"
+            meta = f'{_esc(r.get("CurrentLicence"))} · {_esc(expiry_when(r))} · {_esc(area)}'
+            lr = r.get("_lr")
+            link = sf_link('', lr['Id']) if lr else '#'
+            extra = contacts_html(licence_contacts(lr)) if lr else ""
+            out.append(_row(link, expiry_customer(r), meta, extra))
+    out.append('</table></td></tr>')
+    return "".join(out)
+
+
 # --- Notion watchlist ---------------------------------------------------------
 def notion_watchlist() -> list[dict]:
     token = os.environ.get("NOTION_TOKEN") or os.environ["NOTION_API_TOKEN"]
@@ -492,7 +781,8 @@ def _row(link_url: str, title: str, meta: str, extra: str = "") -> str:
 
 
 def digest_html_body(emea: list, hits: list, hours: int, hb: dict,
-                     deploy_groups: dict, lr_by_guid: dict) -> str:
+                     deploy_groups: dict, lr_by_guid: dict,
+                     expiry_html: str = "") -> str:
     deps_total = sum(len(v) for v in deploy_groups.values())
     px = ("font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,"
           "Arial,sans-serif;")
@@ -564,6 +854,10 @@ def digest_html_body(emea: list, hits: list, hours: int, hb: dict,
                           f'{_esc(lr["name"])}</a></div>')
             out.append(_row(sf_link("", dep["Id"]), dep.get("Customer_Name__c"), meta, extra))
     out.append('</table></td></tr>')
+
+    # licence renewals (expiring / expired)
+    if expiry_html:
+        out.append(expiry_html)
 
     # footer
     dc = {k: len(v) for k, v in deploy_groups.items()}
@@ -708,6 +1002,18 @@ def do_digest(dry: bool) -> None:
     groups = bucket_deployments(deps, lr_by_guid)
     dep_counts = {k: len(v) for k, v in groups.items()}
 
+    # Expiring / expired EMEA licences (renewal follow-up). Changes-only: only
+    # licences newly entering a bucket since last run; suppress guids already
+    # shown above so nothing appears twice in one digest.
+    ahead = int(os.environ.get("LICENCE_EXPIRY_AHEAD_DAYS", "30"))
+    behind = int(os.environ.get("LICENCE_EXPIRY_BEHIND_DAYS", "30"))
+    now = datetime.now(timezone.utc)
+    suppress = {r.get("Licence_GUID__c") for r, _, _ in emea if r.get("Licence_GUID__c")}
+    suppress |= {d.get("Licence_GUID__c") for d in deps if d.get("Licence_GUID__c")}
+    all_expiry = expiry_rows(now, ahead, behind, suppress)
+    seen = expiry_load_seen()
+    expiry = expiry_new_only(all_expiry, seen)
+
     hits = [e for e in emea if e[2]]
     lines = [f"*Overnight EMEA licence requests* — {len(emea)} in the last {hours}h"]
     hb = json.loads((state_dir() / "heartbeat.json").read_text()) \
@@ -739,6 +1045,7 @@ def do_digest(dry: bool) -> None:
             cts = contacts_slack(deploy_contacts(dep))
             if cts:
                 lines.append(f"    {cts}")
+    lines.extend(expiry_slack_lines(expiry, ahead, behind))
     text = "\n".join(lines)
     dep_total = len(deps)
     email_subject = (f"Overnight — {len(emea)} EMEA licence requests · {dep_total} deployments "
@@ -746,7 +1053,10 @@ def do_digest(dry: bool) -> None:
                      f"{dep_counts['partner']} partner)"
                      f"{f' · {len(hits)} to action' if hits else ''}")
     email_body = digest_email_body(emea, hits, hours, hb, groups, lr_by_guid)
-    email_html = digest_html_body(emea, hits, hours, hb, groups, lr_by_guid)
+    if expiry:
+        email_body += "\n" + "\n".join(expiry_email_lines(expiry, ahead, behind))
+    email_html = digest_html_body(emea, hits, hours, hb, groups, lr_by_guid,
+                                  expiry_html_rows(expiry, ahead, behind))
     if dry:
         log("WOULD POST DIGEST:\n" + text)
         preview = state_dir() / "digest-preview.html"
@@ -756,8 +1066,10 @@ def do_digest(dry: bool) -> None:
     else:
         dm = slack_dm_channel(ping_user)
         slack_post(dm, text)
+        expiry_save_seen(all_expiry)
         log(f"digest posted: {len(emea)} emea, {len(hits)} watchlist hits, "
-            f"{len(deps)} deployments {dep_counts}")
+            f"{len(deps)} deployments {dep_counts}, "
+            f"{len(expiry)} new licence renewals ({len(all_expiry)} in window)")
         if smtp_configured():
             try:
                 send_email(email_subject, email_body, email_html)
@@ -766,6 +1078,30 @@ def do_digest(dry: bool) -> None:
                 log(f"WARNING digest email failed: {type(e).__name__}: {e}")
         else:
             log("digest email skipped (SMTP not configured)")
+
+
+def do_expiry(dry: bool, full: bool) -> None:
+    """Standalone renewal view. --full ignores the seen-state and prints the whole
+    current EMEA expiring/expired list; otherwise it's the same changes-only delta
+    the daily digest uses. Live (non-dry) posts the list to the ping DM."""
+    ahead = int(os.environ.get("LICENCE_EXPIRY_AHEAD_DAYS", "30"))
+    behind = int(os.environ.get("LICENCE_EXPIRY_BEHIND_DAYS", "30"))
+    ping_user = os.environ.get("LICENCE_PING_USER_ID", "U0BLN3B8TCZ")
+    now = datetime.now(timezone.utc)
+    rows = expiry_rows(now, ahead, behind)
+    if not full:
+        rows = expiry_new_only(rows, expiry_load_seen())
+    lines = ([f"*Licence renewals* — {len(rows)} "
+              f"{'(full snapshot)' if full else 'new since last run'}"]
+             + expiry_slack_lines(rows, ahead, behind))
+    text = "\n".join(lines) if rows else "No EMEA licences expiring/expired in window."
+    if dry:
+        log("WOULD POST EXPIRY:\n" + text)
+    else:
+        slack_post(slack_dm_channel(ping_user), text)
+        if not full:
+            expiry_save_seen(expiry_rows(now, ahead, behind))
+        log(f"expiry posted: {len(rows)} rows (full={full})")
 
 
 def do_selftest() -> None:
@@ -789,14 +1125,18 @@ def do_selftest() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("mode", nargs="?", default="run",
-                    choices=["run", "digest", "selftest"])
+                    choices=["run", "digest", "expiry", "selftest"])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--full", action="store_true",
+                    help="expiry mode: full snapshot, ignore changes-only state")
     args = ap.parse_args()
     try:
         if args.mode == "selftest":
             do_selftest()
         elif args.mode == "digest":
             do_digest(args.dry_run)
+        elif args.mode == "expiry":
+            do_expiry(args.dry_run, args.full)
         else:
             do_run(args.dry_run)
         return 0

@@ -12,6 +12,7 @@ Design + rationale: [`docs/plans/2026-08-11-emea-licence-request-watcher-design.
 python3 watcher.py selftest      # SF + EMEA classification only (no Slack/Notion needed)
 python3 watcher.py run           # one polling cycle (posts). --dry-run to preview
 python3 watcher.py digest        # morning overnight summary DM. --dry-run to preview
+python3 watcher.py expiry --full # licence-renewal snapshot DM. --dry-run to preview
 ```
 
 ## Environment
@@ -28,6 +29,10 @@ python3 watcher.py digest        # morning overnight summary DM. --dry-run to pr
 | `LICENCE_WINDOW_MINUTES` | `run` lookback (2× the cron cadence) | `30` |
 | `LICENCE_DIGEST_HOURS` | `digest` lookback | `15` |
 | `LICENCE_STATE_DIR` | logs + heartbeat | `~/.local/state/licence-watcher` |
+| `SUPPORT_CENTRAL_API_KEY` / `SUPC_KEY_FILE` | Support Central key for licence expiry (key, or file wrapping it) | — / `~/Developer/Altra/drm-support-central/key.txt.html` |
+| `SUPC_BASE_URL` | Support Central API base | `https://app-drm-prd-ase-supc-api.azurewebsites.net` |
+| `LICENCE_EXPIRY_AHEAD_DAYS` | "expiring": renews within N days | `30` |
+| `LICENCE_EXPIRY_BEHIND_DAYS` | "expired": renewed within the last N days | `30` |
 
 Salesforce client-credentials env lives in `~/Developer/Tools/salesforce-readonly-mcp-PROD/.env`.
 
@@ -45,6 +50,14 @@ the digest's 15h lookback, not by 24/7 uptime.
     **Partner** (`Licence_Management_Type__c = 'Partner Managed'`), **Public plan**
     (Direct / MarketPlace). Every row carries a Salesforce record link + `guid:` tag
     for follow-up.
+  - **Licence renewals** — EMEA licences **expiring in the next 30 days** or
+    **expired in the last 30 days** (renewal follow-up). Source is Support Central's
+    `license_info` (RenewalDate per deployment), joined to `Licence_Requests__c` on
+    `LicenceGuid` for the EMEA filter + contacts. Excludes `Cancel License`.
+    **Changes-only:** only licences newly entering a bucket since the last run appear,
+    and any licence already shown in the requests/deployments sections is suppressed —
+    so nothing repeats day-to-day or within a digest. State: `expiry-seen.json`.
+    Use `expiry --full --dry-run` for the whole standing list on demand.
 
 **Activate:**
 
