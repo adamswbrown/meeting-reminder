@@ -50,16 +50,18 @@ the digest's 15h lookback, not by 24/7 uptime.
     **Partner** (`Licence_Management_Type__c = 'Partner Managed'`), **Public plan**
     (Direct / MarketPlace). Every row carries a Salesforce record link + `guid:` tag
     for follow-up.
-  - **Licence renewals** — EMEA licences **expiring in the next 30 days** or
-    **expired in the last 30 days** (renewal follow-up). Source is Support Central's
-    `license_info` (RenewalDate per deployment), joined to `Licence_Requests__c` on
-    `LicenceGuid` for the EMEA filter + contacts, falling back to `Deployment__c`'s
-    linked `Account.Country__c` when there's no licence request. Excludes
-    `Cancel License` and rows with no `LicenceGuid`.
-    **Changes-only:** only licences newly entering a bucket since the last run appear,
-    and any licence already shown in the requests/deployments sections is suppressed —
-    so nothing repeats day-to-day or within a digest. State: `expiry-seen.json`.
-    Use `expiry --full --dry-run` for the whole standing list on demand.
+- **Licence renewals** — sent by the same 08:00 run as a **separate** email + Slack DM
+  (own subject `Licence renewals — N expiring / M expired (EMEA)` and amber header, so
+  it reads as its own message, not part of the overnight digest). EMEA licences
+  **expiring in the next 30 days** or **expired in the last 30 days**. Source is Support
+  Central's `license_info` (RenewalDate per deployment), joined to `Licence_Requests__c`
+  on `LicenceGuid` for the EMEA filter + contacts, falling back to `Deployment__c`'s
+  linked `Account.Country__c` when there's no licence request. Excludes `Cancel License`
+  and rows with no `LicenceGuid`. **Changes-only:** only licences newly entering a bucket
+  since the last run appear (and anything already in that morning's requests/deployments
+  digest is suppressed) — so nothing repeats. State: `expiry-seen.json`. Run
+  `expiry --full` any time for the whole standing list (its own email + DM);
+  `--dry-run` writes `expiry-preview.html` instead of sending.
 
 **Activate:**
 
