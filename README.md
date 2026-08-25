@@ -69,7 +69,7 @@ Optional integrations may send data to the service you connect. The core calenda
 
 ## Build from source
 
-Building requires Xcode 16 or later.
+Building requires a recent Xcode (Xcode 26 is used for development; CI builds with the latest stable Xcode). The code uses Swift 6.x region-based concurrency, so older Xcode versions such as 15.4 will not compile it.
 
 ```bash
 git clone https://github.com/adamswbrown/meeting-reminder.git
