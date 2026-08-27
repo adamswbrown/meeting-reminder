@@ -4,11 +4,38 @@ Paste everything below the line into Shortcuts Playground (or Apple's *Describe 
 Shortcut*). It is a complete build spec: name, I/O contract, action list, model
 configuration, the full instruction text, the output schema, and acceptance tests.
 
-**Scope note.** This Shortcut reproduces the *structure and prose* of the Claude
-briefing, not its enrichment. It has no web search, no Jira and no Salesforce, so
-attendee background and account state can only be as good as what it is handed.
-That limit is the model's, not the build's — see
+**Scope note — this Shortcut is the inference step, not the system.**
+
+It does not touch Notion, and deliberately so. Every Notion read and write the
+briefing needs already exists in Swift in this repo, tested:
+
+| Briefing needs | Already in Swift |
+|---|---|
+| Prior meeting notes ("last time") | `NotionPriorNotesReader.fetch` |
+| Skip list | `CalendarSyncNotionQueries.fetchSkipRules` |
+| Dedup — already briefed? | `CalendarSyncNotionQueries.fetchExistingEvents` |
+| Create the brief page | `NotionService.createMeetingPage` |
+| Link Meeting Notes / Pre-Call Briefings | `RelationLinker.linkAll` |
+| Arbitrary Notion REST with retry/backoff | `CalendarSyncNotionClient.post` / `.get` |
+
+So the pipeline is: **Swift reads Notion → Shortcut generates prose → Swift writes
+Notion and posts Slack.** The Shortcut sees a text blob and returns JSON. It never
+holds a page ID, a token, or a database ID.
+
+Shortcuts *could* call the Notion API itself via *Get Contents of URL*, but that
+means re-implementing a tested client in a Shortcut's UI with the integration token
+sitting in a user-editable automation. Don't.
+
+What genuinely cannot be reproduced is the enrichment: no web search, no Jira, no
+Salesforce, so attendee background is only as good as what it is handed. That limit
+is real and is documented in
 `docs/plans/2026-08-27-pcc-morning-brief-prompt-research.md`.
+
+**One caveat on the fixture.** `prompt.txt` has its `last time:` and `open:` lines
+written by hand. In production those come from Notion via the readers above. The
+test therefore measures **prose quality only** — whether the model does something
+good with well-assembled context. That is the one question the research could not
+answer on paper; the integration is not in doubt, because it already exists.
 
 ---
 
