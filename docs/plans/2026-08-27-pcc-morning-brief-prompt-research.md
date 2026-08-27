@@ -255,6 +255,99 @@ worth an A/B once there is hardware to test on, but it is not the obvious defaul
 
 ---
 
+## Three ways to reach PCC, and the Swift API is the worst of them
+
+The call above is the *clean* way. It is also the one Adam cannot make. Ranked by how soon
+they work on this machine:
+
+### 1. Shortcuts `Use Model` — works today, on macOS 26, no entitlement
+
+Shortcuts' **`Use Model`** action shipped in macOS 26 and offers three back ends: **On-Device**,
+**Private Cloud Compute**, and an extension model (ChatGPT). PCC is right there, one dropdown,
+as a *user* feature — the developer eligibility gate below does not apply to it at all.
+
+Two properties make it usable as an API rather than a toy:
+
+- It takes Shortcuts variables as input and **can be told to return a specific type or
+  schema**, not just prose. That is what makes the output parseable from Swift instead of
+  regex-scraped.
+- `/usr/bin/shortcuts run` drives it from a process: `-i` / `--input-path` for input,
+  `-o` / `--output-path` for output, `--output-type` for a UTI, exit 0 on success and 1 on
+  error.
+
+**This app already shells out to exactly that binary.** `BusyLightService` runs
+`/usr/bin/shortcuts run <name>` for the busy light, and the sandbox is disabled (CLAUDE.md),
+which is the condition that makes it possible at all. Going from "runs a Shortcut" to "runs a
+Shortcut with a context file in and a JSON file out" is a small, well-understood change to
+code that already exists and already has its TCC grants.
+
+Shape:
+
+```
+Swift assembles context  →  /tmp/brief-context.txt
+shortcuts run "Morning Brief (PCC)" -i /tmp/brief-context.txt -o /tmp/brief-out.json
+Swift parses /tmp/brief-out.json  →  writes Notion, posts Slack
+```
+
+The Shortcut itself is three actions: *Get text from input* → *Use Model* (PCC, schema'd
+output) → *Stop and output*. The prompt and the instructions live in the Shortcut; everything
+before and after stays in Swift.
+
+What is given up versus the framework:
+
+- **No `quotaUsage` to check before running.** You find out by failing. A Tier 0 brief that
+  already posted makes that survivable — that is the whole point of upgrade-in-place.
+- **No `reasoningLevel` control**, and no `response.usage` token accounting.
+- **No `@Generable` type safety.** The schema lives in the Shortcut's UI, not in the Swift
+  type system, so the two can drift silently. Version the parser defensively.
+- **A user-editable dependency.** The Shortcut sits in the user's library and can be renamed
+  or broken from outside the app — same fragility the busy light already accepts.
+- **Needs a logged-in GUI session.** `shortcuts run` is not a daemon-friendly command. Same
+  constraint as the 06:30 wake problem below, not a new one.
+- **Unverified:** whether macOS 26's Shortcuts PCC option is the *same* 32K/reasoning server
+  model announced for 27, or the earlier Apple Intelligence server model. Given the measured
+  context is ~730 tokens, a smaller window would almost certainly still fit — but the number
+  should be established rather than assumed.
+
+### 2. `fm` CLI — macOS 27, no entitlement, cleaner
+
+`/usr/bin/fm` ships in macOS 27 with `respond`, `chat`, `schema` and `serve`. `fm schema`
+produces structured JSON directly, which removes the drift risk above, and `fm serve` exposes
+a local OpenAI-compatible endpoint if a socket is ever preferable to a subprocess. This is
+what `insidegui/TwoMillionKit` wraps, and its README's caveat is worth repeating: *"use
+sparingly and at your own risk."*
+
+Same subprocess pattern as Shortcuts, better ergonomics, one OS release away. **Not a reason
+to wait** — the context assembler is identical either way, so building against Shortcuts now
+and swapping the back end on 27 costs almost nothing.
+
+### 3. The entitlement — plausible, but slowest and least certain
+
+Correcting my own earlier framing: **being a solo developer with an app for one user is not
+an exemption from the eligibility gate, it is closer to the opposite.** Apple's three
+conditions are cumulative:
+
+> - Are enrolled in the App Store Small Business Program.
+> - Have fewer than 2 million first-time app downloads from any of their apps on the App Store.
+> - Have the Private Cloud Compute entitlement assigned to their account.
+
+The download cap is trivially satisfied. **SBP enrolment is the actual gate** — and it is not
+closed: enrolment needs Apple Developer Program Account Holder status and acceptance of the
+Paid Apps agreement in App Store Connect, and Apple states that "developers new to the App
+Store" qualify. So this is a form to fill in, not a wall.
+
+Two reasons it still ranks last:
+
+- **Unverified whether a managed entitlement can be provisioned into a Developer ID profile**
+  for an app notarized and shipped via GitHub Releases rather than the App Store. This needs
+  checking before any effort is spent on it.
+- It is the only route with an approval queue in it. Routes 1 and 2 need nobody's permission.
+
+**Consequence for the plan:** the PCC spike is no longer gated on Golden Gate. It can happen
+on the current machine, this week, through Shortcuts.
+
+---
+
 ## The degrade ladder — this is the part that actually fixes your problem
 
 You framed the motivation as *"if I run out of tokens I don't get a morning brief"*. Note
@@ -268,7 +361,7 @@ So don't build one path. Build four, cheapest-first, each a complete brief:
 | Tier | Produces | Depends on | Fails when |
 |---|---|---|---|
 | **0** | Swift-rendered digest: times, titles, attendees, join links, gaps, carryover actions. No prose, no synthesis. | Nothing. EventKit + Notion reads. | Never. |
-| **1** | Tier 0 + PCC-written digest, per-meeting briefs, prioritisation. | macOS 27, Apple Intelligence device, network, PCC quota | Quota exhausted, offline, unsupported Mac |
+| **1** | Tier 0 + PCC-written digest, per-meeting briefs, prioritisation. | Apple Intelligence device, network, PCC quota. **macOS 26 via Shortcuts**; 27 via `fm` or the framework | Quota exhausted, offline, unsupported Mac |
 | **2** | Tier 0 + on-device per-meeting briefs (8K each — one call per meeting) | macOS 26, Apple Intelligence device | Unsupported Mac |
 | **3** | Today's Claude routine: web enrichment, Jira, Salesforce, judgment | Claude tokens, network | Out of tokens |
 
@@ -317,18 +410,14 @@ version on days when tokens exist, rather than replacing it.
 
 ## Blockers and open questions
 
-1. **Entitlement.** `PrivateCloudComputeLanguageModel` is gated behind the managed
-   `com.apple.developer.private-cloud-compute` entitlement — apply at developer.apple.com,
-   restricted to Small Business Program members with no app past 2M downloads. Not required
-   for development testing on an eligible device. For a Developer-ID-notarized app
-   distributed via GitHub Releases this needs confirming before anything is built.
-   `insidegui/TwoMillionKit` routes around it by wrapping the `fm` CLI shipped in macOS 27 —
-   viable here specifically because **this app's sandbox is already disabled** (see
-   CLAUDE.md), which is the condition that rules it out for everyone else. Its own README
-   says "use sparingly and at your own risk". Treat it as a fallback, not a plan.
-2. **macOS 27 on Adam's Mac.** PCC needs Golden Gate. Public beta since 13 July, ships ~Sept
-   2026. Everything above is unrunnable until then, and `PrivateCloudComputeLanguageModel()
-   .isAvailable` is the first line of any spike.
+1. **Entitlement — only if the Swift API is wanted.** See "Three ways to reach PCC" above:
+   the Shortcuts route needs no entitlement and works on macOS 26 today, so this blocks the
+   clean API, not the capability. Open sub-question: whether a managed entitlement can be
+   provisioned into a **Developer ID** profile for an app notarized and shipped via GitHub
+   Releases. Establish that before spending anything on the SBP enrolment.
+2. **Which server model Shortcuts' PCC option actually is on macOS 26** — the 32K window and
+   reasoning levels were announced for the 27-era model. At ~730 tokens of context a smaller
+   window is very unlikely to bite, but measure it rather than assume.
 3. **The Mac must be awake at 06:30.** The Claude routine runs in the cloud and does not care.
    A Swift brief runs in a menu bar app on a possibly-sleeping laptop. `CalendarService`
    already has wake observers; the brief needs a "run at next wake if the 06:30 slot was
@@ -357,10 +446,13 @@ Three steps, each independently useful, in this order:
    figure is 8192, and `tokenCount(for:)` now exists. Doubling the window and replacing the
    chars÷3.5 heuristic with a real count lets `priorNotesChars` roughly quadruple, which makes
    the *existing shipped feature* better today with no new dependencies.
-3. **Spike PCC against Tier 0's output the day macOS 27 lands.** The context assembler is
-   already built by then, so the spike is one `LanguageModelSession` call and a comparison
-   against the Claude routine's output for the same day. Cheap, and it answers the only
-   question this research cannot: is the prose good enough.
+3. **Spike PCC through Shortcuts now — not on macOS 27.** Build one `Use Model` Shortcut set
+   to Private Cloud Compute, feed it Tier 0's rendered context by hand, and compare the output
+   against the Claude routine's brief for the same day. No entitlement, no OS upgrade, and
+   `BusyLightService` already proves the `shortcuts run` plumbing works from this app. It
+   answers the only question this research cannot: **is the prose good enough.** Swap the back
+   end to `fm` (27) or the framework (if the entitlement ever lands) once that is known — the
+   context assembler and the parser are unchanged either way.
 
 Do not port the ~1,560-line ruleset. Re-express the parts that survive as Swift, and let the
 model do the one thing it is for.
@@ -373,6 +465,12 @@ model do the one thing it is for.
 - [What's new in the Foundation Models framework — WWDC26 session 241](https://developer.apple.com/videos/play/wwdc2026/241/)
 - [PrivateCloudComputeLanguageModel — Apple Developer Documentation](https://developer.apple.com/documentation/foundationmodels/privatecloudcomputelanguagemodel)
 - [Bring an LLM provider to the Foundation Models framework — WWDC26 session 339](https://developer.apple.com/videos/play/wwdc2026/339/)
+- [Private Cloud Compute — Apple Developer (eligibility)](https://developer.apple.com/private-cloud-compute/)
+- [App Store Small Business Program — Apple Developer](https://developer.apple.com/app-store/small-business-program/)
+- [Use Apple Intelligence in Shortcuts on Mac — Apple Support](https://support.apple.com/en-ie/guide/mac-help/mchl91750563/26/mac/26)
+- [Run shortcuts from the command line — Apple Support](https://support.apple.com/guide/shortcuts-mac/run-shortcuts-from-the-command-line-apd455c82f02/mac)
+- [Apple Intelligence, GPT-5, and the 'Use Model' action in Shortcuts — MacStories Automation Academy](https://club.macstories.net/posts/automation-academy-apple-intelligence-gpt-5-and-the-use-model-action-in-shortcuts)
+- [Run shortcuts from the Mac command line — Six Colors](https://sixcolors.com/post/2021/12/run-shortcuts-from-the-mac-command-line/)
 - [TwoMillionKit — insidegui](https://github.com/insidegui/TwoMillionKit)
 - [TwoMillionKit — Daring Fireball](https://daringfireball.net/linked/2026/07/12/twomillionkit)
 - [iCloud+ subscribers get higher Apple Intelligence usage limits — MacRumors](https://www.macrumors.com/2026/06/09/icloud-subscribers-get-higher-apple-intelligence-usage-limits/)
