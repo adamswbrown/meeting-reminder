@@ -2,6 +2,12 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.4.1] - 2026-09-07
+
+### Fixed
+- **Intraday briefings silently failed after the `claude` CLI moved** — every intraday run from 4–7 Sep died with `FAILED to launch /usr/local/bin/claude: The file "claude" doesn't exist`. An npm reinstall had moved the CLI to `~/.npm-global/bin`, and the app had that one path hardcoded (GUI apps launch with launchd's minimal `PATH`, so nothing else could find it). A new `ClaudeCLILocator` now tries the Settings override first, then every well-known install location (`/usr/local/bin`, `~/.npm-global/bin`, Homebrew, `~/.local/bin`, the native installer's `~/.claude/local`, `~/.bun/bin`), re-resolved on every run so a future reinstall takes effect without relaunching. The child process `PATH` gains the npm and `~/.local` bin dirs too.
+- **Cancelled meetings with a pre-call brief never cascaded to `Cancelled` in Notion** — the Calendar→Notion status cascade treated *any* populated relation as "manual work" and marked the row `Stale`, but a linked Pre-Call Briefing is machine-generated and is exactly what the cascade is meant to update. Result: every briefed meeting that was cancelled went `Stale` and its brief's `Meeting Outcome` was never set. Only a populated **Meeting Notes** relation now counts as manual work (matching the original design); a brief-only row goes `Status = Cancelled` / `Sync State = Orphaned` and the brief is stamped `Meeting Outcome = Cancelled`. Existing `Stale` rows self-heal on the next full run.
+
 ## [3.4.0] - 2026-07-30
 
 ### Added

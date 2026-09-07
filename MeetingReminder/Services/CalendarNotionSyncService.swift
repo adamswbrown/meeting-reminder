@@ -114,13 +114,11 @@ enum CalendarSyncNotionQueries {
 
     struct ExistingRow {
         let pageID: String
-        /// True when *either* the Meeting Notes or Pre-Call Briefing relation
-        /// has at least one populated link. Used by orphan classification —
-        /// rows with manual links must never be archived automatically.
-        let hasManualRelations: Bool
         /// Per-relation populated state. Used by B1 auto-link to enforce
-        /// append-only writes: an empty column may be filled, a non-empty one
-        /// must never be touched.
+        /// append-only writes (an empty column may be filled, a non-empty one
+        /// must never be touched) and by the orphan/cancel cascade, where ONLY
+        /// `hasMeetingNotesLink` counts as manual work — a linked brief is what
+        /// the cascade updates, not a reason to hold back.
         let hasMeetingNotesLink: Bool
         let hasPreCallBriefingLink: Bool
         /// True when Notion has the page archived (in-app "Archive", not
@@ -186,10 +184,8 @@ enum CalendarSyncNotionQueries {
                 if archived { seenArchived += 1 }
                 let notesCount = relationCount(props[CalendarSyncConstants.calendarEventsMeetingNotesRelation])
                 let briefCount = relationCount(props[CalendarSyncConstants.calendarEventsPreCallBriefingRelation])
-                let hasRelations = (notesCount + briefCount) > 0
                 let candidate = ExistingRow(
                     pageID: id,
-                    hasManualRelations: hasRelations,
                     hasMeetingNotesLink: notesCount > 0,
                     hasPreCallBriefingLink: briefCount > 0,
                     archived: archived,
@@ -698,7 +694,7 @@ final class CalendarSyncUpserter {
         for appleID in orphanIDs {
             guard let row = existing[appleID] else { continue }
             let decision = CalendarSyncCascade.classifyDisappearance(
-                hasManualRelations: row.hasManualRelations,
+                hasMeetingNotes: row.hasMeetingNotesLink,
                 isRecurring: CalendarSyncCascade.isRecurringAppleID(appleID),
                 isReactive: isReactive,
                 cascadeEnabled: cascadeStatus,

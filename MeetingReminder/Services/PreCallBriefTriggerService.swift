@@ -2,6 +2,32 @@ import Combine
 import EventKit
 import Foundation
 
+/// Finds the `claude` CLI binary. GUI apps launch with launchd's minimal PATH
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`), so the CLI has to be resolved by absolute path.
+/// The install location moves with the install method (npm global prefix, Homebrew,
+/// the native installer's `~/.local/bin`), so an explicit override is tried first and
+/// then every well-known location, in order. Pure — `exists` is injected for tests.
+enum ClaudeCLILocator {
+    static func candidates(override: String?, home: String) -> [String] {
+        var list: [String] = []
+        if let o = override?.trimmingCharacters(in: .whitespacesAndNewlines), !o.isEmpty { list.append(o) }
+        list += [
+            "/usr/local/bin/claude",
+            "\(home)/.npm-global/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "\(home)/.local/bin/claude",
+            "\(home)/.claude/local/claude",
+            "\(home)/.bun/bin/claude",
+        ]
+        return list
+    }
+
+    static func resolve(override: String?, home: String,
+                        exists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> String? {
+        candidates(override: override, home: home).first(where: exists)
+    }
+}
+
 /// Pure decision for the intraday brief catcher: given a meeting's start time and
 /// the current time, should we brief it **now**, **wait** until a later time, or
 /// **drop** it?
@@ -166,8 +192,12 @@ final class PreCallBriefTriggerService: ObservableObject {
         }
     }
 
+    /// Resolved on every use so a CLI reinstall (or a Settings override) takes effect
+    /// without relaunching the app. Falls back to the historic default purely so the
+    /// launch-failure message names a concrete path.
     private var cliPath: String {
-        UserDefaults.standard.string(forKey: Keys.cliPath) ?? "/usr/local/bin/claude"
+        ClaudeCLILocator.resolve(override: UserDefaults.standard.string(forKey: Keys.cliPath),
+                                 home: NSHomeDirectory()) ?? "/usr/local/bin/claude"
     }
 
     private var skillPath: String {
@@ -699,7 +729,7 @@ final class PreCallBriefTriggerService: ObservableObject {
                 // Inherit env; ensure PATH covers claude, bun (~/.bun/bin) and ~/bin.
                 var env = ProcessInfo.processInfo.environment
                 let home = NSHomeDirectory()
-                let extra = ["/usr/local/bin", "/opt/homebrew/bin", "\(home)/.bun/bin", "\(home)/bin"]
+                let extra = ["/usr/local/bin", "/opt/homebrew/bin", "\(home)/.npm-global/bin", "\(home)/.local/bin", "\(home)/.bun/bin", "\(home)/bin"]
                 let path = env["PATH"] ?? "/usr/bin:/bin"
                 env["PATH"] = (extra + [path]).joined(separator: ":")
                 if env["HOME"] == nil { env["HOME"] = home }
