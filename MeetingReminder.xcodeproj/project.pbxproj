@@ -68,6 +68,7 @@
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
 		T2000008 /* IntradayBriefGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000008 /* IntradayBriefGateTests.swift */; };
+		T2000047 /* ClaudeCLILocatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000047 /* ClaudeCLILocatorTests.swift */; };
 		T2000045 /* TokenBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000045 /* TokenBudgetTests.swift */; };
 		T2000046 /* NotionPriorNotesReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000046 /* NotionPriorNotesReaderTests.swift */; };
 		T2000009 /* CalendarEventInclusionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000009 /* CalendarEventInclusionTests.swift */; };
@@ -154,6 +155,7 @@
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
 		T1000008 /* IntradayBriefGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayBriefGateTests.swift; sourceTree = "<group>"; };
+		T1000047 /* ClaudeCLILocatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLILocatorTests.swift; sourceTree = "<group>"; };
 		T1000045 /* TokenBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenBudgetTests.swift; sourceTree = "<group>"; };
 		T1000046 /* NotionPriorNotesReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReaderTests.swift; sourceTree = "<group>"; };
 		T1000009 /* CalendarEventInclusionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventInclusionTests.swift; sourceTree = "<group>"; };
@@ -310,6 +312,7 @@
 				T1000020 /* OverlayCatchUpTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
 				T1000008 /* IntradayBriefGateTests.swift */,
+				T1000047 /* ClaudeCLILocatorTests.swift */,
 				T1000045 /* TokenBudgetTests.swift */,
 				T1000046 /* NotionPriorNotesReaderTests.swift */,
 				T1000009 /* CalendarEventInclusionTests.swift */,
@@ -473,6 +476,7 @@
 				T2000020 /* OverlayCatchUpTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,
+				T2000047 /* ClaudeCLILocatorTests.swift in Sources */,
 				T2000045 /* TokenBudgetTests.swift in Sources */,
 				T2000046 /* NotionPriorNotesReaderTests.swift in Sources */,
 				T2000009 /* CalendarEventInclusionTests.swift in Sources */,
@@ -616,7 +620,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 3.4.0;
+				MARKETING_VERSION = 3.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.meetingreminder.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -643,7 +647,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 3.4.0;
+				MARKETING_VERSION = 3.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.meetingreminder.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
