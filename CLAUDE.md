@@ -127,7 +127,7 @@ MeetingReminder/
 │   ├── CalendarSyncMigrations.swift      # Idempotent Notion schema migrations
 │   ├── RelationLinker.swift              # Auto-link Meeting Notes / Pre-Call Briefings
 │   ├── CalendarChangeWatcher.swift       # Reactive .EKEventStoreChanged watcher (opt-in)
-│   └── PreCallBriefTriggerService.swift  # Intraday pre-call briefing catcher: on a new work-calendar meeting during 09:00–17:00, spawns headless `claude` running the derived skill (delivery via Slack `chat.postMessage` + `remctl` for Reminders). Also fires the skill in REMOVED mode when a meeting *disappears* (cancelled/moved) → Slack update; `IntradayBriefGate` gates fire/wait/drop (imminent exemption + started grace), `IntradayDiffClassifier` pairs a move into one reschedule. See docs/INTRADAY-BRIEFINGS.md
+│   └── PreCallBriefTriggerService.swift  # Intraday pre-call briefing catcher: on a new work-calendar meeting during 09:00–17:00, spawns headless `claude` running the derived skill (delivery via Slack `chat.postMessage` + `remctl` for Reminders). Also fires the skill in REMOVED mode when a meeting *disappears* (cancelled/moved) → Slack update; `IntradayBriefGate` gates fire/wait/drop (imminent exemption + started grace), `IntradayDiffClassifier` pairs a move into one reschedule. See docs/INTRADAY-BRIEFINGS.md. **White Glove / Jira handling was removed 2026-09-09** — the WG process was retired; all of it lived in the gitignored skill prompt, archived with restore anchors at docs/disabled/white-glove-jira-briefing.md
 ├── Views/
 │   ├── MenuBarView.swift                 # Window-style popover (event list, meeting load, previews, ad-hoc start)
 │   ├── OverlayWindow.swift               # NSPanel wrappers for meeting + break overlays
