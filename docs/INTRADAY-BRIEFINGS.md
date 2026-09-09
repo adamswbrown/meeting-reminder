@@ -114,6 +114,11 @@ Adam's machine; gitignored). The service reads it from
 `~/Developer/meeting-reminder/automation/pre-call-briefing-intraday.md` by default
 (override via the `preCallBriefSkillPath` UserDefault).
 
+> **White Glove / Jira handling was removed on 2026-09-09** — the WG process
+> itself was retired. The skill no longer detects WG meetings or queries/creates
+> anything in Jira. The removed prompt blocks are archived with restore anchors at
+> [disabled/white-glove-jira-briefing.md](disabled/white-glove-jira-briefing.md).
+
 ### 3. Enable + grant permissions
 
 **Settings → Notion → Calendar Sync → Intraday Pre-Call Briefings:**
