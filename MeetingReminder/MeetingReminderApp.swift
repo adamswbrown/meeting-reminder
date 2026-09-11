@@ -51,36 +51,35 @@ struct MeetingReminderApp: App {
     @StateObject private var overlayCoordinator: OverlayCoordinator
     @StateObject private var notionService = NotionService()
     @StateObject private var preCallBriefService: PreCallBriefService
-    @StateObject private var calendarNotionSync = CalendarNotionSyncService()
+    @StateObject private var calendarNotionSync: CalendarNotionSyncService
     @StateObject private var availabilityPushService: AvailabilityPushService
     @StateObject private var graphMailService: GraphMailService
     @StateObject private var bookingPollService: BookingPollService
-    @StateObject private var busyLightService = BusyLightService()
+    @StateObject private var busyLightService: BusyLightService
     @StateObject private var calComService: CalComService
     @StateObject private var calComSyncService: CalComSyncService
     @StateObject private var preCallBriefTrigger: PreCallBriefTriggerService
 
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("colorBlindMode") private var colorBlindMode = false
+    @AppStorage(MenuBarDisplayMode.preferenceKey) private var menuBarDisplayModeRaw = MenuBarDisplayMode.full.rawValue
 
-    private let onboardingController = OnboardingWindowController()
-
-    /// Tracks whether services have been started. The `.task` on the menu bar
-    /// label fires at app launch (the label is always rendered), so this
-    /// prevents duplicate starts if SwiftUI re-evaluates the label.
-    @State private var hasStartedServices = false
+    private let onboardingController: OnboardingWindowController
 
     init() {
         let calendar = CalendarService()
         let monitor = MeetingMonitor(calendarService: calendar)
         let notion = NotionService()
         let preCallBriefs = PreCallBriefService()
+        let calendarSync = CalendarNotionSyncService()
         let availability = AvailabilityPushService()
         let graphMail = GraphMailService()
         let bookingPoll = BookingPollService(graph: graphMail)
+        let busyLight = BusyLightService()
         let calCom = CalComService()
         let calComNotionBridge = CalComNotionBridge(notion: notion)
         let calComSync = CalComSyncService(calCom: calCom, notionBridge: calComNotionBridge)
+        let preCallTrigger = PreCallBriefTriggerService(calendarService: calendar)
+        let onboarding = OnboardingWindowController()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             notionService: notion,
@@ -91,16 +90,42 @@ struct MeetingReminderApp: App {
         _overlayCoordinator = StateObject(wrappedValue: coordinator)
         _notionService = StateObject(wrappedValue: notion)
         _preCallBriefService = StateObject(wrappedValue: preCallBriefs)
+        _calendarNotionSync = StateObject(wrappedValue: calendarSync)
         _availabilityPushService = StateObject(wrappedValue: availability)
         _graphMailService = StateObject(wrappedValue: graphMail)
         _bookingPollService = StateObject(wrappedValue: bookingPoll)
+        _busyLightService = StateObject(wrappedValue: busyLight)
         _calComService = StateObject(wrappedValue: calCom)
         _calComSyncService = StateObject(wrappedValue: calComSync)
-        _preCallBriefTrigger = StateObject(wrappedValue: PreCallBriefTriggerService(calendarService: calendar))
+        _preCallBriefTrigger = StateObject(wrappedValue: preCallTrigger)
+        onboardingController = onboarding
+
+        appDelegate.startServices = {
+            Task { @MainActor in
+                await calendar.requestAccess()
+                calendar.startMonitoring()
+                monitor.start()
+                coordinator.startObserving()
+                calendarSync.startScheduleIfEnabled()
+                availability.start()
+                bookingPoll.start()
+                calComSync.startIfEnabled()
+                preCallTrigger.start()
+                coordinator.startBusyLightObserver(busyLight)
+
+                if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+                    onboarding.show(calendarService: calendar)
+                }
+            }
+        }
+        appDelegate.handleURL = { url in
+            guard url.scheme == "meetingreminder", url.host == "calsync" else { return }
+            Task { await calendarSync.runNow() }
+        }
     }
 
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra(isInserted: menuBarItemInserted) {
             MenuBarView(
                 calendarService: calendarService,
                 meetingMonitor: meetingMonitor,
@@ -112,39 +137,6 @@ struct MeetingReminderApp: App {
                 // Attach the invisible settings-opener capture so the bridge
                 // is populated as soon as the label view appears (at launch).
                 .background(SettingsOpenerCapture())
-                .task {
-                    // Best practice: start services when the menu bar label
-                    // appears (i.e. at app launch), NOT when the popover is
-                    // first opened. The label is always rendered; the popover
-                    // content is lazy.
-                    guard !hasStartedServices else { return }
-                    hasStartedServices = true
-
-                    await calendarService.requestAccess()
-                    calendarService.startMonitoring()
-                    meetingMonitor.start()
-                    overlayCoordinator.startObserving()
-                    calendarNotionSync.startScheduleIfEnabled()
-                    availabilityPushService.start()
-                    bookingPollService.start()
-                    calComSyncService.startIfEnabled()
-                    preCallBriefTrigger.start()
-                    overlayCoordinator.startBusyLightObserver(busyLightService)
-
-                    if !hasCompletedOnboarding {
-                        onboardingController.show(calendarService: calendarService)
-                    }
-                }
-                .onOpenURL { url in
-                    // meetingreminder://calsync triggers an immediate Calendar→Notion
-                    // sync. Wired up so an Apple Shortcut (Open URL action) can run
-                    // the sync on demand from the menu bar / dock without needing a
-                    // separate launchd job.
-                    guard url.scheme == "meetingreminder" else { return }
-                    if url.host == "calsync" {
-                        Task { await calendarNotionSync.runNow() }
-                    }
-                }
         }
         .menuBarExtraStyle(.window)
 
@@ -166,6 +158,21 @@ struct MeetingReminderApp: App {
 
     // MARK: - Dynamic Menu Bar Label
 
+    private var menuBarDisplayMode: MenuBarDisplayMode {
+        MenuBarDisplayMode(rawValue: menuBarDisplayModeRaw) ?? .full
+    }
+
+    private var menuBarItemInserted: Binding<Bool> {
+        Binding(
+            get: { menuBarDisplayMode != .hidden },
+            set: { isInserted in
+                if !isInserted {
+                    menuBarDisplayModeRaw = MenuBarDisplayMode.hidden.rawValue
+                }
+            }
+        )
+    }
+
     @ViewBuilder
     private var menuBarLabel: some View {
         let urgency = meetingMonitor.menuBarUrgency
@@ -176,8 +183,10 @@ struct MeetingReminderApp: App {
             Image(systemName: symbolName)
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(menuBarColor(colorName))
-            Text(meetingMonitor.menuBarText)
-                .font(.system(size: 12))
+            if menuBarDisplayMode == .full {
+                Text(meetingMonitor.menuBarText)
+                    .font(.system(size: 12))
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Meeting Reminder: \(meetingMonitor.menuBarText)")
@@ -458,6 +467,9 @@ final class OverlayCoordinator: ObservableObject {
 /// - Installs global keyboard shortcuts (⌘Q, ⌘,) that work even though
 ///   LSUIElement apps have no main menu bar.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var startServices: (() -> Void)?
+    var handleURL: ((URL) -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Install global key-equivalent monitors so ⌘Q and ⌘, work from
         // any window (overlays, settings, popovers). LSUIElement apps don't
@@ -518,6 +530,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editMenuItem)
 
         NSApp.mainMenu = mainMenu
+
+        startServices?()
+        startServices = nil
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == "meetingreminder" {
+            if url.host == "settings" {
+                restoreMenuBarAndOpenSettings()
+            } else {
+                handleURL?(url)
+            }
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        let rawMode = UserDefaults.standard.string(forKey: MenuBarDisplayMode.preferenceKey)
+        guard rawMode == MenuBarDisplayMode.hidden.rawValue else { return true }
+        restoreMenuBarAndOpenSettings()
+        return false
     }
 
     @objc private func showAboutPanel() {
@@ -545,6 +577,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func restoreMenuBarAndOpenSettings() {
+        UserDefaults.standard.set(
+            MenuBarDisplayMode.iconOnly.rawValue,
+            forKey: MenuBarDisplayMode.preferenceKey
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.openSettings()
         }
     }
 }

@@ -266,6 +266,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `reminderMinutes` | Int | 5 | Minutes before meeting to show the full-screen overlay (1/2/3/5/10/15). Configured in **Alerts** tab → "Full-Screen Overlay" |
 | `soundEnabled` | Bool | true | Play alert sound with overlay |
 | `colorBlindMode` | Bool | false | Use colour-blind friendly menu bar palette |
+| `menuBarDisplayMode` | String | "full" | Menu bar presentation: `full` (icon + meeting text), `iconOnly`, or `hidden`. Reopening the app or `meetingreminder://settings` restores an icon-only item when hidden. |
 | `overlayBackground` | String | "dark" | Background theme (9 options) |
 | `enabledCalendarIDs` | [String] | [] | Calendar IDs to monitor (empty = all) |
 | `wrapUpMinutes` | Int | 10 | Minutes before meeting for wrap-up nudge |

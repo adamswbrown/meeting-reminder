@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage("soundEnabled") private var soundEnabled: Bool = true
     @AppStorage("overlayBackground") private var overlayBackground: String = "dark"
     @AppStorage("colorBlindMode") private var colorBlindMode: Bool = false
+    @AppStorage(MenuBarDisplayMode.preferenceKey) private var menuBarDisplayModeRaw: String = MenuBarDisplayMode.full.rawValue
     @AppStorage("progressiveAlertsEnabled") private var progressiveAlertsEnabled: Bool = true
     @AppStorage("wrapUpMinutes") private var wrapUpMinutes: Int = 10
     @AppStorage("screenDimmingEnabled") private var screenDimmingEnabled: Bool = false
@@ -90,6 +91,21 @@ struct SettingsView: View {
                     .onChange(of: launchAtLogin) { newValue in
                         setLaunchAtLogin(newValue)
                     }
+            }
+
+            Section {
+                Picker("Menu bar:", selection: $menuBarDisplayModeRaw) {
+                    ForEach(MenuBarDisplayMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if menuBarDisplayModeRaw == MenuBarDisplayMode.hidden.rawValue {
+                    Text("Meeting Reminder keeps running in the background. Open the app from the Applications folder to return to these settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
