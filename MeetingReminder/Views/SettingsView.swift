@@ -101,9 +101,11 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Text("Hidden keeps reminders running. Reopen Meeting Reminder from Applications or open meetingreminder://settings to restore an icon-only item and Settings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if menuBarDisplayModeRaw == MenuBarDisplayMode.hidden.rawValue {
+                    Text("Meeting Reminder keeps running in the background. Open the app from the Applications folder to return to these settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
