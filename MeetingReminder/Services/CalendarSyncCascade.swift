@@ -37,7 +37,12 @@ enum CalendarSyncCascade {
         let skip: Bool
     }
 
-    static func classifyDisappearance(hasManualRelations: Bool,
+    /// `hasMeetingNotes` is the ONLY manual-work signal. A linked Pre-Call Briefing
+    /// is machine-generated and is the thing the cascade updates, so it must not
+    /// count as manual work — otherwise every briefed meeting goes Stale and the
+    /// brief's Meeting Outcome is never set (design doc §4: "a row with Meeting
+    /// Notes populated stays Stale").
+    static func classifyDisappearance(hasMeetingNotes: Bool,
                                       isRecurring: Bool,
                                       isReactive: Bool,
                                       cascadeEnabled: Bool,
@@ -51,8 +56,8 @@ enum CalendarSyncCascade {
         // daily full run.
         if isReactive && isRecurring { return noop }
 
-        // A row carrying manual work is marked Stale, never Cancelled.
-        if hasManualRelations {
+        // A row carrying manual work (Meeting Notes) is marked Stale, never Cancelled.
+        if hasMeetingNotes {
             return Disappearance(syncState: "Stale", rowStatus: nil,
                                  cascadeBriefCancelled: false, skip: false)
         }

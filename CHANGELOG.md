@@ -2,6 +2,54 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [Unreleased]
+
+_Becomes 3.5.0 when tagged — see docs/RELEASING.md; the tag drives MARKETING_VERSION._
+
+### Removed
+- **White Glove Jira automation in the intraday pre-call briefing** — the app no longer
+  detects White Glove meetings or touches Jira. The White Glove engagement process is
+  being retired as a *process*, so the automation that supported it goes with it. A WG
+  meeting is now briefed as an ordinary meeting: no `PSCI` lookup, no auto-created
+  `White Gloves Session` issue, no `🤝 White Glove Engagement` block in the briefing, no
+  `WG Jira` property or `WG — <status>` stage, and no WG line in the Slack alert.
+
+  All of this lived in the *prompt*, not in Swift — `automation/pre-call-briefing-intraday.md`,
+  which is gitignored because it carries the private Outlook ICS feed URL. The removed
+  instructions are archived verbatim, block by block with restore anchors, at
+  [docs/disabled/white-glove-jira-briefing.md](docs/disabled/white-glove-jira-briefing.md)
+  so the behaviour can be reinstated by pasting the prompt text back. No Swift source,
+  Notion schema, or Jira project was changed.
+
+  Worth recording: this path had **never fired in production**. The app runs the skill
+  headless (`claude --print --dangerously-skip-permissions`), where the interactively
+  authenticated Atlassian MCP server isn't loaded — so the opening JQL query failed,
+  `wg_jira_ok` fell to `False`, and the create branch was never reached. A sweep of
+  `PSCI` for issues whose description contains "Auto-created by Intraday Pre-Call
+  Briefing" returns zero. The scheduled cloud "Co Work" briefing never did WG detection
+  at all, so it needed no change.
+
+  The Run Log columns `WG Meetings Detected` / `WG Jira Matched` / `WG Jira Created` and
+  the Pre-Call Briefings `WG Jira` property still exist in Notion; they are simply no
+  longer written.
+
+- **The `altra-white-glove` Claude skill, as a second route to the same tickets** — the
+  briefing prompt was not the only way a PSCI ticket could be created. The user-level
+  skill `~/.claude/skills/altra-white-glove/` created a `White Gloves Session` issue plus
+  five linked Tasks, and user-level skills load into *any* Claude run regardless of
+  working directory — including this app's headless
+  `claude --print --dangerously-skip-permissions` child. A meeting merely *titled*
+  "White Glove Working Session" (two fired on 7 and 8 Sep) could have triggered it
+  independently of the prompt. The skill is now moved off the skill-load path to
+  `~/.claude/templates/disabled-skills/` (`adamswbrown/claude-config` `189eb82`), and the
+  briefing prompt explicitly forbids invoking it or any other Jira-writing tool.
+
+## [3.4.1] - 2026-09-07
+
+### Fixed
+- **Intraday briefings silently failed after the `claude` CLI moved** — every intraday run from 4–7 Sep died with `FAILED to launch /usr/local/bin/claude: The file "claude" doesn't exist`. An npm reinstall had moved the CLI to `~/.npm-global/bin`, and the app had that one path hardcoded (GUI apps launch with launchd's minimal `PATH`, so nothing else could find it). A new `ClaudeCLILocator` now tries the Settings override first, then every well-known install location (`/usr/local/bin`, `~/.npm-global/bin`, Homebrew, `~/.local/bin`, the native installer's `~/.claude/local`, `~/.bun/bin`), re-resolved on every run so a future reinstall takes effect without relaunching. The child process `PATH` gains the npm and `~/.local` bin dirs too.
+- **Cancelled meetings with a pre-call brief never cascaded to `Cancelled` in Notion** — the Calendar→Notion status cascade treated *any* populated relation as "manual work" and marked the row `Stale`, but a linked Pre-Call Briefing is machine-generated and is exactly what the cascade is meant to update. Result: every briefed meeting that was cancelled went `Stale` and its brief's `Meeting Outcome` was never set. Only a populated **Meeting Notes** relation now counts as manual work (matching the original design); a brief-only row goes `Status = Cancelled` / `Sync State = Orphaned` and the brief is stamped `Meeting Outcome = Cancelled`. Existing `Stale` rows self-heal on the next full run.
+
 ## [3.4.0] - 2026-07-30
 
 ### Added

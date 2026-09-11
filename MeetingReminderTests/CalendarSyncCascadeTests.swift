@@ -41,12 +41,25 @@ final class CalendarSyncCascadeTests: XCTestCase {
     private func decide(manual: Bool, recurring: Bool, reactive: Bool,
                         cascade: Bool = true, archive: Bool = true) -> CalendarSyncCascade.Disappearance {
         CalendarSyncCascade.classifyDisappearance(
-            hasManualRelations: manual, isRecurring: recurring,
+            hasMeetingNotes: manual, isRecurring: recurring,
             isReactive: reactive, cascadeEnabled: cascade, archiveEnabled: archive)
     }
 
     func testCleanCancellationCascades() {
         let d = decide(manual: false, recurring: false, reactive: false)
+        XCTAssertEqual(d.syncState, "Orphaned")
+        XCTAssertEqual(d.rowStatus, "Cancelled")
+        XCTAssertTrue(d.cascadeBriefCancelled)
+    }
+
+    /// Regression (2026-09-07, Sascha Samvilian demo): a row whose only relation is a
+    /// Pre-Call Briefing must cascade to Cancelled — the brief link is *what the cascade
+    /// updates*, not evidence of manual work. Previously the caller folded the brief link
+    /// into "manual relations", so every briefed meeting went Stale and the brief's
+    /// Meeting Outcome was never set.
+    func testBriefOnlyRowStillCascadesToCancelled() {
+        // `hasMeetingNotes` is the only manual-work signal; a brief link is not passed in.
+        let d = decide(manual: false, recurring: false, reactive: true)
         XCTAssertEqual(d.syncState, "Orphaned")
         XCTAssertEqual(d.rowStatus, "Cancelled")
         XCTAssertTrue(d.cascadeBriefCancelled)
