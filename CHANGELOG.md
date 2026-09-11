@@ -6,6 +6,11 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 _Becomes 3.5.0 when tagged — see docs/RELEASING.md; the tag drives MARKETING_VERSION._
 
+### Added
+- **Menu bar display modes** — Settings → General now offers Full, Icon Only, and
+  Hidden modes. Hidden mode leaves reminders and background services running; reopening
+  the app or opening `meetingreminder://settings` restores an icon-only item and Settings.
+
 ### Removed
 - **White Glove Jira automation in the intraday pre-call briefing** — the app no longer
   detects White Glove meetings or touches Jira. The White Glove engagement process is

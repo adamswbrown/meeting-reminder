@@ -1,6 +1,24 @@
 import AppKit
 import Foundation
 
+enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
+    static let preferenceKey = "menuBarDisplayMode"
+
+    case full
+    case iconOnly
+    case hidden
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .full:     return "Full"
+        case .iconOnly: return "Icon Only"
+        case .hidden:   return "Hidden"
+        }
+    }
+}
+
 /// Resolves which screens the overlay should appear on, based on user preferences.
 enum DisplayMode: String, CaseIterable, Identifiable {
     case all
