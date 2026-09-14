@@ -32,12 +32,16 @@ struct TeamsChatMessage: Equatable, Identifiable {
 
 /// Recent chat context for one meeting attendee.
 struct TeamsChatContext: Equatable, Identifiable {
+    /// Attendee email for 1:1 context; empty for a topic-matched group/meeting chat.
     let email: String
+    /// Person's name for 1:1 context, or the chat topic for group/meeting chats.
     let displayName: String
     let chatID: String
     let messages: [TeamsChatMessage]
+    /// True when this came from a group/meeting chat whose topic matched the meeting.
+    var isTopicMatch: Bool = false
 
-    var id: String { email }
+    var id: String { chatID }
 }
 
 // MARK: - Pure helpers (no networking, no MainActor — unit-testable)
@@ -158,6 +162,64 @@ enum TeamsChatSupport {
         if let d = f.date(from: s) { return d }
         f.formatOptions = [.withInternetDateTime]
         return f.date(from: s)
+    }
+
+    // MARK: Relevance
+
+    /// Words that appear in most meeting titles and carry no customer signal.
+    private static let titleStopwords: Set<String> = [
+        "meeting", "call", "sync", "catch", "catchup", "check", "checkin", "chat", "intro",
+        "introduction", "discussion", "session", "review", "advisory", "demo", "discovery",
+        "between", "with", "and", "the", "for", "from", "ask", "adam", "brown", "weekly",
+        "daily", "monthly", "update", "follow", "followup", "kickoff", "kick", "off", "team",
+        "teams", "external", "internal", "invite", "invitation", "migrate", "migration",
+        "partner", "customer", "white", "glove", "working", "planning", "prep", "onboarding",
+    ]
+
+    /// Keywords that identify *this* meeting's subject: the customer/partner
+    /// name (from the Notion brief, when known) plus distinctive title words.
+    /// Everything lowercased. Empty when the title is all boilerplate.
+    static func relevanceKeywords(title: String, customer: String?) -> Set<String> {
+        var out: Set<String> = []
+        if let c = customer?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), c.count >= 3 {
+            out.insert(c)
+            // Also the individual words of a multi-word customer name ("Virgin Atlantic").
+            for w in c.split(whereSeparator: { !$0.isLetter && !$0.isNumber }) where w.count >= 4 {
+                out.insert(String(w))
+            }
+        }
+        let words = title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        for w in words where w.count >= 4 && !titleStopwords.contains(w) {
+            out.insert(w)
+        }
+        return out
+    }
+
+    /// True when `email` shares the user's own domain (a colleague, not the customer).
+    static func isInternal(email: String, selfEmail: String?) -> Bool {
+        guard let mine = selfEmail?.split(separator: "@").last?.lowercased(),
+              let theirs = email.split(separator: "@").last?.lowercased() else { return false }
+        return mine == theirs
+    }
+
+    static func matches(_ text: String, keywords: Set<String>) -> Bool {
+        guard !keywords.isEmpty else { return false }
+        let lower = text.lowercased()
+        return keywords.contains { lower.contains($0) }
+    }
+
+    /// Chats (of any type) whose topic names this meeting's subject, deduped.
+    static func topicMatches(in directory: TeamsChatDirectory, keywords: Set<String>) -> [TeamsChatRef] {
+        var seen: Set<String> = []
+        var out: [TeamsChatRef] = []
+        for refs in directory.byEmail.values {
+            for ref in refs where ref.chatType != "oneOnOne" {
+                guard let topic = ref.topic, !seen.contains(ref.chatID), matches(topic, keywords: keywords) else { continue }
+                seen.insert(ref.chatID)
+                out.append(ref)
+            }
+        }
+        return out.sorted { ($0.lastUpdated ?? .distantPast) > ($1.lastUpdated ?? .distantPast) }
     }
 
     /// Filter to messages within `days` of `now`, keeping at most `limit` (most recent).

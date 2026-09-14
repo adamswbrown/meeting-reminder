@@ -48,7 +48,6 @@ struct BriefPanelView: View {
             if brief == nil && !isLoading {
                 loadBrief()
             }
-            loadTeamsContext()
         }
         .sheet(isPresented: $showPicker) {
             BriefPickerView(service: service, eventID: event.id) { summary in
@@ -210,8 +209,14 @@ struct BriefPanelView: View {
                     .padding(.top, 4)
                 ForEach(teamsContext) { ctx in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(ctx.displayName)
-                            .font(.subheadline.weight(.semibold))
+                        HStack(spacing: 4) {
+                            Image(systemName: ctx.isTopicMatch ? "person.3" : "person")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(ctx.displayName)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                        }
                         ForEach(ctx.messages) { msg in
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
                                 Text(Self.shortDate(msg.sentAt))
@@ -267,13 +272,14 @@ struct BriefPanelView: View {
 
     // MARK: - Actions
 
-    /// Independent of the Notion load: chat context shows even when no brief
-    /// matched, and a chat failure never blocks the brief.
+    /// Runs once the Notion lookup has settled (matched or not) so the brief's
+    /// Customer/Partner can steer relevance. A chat failure never blocks the brief.
     private func loadTeamsContext() {
         guard !isLoadingTeams, service.teamsChat?.isAvailable == true else { return }
         isLoadingTeams = true
+        let customer = brief?.customerPartner
         Task {
-            let ctx = await service.teamsContext(for: event)
+            let ctx = await service.teamsContext(for: event, customer: customer)
             await MainActor.run {
                 teamsContext = ctx
                 isLoadingTeams = false
@@ -299,6 +305,7 @@ struct BriefPanelView: View {
                     } else {
                         loadError = service.lastError ?? "Couldn't fetch page content"
                     }
+                    loadTeamsContext()
                 }
             } else {
                 await MainActor.run {
@@ -308,6 +315,7 @@ struct BriefPanelView: View {
                     } else {
                         isUnattached = true
                     }
+                    loadTeamsContext()
                 }
             }
         }
@@ -328,11 +336,15 @@ struct BriefPanelView: View {
                     } else {
                         loadError = service.lastError ?? "Couldn't fetch page content"
                     }
+                    teamsContext = []
+                    loadTeamsContext()
                 }
             } else {
                 await MainActor.run {
                     isLoading = false
                     isUnattached = true
+                    teamsContext = []
+                    loadTeamsContext()
                 }
             }
         }

@@ -60,6 +60,40 @@ final class TeamsChatSupportTests: XCTestCase {
         XCTAssertEqual(out, "a & b\n\nc <d>")
     }
 
+    func testRelevanceKeywordsDropBoilerplateAndAddCustomer() {
+        let kw = TeamsChatSupport.relevanceKeywords(
+            title: "Advisory / Ask Adam between Adam Brown and sujan", customer: "Virgin Atlantic")
+        XCTAssertTrue(kw.contains("virgin atlantic"))
+        XCTAssertTrue(kw.contains("virgin"))
+        XCTAssertTrue(kw.contains("atlantic"))
+        XCTAssertTrue(kw.contains("sujan"))
+        XCTAssertFalse(kw.contains("advisory"))
+        XCTAssertFalse(kw.contains("adam"))
+        XCTAssertFalse(kw.contains("between"))
+        XCTAssertTrue(TeamsChatSupport.relevanceKeywords(title: "Weekly sync", customer: nil).isEmpty)
+    }
+
+    func testInternalDomainDetection() {
+        XCTAssertTrue(TeamsChatSupport.isInternal(email: "sandra.murray@altra.cloud", selfEmail: "adam.brown@altra.cloud"))
+        XCTAssertFalse(TeamsChatSupport.isInternal(email: "sujan@virginatlantic.com", selfEmail: "adam.brown@altra.cloud"))
+        XCTAssertFalse(TeamsChatSupport.isInternal(email: "x@altra.cloud", selfEmail: nil))
+    }
+
+    func testMatchesAndTopicMatches() {
+        let kw: Set<String> = ["virgin atlantic", "virgin", "atlantic"]
+        XCTAssertTrue(TeamsChatSupport.matches("Update on the Virgin Atlantic DMC scan", keywords: kw))
+        XCTAssertFalse(TeamsChatSupport.matches("Lunch?", keywords: kw))
+        XCTAssertFalse(TeamsChatSupport.matches("anything", keywords: []))
+
+        let va = TeamsChatRef(chatID: "m1", chatType: "meeting", topic: "Virgin Atlantic | DMC Collector setup", lastUpdated: Date())
+        let other = TeamsChatRef(chatID: "m2", chatType: "meeting", topic: "Bleckmann kickoff", lastUpdated: Date())
+        let dm = TeamsChatRef(chatID: "d1", chatType: "oneOnOne", topic: nil, lastUpdated: Date())
+        let dir = TeamsChatDirectory(fetchedAt: Date(), byEmail: [
+            "a@x.com": [va, other], "b@x.com": [va, dm],
+        ])
+        XCTAssertEqual(TeamsChatSupport.topicMatches(in: dir, keywords: kw).map(\.chatID), ["m1"])  // deduped, 1:1 ignored
+    }
+
     func testRecentFiltersByAgeAndLimit() {
         let now = Date()
         let mk = { (id: String, daysAgo: Double) in

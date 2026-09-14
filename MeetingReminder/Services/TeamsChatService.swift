@@ -143,23 +143,49 @@ final class TeamsChatService: ObservableObject {
 
     // MARK: - Context
 
-    /// Recent chat context for each attendee of `event` that has a Teams chat
-    /// with the user. Silent no-op (empty array) when disabled, disconnected, or
-    /// the chat scope isn't granted. Only 1:1 chats are read — group chats are
-    /// noisy and often unrelated to the meeting.
-    func recentContext(for event: MeetingEvent) async -> [TeamsChatContext] {
+    /// Recent chat context relevant to `event`. Silent no-op (empty array) when
+    /// disabled, disconnected, or the chat scope isn't granted.
+    ///
+    /// Relevance rules — a colleague's unrelated DMs must never show up:
+    /// - **Group/meeting chats** whose topic names the customer or title keywords
+    ///   are included first (most on-topic).
+    /// - **External attendees** (other email domain): their 1:1 chat *is* the
+    ///   customer conversation — shown in full.
+    /// - **Internal attendees** (same domain): only messages that mention the
+    ///   customer/title keywords; none → that person is omitted.
+    /// `customer` is the brief's Customer/Partner when known.
+    func recentContext(for event: MeetingEvent, customer: String? = nil) async -> [TeamsChatContext] {
         guard isAvailable else { return [] }
-        guard let emails = event.attendeeEmails, !emails.isEmpty,
-              let dir = await ensureDirectory() else { return [] }
+        guard let dir = await ensureDirectory() else { return [] }
 
+        let keywords = TeamsChatSupport.relevanceKeywords(title: event.title, customer: customer)
         let me = graph.connectedEmail?.lowercased()
         var out: [TeamsChatContext] = []
-        for (index, rawEmail) in emails.enumerated() {
+        var seenChats: Set<String> = []
+
+        // 1. Topic-matched group / meeting chats.
+        for ref in TeamsChatSupport.topicMatches(in: dir, keywords: keywords).prefix(3) {
+            seenChats.insert(ref.chatID)
+            if let messages = await fetchMessages(chatID: ref.chatID), !messages.isEmpty {
+                out.append(TeamsChatContext(email: "", displayName: ref.topic ?? "Group chat",
+                                            chatID: ref.chatID, messages: messages, isTopicMatch: true))
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+
+        // 2. Attendee 1:1 chats, relevance-gated for colleagues.
+        for (index, rawEmail) in (event.attendeeEmails ?? []).enumerated() {
             let email = rawEmail.lowercased()
-            guard email != me,
-                  let chat = dir.byEmail[email]?.first(where: { $0.chatType == "oneOnOne" }) else { continue }
+            guard email != me, !email.isEmpty,
+                  let chat = dir.byEmail[email]?.first(where: { $0.chatType == "oneOnOne" }),
+                  !seenChats.contains(chat.chatID) else { continue }
+            seenChats.insert(chat.chatID)
             let name = event.attendees?.indices.contains(index) == true ? event.attendees![index] : email
-            if let messages = await fetchMessages(chatID: chat.chatID), !messages.isEmpty {
+            guard var messages = await fetchMessages(chatID: chat.chatID), !messages.isEmpty else { continue }
+            if TeamsChatSupport.isInternal(email: email, selfEmail: me) {
+                messages = messages.filter { TeamsChatSupport.matches($0.text, keywords: keywords) }
+            }
+            if !messages.isEmpty {
                 out.append(TeamsChatContext(email: email, displayName: name, chatID: chat.chatID, messages: messages))
             }
             // Gentle pacing between chats — well under Graph's per-app limit.

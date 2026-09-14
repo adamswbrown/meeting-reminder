@@ -33,9 +33,9 @@ final class PreCallBriefService: ObservableObject {
     /// Recent Teams chat messages with the event's attendees, or empty when the
     /// feature is off / unavailable. Never throws — the brief must never fail
     /// because chat lookup did.
-    func teamsContext(for event: MeetingEvent) async -> [TeamsChatContext] {
+    func teamsContext(for event: MeetingEvent, customer: String? = nil) async -> [TeamsChatContext] {
         guard let teamsChat, teamsChat.isAvailable else { return [] }
-        return await teamsChat.recentContext(for: event)
+        return await teamsChat.recentContext(for: event, customer: customer)
     }
 
     // MARK: - Configuration
