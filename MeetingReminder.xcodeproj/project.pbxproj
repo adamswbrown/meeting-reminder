@@ -44,6 +44,8 @@
 		A1000091 /* PreCallBriefTriggerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000091 /* PreCallBriefTriggerService.swift */; };
 		A10000F1 /* FoundationModelsBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F1 /* FoundationModelsBriefService.swift */; };
 		A10000F2 /* NotionPriorNotesReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F2 /* NotionPriorNotesReader.swift */; };
+		A10000F3 /* TeamsChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F3 /* TeamsChatService.swift */; };
+		A10000F4 /* TeamsChatSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F4 /* TeamsChatSupport.swift */; };
 		AABB0001 /* AudioProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABB0002 /* AudioProcessMonitor.swift */; };
 		A1000051 /* BusyLightSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000051 /* BusyLightSettingsView.swift */; };
 		A1000099 /* MeetingLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000099 /* MeetingLauncher.swift */; };
@@ -65,6 +67,7 @@
 		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
 		T2000012 /* CalendarSyncCascadeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000012 /* CalendarSyncCascadeTests.swift */; };
 		T2000020 /* OverlayCatchUpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000020 /* OverlayCatchUpTests.swift */; };
+		T2000021 /* TeamsChatSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000021 /* TeamsChatSupportTests.swift */; };
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
 		T2000008 /* IntradayBriefGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000008 /* IntradayBriefGateTests.swift */; };
@@ -131,6 +134,8 @@
 		B1000091 /* PreCallBriefTriggerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefTriggerService.swift; sourceTree = "<group>"; };
 		B10000F1 /* FoundationModelsBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationModelsBriefService.swift; sourceTree = "<group>"; };
 		B10000F2 /* NotionPriorNotesReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReader.swift; sourceTree = "<group>"; };
+		B10000F3 /* TeamsChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamsChatService.swift; sourceTree = "<group>"; };
+		B10000F4 /* TeamsChatSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamsChatSupport.swift; sourceTree = "<group>"; };
 		AABB0002 /* AudioProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProcessMonitor.swift; sourceTree = "<group>"; };
 		B1000051 /* BusyLightSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightSettingsView.swift; sourceTree = "<group>"; };
 		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
@@ -152,6 +157,7 @@
 		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
 		T1000012 /* CalendarSyncCascadeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncCascadeTests.swift; sourceTree = "<group>"; };
 		T1000020 /* OverlayCatchUpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayCatchUpTests.swift; sourceTree = "<group>"; };
+		T1000021 /* TeamsChatSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamsChatSupportTests.swift; sourceTree = "<group>"; };
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
 		T1000008 /* IntradayBriefGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayBriefGateTests.swift; sourceTree = "<group>"; };
@@ -243,6 +249,8 @@
 				B1000091 /* PreCallBriefTriggerService.swift */,
 				B10000F1 /* FoundationModelsBriefService.swift */,
 				B10000F2 /* NotionPriorNotesReader.swift */,
+				B10000F3 /* TeamsChatService.swift */,
+				B10000F4 /* TeamsChatSupport.swift */,
 				AABB0002 /* AudioProcessMonitor.swift */,
 				B1000040 /* CalendarSyncTypes.swift */,
 				B1000053 /* CalendarSyncCascade.swift */,
@@ -310,6 +318,7 @@
 				T1000005 /* CalendarEventMapperTests.swift */,
 				T1000012 /* CalendarSyncCascadeTests.swift */,
 				T1000020 /* OverlayCatchUpTests.swift */,
+				T1000021 /* TeamsChatSupportTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
 				T1000008 /* IntradayBriefGateTests.swift */,
 				T1000047 /* ClaudeCLILocatorTests.swift */,
@@ -442,6 +451,8 @@
 				A1000091 /* PreCallBriefTriggerService.swift in Sources */,
 				A10000F1 /* FoundationModelsBriefService.swift in Sources */,
 				A10000F2 /* NotionPriorNotesReader.swift in Sources */,
+				A10000F3 /* TeamsChatService.swift in Sources */,
+				A10000F4 /* TeamsChatSupport.swift in Sources */,
 				AABB0001 /* AudioProcessMonitor.swift in Sources */,
 				A1000051 /* BusyLightSettingsView.swift in Sources */,
 				A1000040 /* CalendarSyncTypes.swift in Sources */,
@@ -474,6 +485,7 @@
 				T2000005 /* CalendarEventMapperTests.swift in Sources */,
 				T2000012 /* CalendarSyncCascadeTests.swift in Sources */,
 				T2000020 /* OverlayCatchUpTests.swift in Sources */,
+				T2000021 /* TeamsChatSupportTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,
 				T2000047 /* ClaudeCLILocatorTests.swift in Sources */,

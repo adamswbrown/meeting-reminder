@@ -54,6 +54,7 @@ struct MeetingReminderApp: App {
     @StateObject private var calendarNotionSync = CalendarNotionSyncService()
     @StateObject private var availabilityPushService: AvailabilityPushService
     @StateObject private var graphMailService: GraphMailService
+    @StateObject private var teamsChatService: TeamsChatService
     @StateObject private var bookingPollService: BookingPollService
     @StateObject private var busyLightService = BusyLightService()
     @StateObject private var calComService: CalComService
@@ -78,6 +79,8 @@ struct MeetingReminderApp: App {
         let availability = AvailabilityPushService()
         let graphMail = GraphMailService()
         let bookingPoll = BookingPollService(graph: graphMail)
+        let teamsChat = TeamsChatService(graph: graphMail)
+        preCallBriefs.teamsChat = teamsChat
         let calCom = CalComService()
         let calComNotionBridge = CalComNotionBridge(notion: notion)
         let calComSync = CalComSyncService(calCom: calCom, notionBridge: calComNotionBridge)
@@ -93,6 +96,7 @@ struct MeetingReminderApp: App {
         _preCallBriefService = StateObject(wrappedValue: preCallBriefs)
         _availabilityPushService = StateObject(wrappedValue: availability)
         _graphMailService = StateObject(wrappedValue: graphMail)
+        _teamsChatService = StateObject(wrappedValue: teamsChat)
         _bookingPollService = StateObject(wrappedValue: bookingPoll)
         _calComService = StateObject(wrappedValue: calCom)
         _calComSyncService = StateObject(wrappedValue: calComSync)
@@ -130,6 +134,11 @@ struct MeetingReminderApp: App {
                     calComSyncService.startIfEnabled()
                     preCallBriefTrigger.start()
                     overlayCoordinator.startBusyLightObserver(busyLightService)
+                    // Warm the Teams chat directory (and learn the granted scopes
+                    // via the first token refresh) off the critical path.
+                    if teamsChatService.isEnabled && graphMailService.isConnected {
+                        Task { await teamsChatService.ensureDirectory() }
+                    }
 
                     if !hasCompletedOnboarding {
                         onboardingController.show(calendarService: calendarService)
@@ -155,6 +164,7 @@ struct MeetingReminderApp: App {
                 calendarNotionSync: calendarNotionSync,
                 availabilityPushService: availabilityPushService,
                 graphMailService: graphMailService,
+                teamsChatService: teamsChatService,
                 bookingPollService: bookingPollService,
                 busyLightService: busyLightService,
                 calComService: calComService,

@@ -11,6 +11,9 @@ struct MeetingEvent: Identifiable, Equatable {
     let videoLink: URL?
     let isAllDay: Bool
     let attendees: [String]?
+    /// Attendee email addresses, index-aligned with `attendees` (nil entries
+    /// collapse to "" so the arrays stay parallel). Used to look up Teams chats.
+    let attendeeEmails: [String]?
     let notes: String?
     let location: String?
     /// Exchange/ICS cross-system UID (`calendarItemExternalIdentifier`) — the key the
@@ -119,21 +122,27 @@ struct MeetingEvent: Identifiable, Equatable {
         self.externalID = ekEvent.calendarItemExternalIdentifier
         self.isRecurring = ekEvent.hasRecurrenceRules
 
-        // Extract attendee names
+        // Extract attendee names + emails (parallel arrays)
         if let ekAttendees = ekEvent.attendees {
-            self.attendees = ekAttendees.compactMap { attendee in
-                attendee.name ?? attendee.url.absoluteString
-                    .replacingOccurrences(of: "mailto:", with: "")
+            let emails = ekAttendees.map { attendee -> String in
+                let raw = attendee.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
+                return raw.contains("@") ? raw.removingPercentEncoding ?? raw : ""
             }
+            self.attendees = zip(ekAttendees, emails).map { attendee, email in
+                attendee.name ?? email
+            }
+            self.attendeeEmails = emails
         } else {
             self.attendees = nil
+            self.attendeeEmails = nil
         }
     }
 
     init(id: String, title: String, startDate: Date, endDate: Date,
          calendar: String, calendarColor: String = "",
          videoLink: URL? = nil, isAllDay: Bool = false,
-         attendees: [String]? = nil, notes: String? = nil, location: String? = nil,
+         attendees: [String]? = nil, attendeeEmails: [String]? = nil,
+         notes: String? = nil, location: String? = nil,
          externalID: String? = nil, isRecurring: Bool = false) {
         self.id = id
         self.title = title
@@ -144,6 +153,7 @@ struct MeetingEvent: Identifiable, Equatable {
         self.videoLink = videoLink
         self.isAllDay = isAllDay
         self.attendees = attendees
+        self.attendeeEmails = attendeeEmails
         self.notes = notes
         self.location = location
         self.externalID = externalID

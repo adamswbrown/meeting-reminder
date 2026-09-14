@@ -113,7 +113,9 @@ MeetingReminder/
 │   ├── BusyLightService.swift            # Shortcuts-driven busy light (meeting/mic state → run a Shortcut)
 │   ├── AvailabilityPushService.swift     # EventKit → Supabase free/busy push for the public availability page
 │   ├── BookingPollService.swift          # Polls Supabase booking_requests → live conflict check → EKEvent + confirmation email/.ics via Microsoft Graph (Mail.app fallback)
-│   ├── GraphMailService.swift            # Sends booking email from Exchange via Graph /me/sendMail; OAuth device-code auth, refresh token in Keychain
+│   ├── GraphMailService.swift            # Sends booking email from Exchange via Graph /me/sendMail; OAuth device-code auth, refresh token in Keychain. Single Graph token owner: refresh asks for Mail.Send + Chat.ReadWrite and falls back to mail-only on `consent_required`; decodes the token's `scp` into `grantedScopes`; shared `get(_:)` with 429 Retry-After handling
+│   ├── TeamsChatService.swift            # Recent 1:1 Teams chat context for the pre-call brief via delegated Graph (`/me/chats?$expand=members` → daily-cached email→chat map; `/chats/{id}/messages?$top=20`). Off by default; degrades silently. See docs/TEAMS-MESSAGE-ACCESS.md
+│   ├── TeamsChatSupport.swift            # Pure helpers for the above (scp decode, directory build, message parse, HTML→text) — unit-tested
 │   ├── BookingSupport.swift              # Pure booking helpers: PendingBooking decode, overlap test, .ics builder, Mail AppleScript composer (Exchange-account-asserted)
 │   ├── CalComService.swift               # Cal.com v2 REST wrapper: event types, schedules, bookings, cancel, reschedule. API key in Keychain as `calComAPIKey`
 │   ├── CalComSyncService.swift           # Polls Cal.com every 5 min + on wake; creates/tags EKEvents (`[calcom-booking-id:<uid>]`); cancellation sweep
@@ -309,6 +311,9 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `notionMeetingNotesDataSourceID` | String | "" | Per-user Meeting Notes data source ID (sync auto-link). Empty ⇒ built-in default |
 | `notionPreCallBriefingsDataSourceID` | String | "" | Per-user Pre-Call Briefings data source ID (sync auto-link). Empty ⇒ built-in default |
 | `msGraphConnectedEmail` | String | nil | Display-only email of the connected Exchange account for booking email (set after a successful `GraphMailService` device-code sign-in) |
+| `msGraphGrantedScopes` | [String] | [] | Delegated scopes decoded from the last Graph access token's `scp` claim. Gates Teams chat context (`canReadChats`) without a second sign-in |
+| `teamsChatContextEnabled` | Bool | false | Show recent 1:1 Teams chat messages with attendees in the pre-call brief (Settings → Integrations → Availability → Teams chat context). Needs the Exchange connection + `Chat.ReadWrite` in `msGraphGrantedScopes` |
+| `teamsChatDirectory` | Data (JSON) | nil | Cached attendee-email → Teams chat map from `/me/chats?$expand=members`; rebuilt when older than 24 h |
 
 ### Keychain keys
 
@@ -316,7 +321,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 |-----|---------|
 | `notionAPIToken` | Single Notion integration token used by both `NotionService` (create-meeting-page) and `CalendarNotionSyncService` (Cal Sync). The integration must have access to all the relevant databases — including the Operations parent page where Calendar Events + Skip List live. |
 | `supabaseServiceRoleKey` | Supabase service-role key. Shared by `AvailabilityPushService` (writes free/busy rows) **and** `BookingPollService` (reads/PATCHes `booking_requests`). Write key — bypasses RLS; never reaches the browser. See [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md) and [docs/BOOKING.md](docs/BOOKING.md). |
-| `msGraphRefreshToken` | OAuth refresh token for sending booking email from Exchange via Microsoft Graph (`GraphMailService`). Obtained via the device-code flow (delegated `Mail.Send`, public Graph CLI client, no admin). Exchanged for a short-lived access token per send; rotated on each refresh. Connect/disconnect in Settings → Availability → "Exchange sending". |
+| `msGraphRefreshToken` | OAuth refresh token for sending booking email from Exchange via Microsoft Graph (`GraphMailService`) **and** reading Teams chats (`TeamsChatService`). Obtained via the device-code flow (delegated `Mail.Send` + `Chat.ReadWrite`, public Graph CLI client, no admin). Exchanged for a short-lived access token per use; rotated on each refresh. Connect/disconnect in Settings → Availability → "Exchange sending". **altra.cloud blocks any *new* user consent on this client ("Need admin approval", verified 2026-09-14)** — `Chat.ReadWrite` only works because it was consented by an earlier `mgc` login; `Chat.Read` and `Mail.Read` are refused. Never treat a `consent_required` `invalid_grant` as a dead token. |
 
 ---
 

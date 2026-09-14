@@ -14,6 +14,8 @@ struct BriefPanelView: View {
     @State private var loadError: String?
     @State private var showPicker = false
     @State private var isUnattached = false  // true when matching returned nothing
+    @State private var teamsContext: [TeamsChatContext] = []
+    @State private var isLoadingTeams = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,6 +48,7 @@ struct BriefPanelView: View {
             if brief == nil && !isLoading {
                 loadBrief()
             }
+            loadTeamsContext()
         }
         .sheet(isPresented: $showPicker) {
             BriefPickerView(service: service, eventID: event.id) { summary in
@@ -126,8 +129,11 @@ struct BriefPanelView: View {
     @ViewBuilder
     private func briefBody(_ brief: PreCallBrief) -> some View {
         ScrollView {
-            MarkdownBody(markdown: brief.markdown)
-                .padding(16)
+            VStack(alignment: .leading, spacing: 12) {
+                MarkdownBody(markdown: brief.markdown)
+                teamsSection
+            }
+            .padding(16)
         }
 
         Divider()
@@ -178,9 +184,61 @@ struct BriefPanelView: View {
             }
             .buttonStyle(.borderless)
 
+            if !teamsContext.isEmpty || isLoadingTeams {
+                Divider()
+                ScrollView { teamsSection }
+            }
+
             Spacer()
         }
         .padding(16)
+    }
+
+    /// "Recent Teams chat" block — one group per attendee with a 1:1 chat,
+    /// newest message last. Hidden entirely when the feature is off or empty.
+    @ViewBuilder
+    private var teamsSection: some View {
+        if isLoadingTeams && teamsContext.isEmpty {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+                Text("Checking Teams chats…").font(.caption).foregroundColor(.secondary)
+            }
+        } else if !teamsContext.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Recent Teams chat", systemImage: "bubble.left.and.bubble.right")
+                    .font(.headline)
+                    .padding(.top, 4)
+                ForEach(teamsContext) { ctx in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(ctx.displayName)
+                            .font(.subheadline.weight(.semibold))
+                        ForEach(ctx.messages) { msg in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(Self.shortDate(msg.sentAt))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 44, alignment: .trailing)
+                                Text("\(msg.from.split(separator: " ").first.map(String.init) ?? msg.from): ")
+                                    .font(.caption.weight(.medium))
+                                + Text(msg.text)
+                                    .font(.caption)
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(8)
+                }
+            }
+            .textSelection(.enabled)
+        }
+    }
+
+    private static func shortDate(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "d MMM"
+        return f.string(from: d)
     }
 
     @ViewBuilder
@@ -208,6 +266,20 @@ struct BriefPanelView: View {
     }
 
     // MARK: - Actions
+
+    /// Independent of the Notion load: chat context shows even when no brief
+    /// matched, and a chat failure never blocks the brief.
+    private func loadTeamsContext() {
+        guard !isLoadingTeams, service.teamsChat?.isAvailable == true else { return }
+        isLoadingTeams = true
+        Task {
+            let ctx = await service.teamsContext(for: event)
+            await MainActor.run {
+                teamsContext = ctx
+                isLoadingTeams = false
+            }
+        }
+    }
 
     private func loadBrief() {
         guard service.isConfigured else {

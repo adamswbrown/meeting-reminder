@@ -25,6 +25,19 @@ final class PreCallBriefService: ObservableObject {
     @Published var lastError: String?
     @Published var isSearching = false
 
+    /// Optional Teams chat reader. Injected after construction (it depends on
+    /// `GraphMailService`) so the brief can show recent 1:1 chat context next
+    /// to the Notion content. Nil or disabled ⇒ the brief is Notion-only.
+    weak var teamsChat: TeamsChatService?
+
+    /// Recent Teams chat messages with the event's attendees, or empty when the
+    /// feature is off / unavailable. Never throws — the brief must never fail
+    /// because chat lookup did.
+    func teamsContext(for event: MeetingEvent) async -> [TeamsChatContext] {
+        guard let teamsChat, teamsChat.isAvailable else { return [] }
+        return await teamsChat.recentContext(for: event)
+    }
+
     // MARK: - Configuration
 
     /// Keychain key owned by NotionService — we deliberately share it.

@@ -20,6 +20,7 @@ struct SettingsView: View {
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
     @ObservedObject var availabilityPushService: AvailabilityPushService
     @ObservedObject var graphMailService: GraphMailService
+    @ObservedObject var teamsChatService: TeamsChatService
     @ObservedObject var bookingPollService: BookingPollService
     @ObservedObject var busyLightService: BusyLightService
     @ObservedObject var calComService: CalComService
@@ -774,7 +775,7 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                Text("Booking emails send from your Exchange account via Microsoft Graph — no Mail.app, no admin, works while this Mac is awake. If the sign-in lapses, the app falls back to Mail.app (which needs the Exchange account enabled there) and never sends from another account.")
+                Text("Booking emails send from your Exchange account via Microsoft Graph — no Mail.app, no admin, works while this Mac is awake. If the sign-in lapses, the app falls back to Mail.app (which needs the Exchange account enabled there) and never sends from another account. Reconnecting also asks for Teams chat permission (\(TeamsChatSupport.chatScope)) so the pre-call brief can show recent chat context — a one-time consent prompt.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -816,6 +817,42 @@ struct SettingsView: View {
                         .foregroundColor(.orange)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Section("Teams chat context") {
+                Toggle("Show recent Teams chats in the pre-call brief", isOn: Binding(
+                    get: { teamsChatService.isEnabled },
+                    set: { teamsChatService.isEnabled = $0 }
+                ))
+                .disabled(!graphMailService.isConnected)
+
+                Text("Uses the Exchange connection above to read your own 1:1 Teams chats (delegated Graph, read-only, nothing stored beyond a daily contact→chat map). For each meeting attendee with a 1:1 chat, the brief shows the last few messages from the past two weeks. Silently shows nothing if the permission isn't granted.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    Text(teamsChatService.statusText)
+                        .font(.caption)
+                        .foregroundColor(graphMailService.canReadChats ? .secondary : .orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    if teamsChatService.isRefreshingDirectory {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Refresh chat directory") {
+                            Task { await teamsChatService.refreshDirectory() }
+                        }
+                        .disabled(!graphMailService.isConnected || !graphMailService.canReadChats)
+                    }
+                }
+
+                if teamsChatService.isEnabled, let error = teamsChatService.lastError {
+                    Text(error)
+                        .font(.caption.monospaced())
+                        .foregroundColor(.orange)
+                        .textSelection(.enabled)
                 }
             }
 

@@ -30,7 +30,16 @@ final class GraphMailService: ObservableObject {
     private static let clientID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
     /// Tenant is pinned to the Exchange domain so sign-in targets the right org.
     private static let tenant = "altra.cloud"
-    private static let scope = "https://graph.microsoft.com/Mail.Send offline_access openid profile"
+    /// Scopes the mail feature needs on its own. Used as the refresh fallback
+    /// when the tenant refuses the chat scope, so mail keeps working regardless.
+    private static let baseScope = "https://graph.microsoft.com/Mail.Send offline_access openid profile"
+    /// Full scope set requested at sign-in and on refresh: mail + Teams chat
+    /// reading (`TeamsChatSupport.chatScope`, see the rationale there). Adding
+    /// a scope here forces a one-time incremental re-consent the next time the
+    /// user *reconnects*; existing refresh tokens keep working via the fallback.
+    private static let fullScope = "https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/\(TeamsChatSupport.chatScope) offline_access openid profile"
+
+    private static let grantedScopesKey = "msGraphGrantedScopes"
 
     private static let refreshTokenKey = "msGraphRefreshToken"
     private static let connectedEmailKey = "msGraphConnectedEmail"
@@ -47,6 +56,13 @@ final class GraphMailService: ObservableObject {
     @Published var isConnected: Bool
     @Published var connectedEmail: String?
     @Published var lastAuthError: String?
+    /// Delegated scopes actually present in the last access token's `scp`
+    /// claim. Drives feature gating (e.g. Teams chat context) without a second
+    /// sign-in. Persisted so the UI is right before the first refresh.
+    @Published var grantedScopes: Set<String>
+
+    /// True when the connected account's token can read Teams chats.
+    var canReadChats: Bool { TeamsChatSupport.canReadChats(scopes: grantedScopes) }
 
     /// Device-code flow UI state — populated while a `connect()` is in flight.
     @Published var isConnecting = false
@@ -64,6 +80,7 @@ final class GraphMailService: ObservableObject {
         let hasRT = KeychainHelper.read(key: Self.refreshTokenKey) != nil
         self.isConnected = hasRT
         self.connectedEmail = UserDefaults.standard.string(forKey: Self.connectedEmailKey)
+        self.grantedScopes = Set(UserDefaults.standard.stringArray(forKey: Self.grantedScopesKey) ?? [])
     }
 
     var hasRefreshToken: Bool {
@@ -114,6 +131,8 @@ final class GraphMailService: ObservableObject {
     func disconnect() {
         KeychainHelper.delete(key: Self.refreshTokenKey)
         UserDefaults.standard.removeObject(forKey: Self.connectedEmailKey)
+        UserDefaults.standard.removeObject(forKey: Self.grantedScopesKey)
+        grantedScopes = []
         cachedAccessToken = nil
         accessTokenExpiry = nil
         connectedEmail = nil
@@ -170,24 +189,43 @@ final class GraphMailService: ObservableObject {
         return try await refreshAccessToken()
     }
 
+    /// Authenticated GET against Graph with a small retry loop for throttling
+    /// (429 → honour `Retry-After`, max 3 attempts) and transient 5xx. Shared by
+    /// the Teams chat reader so token plumbing lives in one place.
+    func get(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        var attempt = 0
+        while true {
+            attempt += 1
+            let token = try await accessToken()
+            var request = URLRequest(url: url)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw GraphMailError.invalidResponse }
+            if (http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 504), attempt < 3 {
+                let retryAfter = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? Double(attempt * 2)
+                try await Task.sleep(nanoseconds: UInt64(min(retryAfter, 30) * 1_000_000_000))
+                continue
+            }
+            return (data, http)
+        }
+    }
+
     private func refreshAccessToken() async throws -> String {
         guard let refreshToken = KeychainHelper.read(key: Self.refreshTokenKey), !refreshToken.isEmpty else {
             throw GraphMailError.notConnected
         }
 
-        var request = URLRequest(url: Self.tokenURL)
-        request.httpMethod = "POST"
-        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formBody([
-            "grant_type": "refresh_token",
-            "client_id": Self.clientID,
-            "scope": Self.scope,
-            "refresh_token": refreshToken,
-        ])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let http = response as? HTTPURLResponse
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        // Ask for the full set first. If the tenant has not consented to the
+        // chat scope (AADSTS65001 / suberror consent_required), fall back to the
+        // mail-only scope so booking email keeps working — Entra evaluates
+        // consent per exact permission, and the returned token still carries
+        // every scope the user *has* consented to, which `scp` then reveals.
+        var json = try await tokenGrant(refreshToken: refreshToken, scope: Self.fullScope)
+        if json["error"] as? String == "invalid_grant",
+           (json["suberror"] as? String == "consent_required"
+            || (json["error_description"] as? String ?? "").contains("AADSTS65001")) {
+            json = try await tokenGrant(refreshToken: refreshToken, scope: Self.baseScope)
+        }
 
         if let error = json["error"] as? String {
             // A dead refresh token (revoked, expired, password changed, CA policy)
@@ -197,12 +235,13 @@ final class GraphMailService: ObservableObject {
                 isConnected = false
                 throw GraphMailError.needsReauth
             }
-            throw GraphMailError.http(http?.statusCode ?? -1, json["error_description"] as? String ?? error)
+            throw GraphMailError.http(-1, json["error_description"] as? String ?? error)
         }
 
         guard let access = json["access_token"] as? String else {
-            throw GraphMailError.http(http?.statusCode ?? -1, "no access_token in refresh response")
+            throw GraphMailError.http(-1, "no access_token in refresh response")
         }
+        recordGrantedScopes(from: access)
         // A refresh issues a new refresh token — rotate it so the 90-day window resets.
         if let newRT = json["refresh_token"] as? String, !newRT.isEmpty {
             KeychainHelper.save(key: Self.refreshTokenKey, value: newRT)
@@ -211,6 +250,27 @@ final class GraphMailService: ObservableObject {
         cachedAccessToken = access
         accessTokenExpiry = Date().addingTimeInterval(expiresIn - 60)
         return access
+    }
+
+    private func tokenGrant(refreshToken: String, scope: String) async throws -> [String: Any] {
+        var request = URLRequest(url: Self.tokenURL)
+        request.httpMethod = "POST"
+        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = formBody([
+            "grant_type": "refresh_token",
+            "client_id": Self.clientID,
+            "scope": scope,
+            "refresh_token": refreshToken,
+        ])
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    private func recordGrantedScopes(from accessToken: String) {
+        let scopes = TeamsChatSupport.scopes(fromAccessToken: accessToken)
+        guard !scopes.isEmpty, scopes != grantedScopes else { return }
+        grantedScopes = scopes
+        UserDefaults.standard.set(Array(scopes).sorted(), forKey: Self.grantedScopesKey)
     }
 
     // MARK: - Device code helpers
@@ -233,7 +293,7 @@ final class GraphMailService: ObservableObject {
         var request = URLRequest(url: Self.deviceCodeURL)
         request.httpMethod = "POST"
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formBody(["client_id": Self.clientID, "scope": Self.scope])
+        request.httpBody = formBody(["client_id": Self.clientID, "scope": Self.fullScope])
 
         let (data, _) = try await URLSession.shared.data(for: request)
         guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -307,6 +367,7 @@ final class GraphMailService: ObservableObject {
 
     private func persist(_ tokens: Tokens) {
         KeychainHelper.save(key: Self.refreshTokenKey, value: tokens.refreshToken)
+        recordGrantedScopes(from: tokens.accessToken)
         cachedAccessToken = tokens.accessToken
         accessTokenExpiry = Date().addingTimeInterval(tokens.expiresIn - 60)
     }
