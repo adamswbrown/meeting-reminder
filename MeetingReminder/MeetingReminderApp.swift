@@ -153,6 +153,13 @@ struct MeetingReminderApp: App {
                     if url.host == "calsync" {
                         Task { await calendarNotionSync.runNow() }
                     }
+                    // meetingreminder://brief opens the pre-call brief panel for the
+                    // next upcoming (or in-progress) meeting.
+                    if url.host == "brief" {
+                        if let next = calendarService.events.first(where: { $0.timeUntilStart > 0 || $0.isInProgress }) {
+                            overlayCoordinator.showBriefPanelIfConfigured(for: next)
+                        }
+                    }
                 }
         }
         .menuBarExtraStyle(.window)
