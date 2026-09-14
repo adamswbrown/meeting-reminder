@@ -827,10 +827,47 @@ struct SettingsView: View {
                 ))
                 .disabled(!graphMailService.isConnected)
 
-                Text("Uses the Exchange connection above to read your own 1:1 Teams chats (delegated Graph, read-only, nothing stored beyond a daily contact→chat map). For each meeting attendee with a 1:1 chat, the brief shows the last few messages from the past two weeks. Silently shows nothing if the permission isn't granted.")
+                Text("Uses the Exchange connection above to read your own Teams chats (delegated Graph, read-only, nothing stored beyond a daily contact→chat map). Only chat that is about the meeting is shown: group/meeting chats whose topic names the customer or title, external attendees' 1:1 chats, and colleagues' 1:1 messages that mention the customer. Silently shows nothing if the permission isn't granted.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Group {
+                    Picker("Look back", selection: Binding(
+                        get: { teamsChatService.lookbackDays },
+                        set: { teamsChatService.lookbackDays = $0 }
+                    )) {
+                        Text("7 days").tag(7)
+                        Text("14 days").tag(14)
+                        Text("30 days").tag(30)
+                        Text("90 days").tag(90)
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Messages per chat", selection: Binding(
+                        get: { teamsChatService.messagesPerAttendee },
+                        set: { teamsChatService.messagesPerAttendee = $0 }
+                    )) {
+                        Text("5").tag(5)
+                        Text("10").tag(10)
+                        Text("20").tag(20)
+                    }
+                    .pickerStyle(.menu)
+
+                    Toggle("Include group and meeting chats that match the topic", isOn: Binding(
+                        get: { teamsChatService.includeGroupChats },
+                        set: { teamsChatService.includeGroupChats = $0 }
+                    ))
+
+                    Toggle("Include colleagues' 1:1 messages that mention the customer", isOn: Binding(
+                        get: { teamsChatService.includeColleagues },
+                        set: { teamsChatService.includeColleagues = $0 }
+                    ))
+                    Text("Off means only people outside your organisation ever appear.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .disabled(!teamsChatService.isEnabled)
 
                 HStack(spacing: 8) {
                     Text(teamsChatService.statusText)

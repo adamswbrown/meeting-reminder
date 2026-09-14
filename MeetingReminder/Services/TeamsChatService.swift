@@ -40,9 +40,33 @@ final class TeamsChatService: ObservableObject {
         }
     }
 
-    /// How far back to show messages, and how many per attendee.
-    var lookbackDays = 14
-    var messagesPerAttendee = 10
+    // Tunables — all UserDefaults-backed so Settings can bind to them.
+    static let lookbackDaysKey = "teamsChatLookbackDays"
+    static let messagesPerChatKey = "teamsChatMessagesPerChat"
+    static let includeGroupChatsKey = "teamsChatIncludeGroupChats"
+    static let includeColleaguesKey = "teamsChatIncludeColleagues"
+
+    /// How far back to show messages (days). Default 14.
+    var lookbackDays: Int {
+        get { let v = UserDefaults.standard.integer(forKey: Self.lookbackDaysKey); return v == 0 ? 14 : v }
+        set { UserDefaults.standard.set(newValue, forKey: Self.lookbackDaysKey); objectWillChange.send() }
+    }
+    /// Messages shown per chat. Default 10 (fetch is always 20, filtered down).
+    var messagesPerAttendee: Int {
+        get { let v = UserDefaults.standard.integer(forKey: Self.messagesPerChatKey); return v == 0 ? 10 : v }
+        set { UserDefaults.standard.set(newValue, forKey: Self.messagesPerChatKey); objectWillChange.send() }
+    }
+    /// Include group/meeting chats whose topic names the customer or title. Default on.
+    var includeGroupChats: Bool {
+        get { UserDefaults.standard.object(forKey: Self.includeGroupChatsKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.includeGroupChatsKey); objectWillChange.send() }
+    }
+    /// Show colleagues' (same email domain) 1:1 messages when they mention the
+    /// customer/title. Off ⇒ only external attendees' chats ever appear. Default on.
+    var includeColleagues: Bool {
+        get { UserDefaults.standard.object(forKey: Self.includeColleaguesKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.includeColleaguesKey); objectWillChange.send() }
+    }
     /// Graph caps `$top` at 50 for chat messages; 20 is plenty for context.
     private let fetchTop = 20
     /// Upper bound on chat directory pages (50 chats each) per refresh.
@@ -164,7 +188,8 @@ final class TeamsChatService: ObservableObject {
         var seenChats: Set<String> = []
 
         // 1. Topic-matched group / meeting chats.
-        for ref in TeamsChatSupport.topicMatches(in: dir, keywords: keywords).prefix(3) {
+        let topicRefs = includeGroupChats ? TeamsChatSupport.topicMatches(in: dir, keywords: keywords).prefix(3) : []
+        for ref in topicRefs {
             seenChats.insert(ref.chatID)
             if let messages = await fetchMessages(chatID: ref.chatID), !messages.isEmpty {
                 out.append(TeamsChatContext(email: "", displayName: ref.topic ?? "Group chat",
@@ -181,8 +206,10 @@ final class TeamsChatService: ObservableObject {
                   !seenChats.contains(chat.chatID) else { continue }
             seenChats.insert(chat.chatID)
             let name = event.attendees?.indices.contains(index) == true ? event.attendees![index] : email
+            let internalAttendee = TeamsChatSupport.isInternal(email: email, selfEmail: me)
+            if internalAttendee && !includeColleagues { continue }  // don't even fetch
             guard var messages = await fetchMessages(chatID: chat.chatID), !messages.isEmpty else { continue }
-            if TeamsChatSupport.isInternal(email: email, selfEmail: me) {
+            if internalAttendee {
                 messages = messages.filter { TeamsChatSupport.matches($0.text, keywords: keywords) }
             }
             if !messages.isEmpty {

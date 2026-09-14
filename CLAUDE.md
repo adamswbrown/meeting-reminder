@@ -314,6 +314,10 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `msGraphGrantedScopes` | [String] | [] | Delegated scopes decoded from the last Graph access token's `scp` claim. Gates Teams chat context (`canReadChats`) without a second sign-in |
 | `teamsChatContextEnabled` | Bool | false | Show recent 1:1 Teams chat messages with attendees in the pre-call brief (Settings → Integrations → Availability → Teams chat context). Needs the Exchange connection + `Chat.ReadWrite` in `msGraphGrantedScopes` |
 | `teamsChatDirectory` | Data (JSON) | nil | Cached attendee-email → Teams chat map from `/me/chats?$expand=members`; rebuilt when older than 24 h |
+| `teamsChatLookbackDays` | Int | 14 | Teams chat context: how far back to show messages (7/14/30/90) |
+| `teamsChatMessagesPerChat` | Int | 10 | Teams chat context: messages shown per chat (5/10/20; fetch is always 20) |
+| `teamsChatIncludeGroupChats` | Bool | true | Teams chat context: include group/meeting chats whose topic names the customer/title (max 3) |
+| `teamsChatIncludeColleagues` | Bool | true | Teams chat context: show same-domain colleagues' 1:1 messages when they mention the customer/title. Off ⇒ only external attendees' chats ever appear |
 
 ### Keychain keys
 
