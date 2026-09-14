@@ -28,7 +28,16 @@ final class TeamsChatService: ObservableObject {
     /// Master toggle (Settings → Integrations → Availability → Teams chat context).
     var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: Self.enabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey); objectWillChange.send() }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Self.enabledKey)
+            objectWillChange.send()
+            // Turning it on is the moment to learn the granted scopes (first
+            // token refresh) and build the directory, so Settings shows a real
+            // status instead of "not checked yet".
+            if newValue, graph.isConnected {
+                Task { await ensureDirectory() }
+            }
+        }
     }
 
     /// How far back to show messages, and how many per attendee.
@@ -59,12 +68,22 @@ final class TeamsChatService: ObservableObject {
         }
     }
 
+    /// Scopes are only known after the first token refresh of this install;
+    /// until then we attempt the read rather than assume it's denied.
+    private var scopesUnknown: Bool { graph.grantedScopes.isEmpty }
+
     /// True when the feature can actually produce output right now.
-    var isAvailable: Bool { isEnabled && graph.isConnected && graph.canReadChats }
+    var isAvailable: Bool { isEnabled && graph.isConnected && (graph.canReadChats || scopesUnknown) }
+
+    /// Reflects whether the permission is confirmed missing (drives the orange status).
+    var isPermissionDenied: Bool { graph.isConnected && !scopesUnknown && !graph.canReadChats }
 
     /// One-line status for Settings.
     var statusText: String {
         if !graph.isConnected { return "Exchange not connected." }
+        if scopesUnknown {
+            return "Permission not checked yet — click Refresh chat directory."
+        }
         if !graph.canReadChats {
             return "The Exchange sign-in has no Teams chat permission. Reconnect to grant it (needs \(TeamsChatSupport.chatScope))."
         }
@@ -98,8 +117,9 @@ final class TeamsChatService: ObservableObject {
                 let (data, http) = try await graph.get(url)
                 guard http.statusCode == 200,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    lastError = "Graph HTTP \(http.statusCode) listing chats"
-                    // 403 here means the scope really isn't there — stop quietly.
+                    lastError = http.statusCode == 403
+                        ? "Graph refused the chat list (403) — the sign-in has no \(TeamsChatSupport.chatScope) permission."
+                        : "Graph HTTP \(http.statusCode) listing chats"
                     return directory
                 }
                 chats.append(contentsOf: (json["value"] as? [[String: Any]]) ?? [])

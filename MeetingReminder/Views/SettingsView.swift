@@ -835,7 +835,7 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     Text(teamsChatService.statusText)
                         .font(.caption)
-                        .foregroundColor(graphMailService.canReadChats ? .secondary : .orange)
+                        .foregroundColor(teamsChatService.isPermissionDenied ? .orange : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     if teamsChatService.isRefreshingDirectory {
@@ -844,7 +844,7 @@ struct SettingsView: View {
                         Button("Refresh chat directory") {
                             Task { await teamsChatService.refreshDirectory() }
                         }
-                        .disabled(!graphMailService.isConnected || !graphMailService.canReadChats)
+                        .disabled(!graphMailService.isConnected)
                     }
                 }
 
