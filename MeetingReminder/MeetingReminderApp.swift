@@ -144,12 +144,13 @@ struct MeetingReminderApp: App {
                         onboardingController.show(calendarService: calendarService)
                     }
                 }
-                .onOpenURL { url in
+                .onReceive(NotificationCenter.default.publisher(for: AppDelegate.openURLNotification)) { note in
                     // meetingreminder://calsync triggers an immediate Calendar→Notion
                     // sync. Wired up so an Apple Shortcut (Open URL action) can run
                     // the sync on demand from the menu bar / dock without needing a
-                    // separate launchd job.
-                    guard url.scheme == "meetingreminder" else { return }
+                    // separate launchd job. Delivered via the AppDelegate's Apple
+                    // Event handler — `.onOpenURL` is dead on a MenuBarExtra scene.
+                    guard let url = note.object as? URL, url.scheme == "meetingreminder" else { return }
                     if url.host == "calsync" {
                         Task { await calendarNotionSync.runNow() }
                     }
@@ -475,6 +476,27 @@ final class OverlayCoordinator: ObservableObject {
 /// - Installs global keyboard shortcuts (⌘Q, ⌘,) that work even though
 ///   LSUIElement apps have no main menu bar.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Posted with the opened URL in `object`. SwiftUI's `.onOpenURL` never
+    /// fires for a `MenuBarExtra` scene (no window to route to), so URL scheme
+    /// opens arrive via the classic `kAEGetURL` Apple Event instead and are
+    /// re-broadcast here for the scene to observe.
+    static let openURLNotification = Notification.Name("MeetingReminder.openURL")
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURL(_:withReply:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
+
+    @objc private func handleGetURL(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
+        guard let str = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: str) else { return }
+        NotificationCenter.default.post(name: Self.openURLNotification, object: url)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Install global key-equivalent monitors so ⌘Q and ⌘, work from
         // any window (overlays, settings, popovers). LSUIElement apps don't
