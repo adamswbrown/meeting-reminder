@@ -415,6 +415,7 @@ final class OverlayCoordinator: ObservableObject {
         briefPanelController.show(
             event: event,
             service: preCallBriefService,
+            notion: notionService,
             onClose: { [weak self] in
                 self?.briefPanelController.close()
             }

@@ -7,6 +7,7 @@ import SwiftUI
 struct BriefPanelView: View {
     let event: MeetingEvent
     @ObservedObject var service: PreCallBriefService
+    @ObservedObject var notion: NotionService
     let onClose: () -> Void
 
     @State private var brief: PreCallBrief?
@@ -14,6 +15,11 @@ struct BriefPanelView: View {
     @State private var loadError: String?
     @State private var showPicker = false
     @State private var isUnattached = false  // true when matching returned nothing
+
+    /// Resolved Notion meeting note for this event, if one exists.
+    @State private var meetingNoteURL: URL?
+    @State private var isResolvingNote = false
+    @State private var isCreatingNote = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -33,6 +39,10 @@ struct BriefPanelView: View {
                 // Initial empty state before first load attempt completes
                 loadingState
             }
+
+            Divider()
+
+            footer
         }
         .background(
             RoundedRectangle(cornerRadius: 12)
@@ -46,6 +56,7 @@ struct BriefPanelView: View {
             if brief == nil && !isLoading {
                 loadBrief()
             }
+            resolveMeetingNote()
         }
         .sheet(isPresented: $showPicker) {
             BriefPickerView(service: service, eventID: event.id) { summary in
@@ -129,30 +140,66 @@ struct BriefPanelView: View {
             MarkdownBody(markdown: brief.markdown)
                 .padding(16)
         }
+    }
 
-        Divider()
-
+    /// Shared action row, shown in every state.
+    ///
+    /// The meeting-note control lives here rather than inside `briefBody` so
+    /// it's reachable even when no brief matched — the note is what you need
+    /// during and after the call, and it shouldn't depend on the brief having
+    /// been found.
+    @ViewBuilder
+    private var footer: some View {
         HStack(spacing: 12) {
-            Button {
-                rematch()
-            } label: {
-                Label("Re-match", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
+            meetingNoteButton
 
-            Button {
-                showPicker = true
-            } label: {
-                Label("Attach different brief…", systemImage: "link.badge.plus")
-                    .font(.caption)
+            if brief != nil {
+                Button {
+                    rematch()
+                } label: {
+                    Label("Re-match", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+
+                Button {
+                    showPicker = true
+                } label: {
+                    Label("Attach different brief…", systemImage: "link.badge.plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
 
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var meetingNoteButton: some View {
+        Button {
+            openOrCreateMeetingNote()
+        } label: {
+            if isResolvingNote || isCreatingNote {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(isCreatingNote ? "Creating…" : "Checking…").font(.caption)
+                }
+            } else if meetingNoteURL != nil {
+                Label("Open meeting note", systemImage: "doc.text")
+                    .font(.caption)
+            } else {
+                Label("Create meeting note", systemImage: "square.and.pencil")
+                    .font(.caption)
+            }
+        }
+        .buttonStyle(.borderless)
+        .disabled(!notion.isConfigured || isResolvingNote || isCreatingNote)
+        .help(meetingNoteURL != nil
+              ? "Open this meeting's note in Notion"
+              : "Create a note for this meeting in Notion and open it")
     }
 
     @ViewBuilder
@@ -205,6 +252,66 @@ struct BriefPanelView: View {
             Spacer()
         }
         .padding(16)
+    }
+
+    // MARK: - Meeting note
+
+    /// Looks up an existing note without creating anything, so the button can
+    /// show the right verb before it's pressed.
+    private func resolveMeetingNote() {
+        guard notion.isConfigured, meetingNoteURL == nil, !isResolvingNote else { return }
+
+        // The locally recorded page is free to check; only hit the network
+        // when we have nothing.
+        if let known = notion.knownMeetingNote(for: event.id) {
+            meetingNoteURL = known
+            return
+        }
+
+        isResolvingNote = true
+        Task {
+            let found = await notion.findMeetingNote(for: event)
+            await MainActor.run {
+                isResolvingNote = false
+                meetingNoteURL = found
+            }
+        }
+    }
+
+    /// Opens the note if one exists, otherwise creates it and opens that.
+    ///
+    /// Re-resolves before creating: the note may have appeared since the
+    /// panel opened (Notion's own notetaker, or a page made by hand), and
+    /// creating a second one is exactly the failure this button exists to
+    /// prevent.
+    private func openOrCreateMeetingNote() {
+        if let url = meetingNoteURL {
+            NotionService.openInNotionApp(url)
+            return
+        }
+
+        isCreatingNote = true
+        Task {
+            if let existing = await notion.findMeetingNote(for: event) {
+                await MainActor.run {
+                    isCreatingNote = false
+                    meetingNoteURL = existing
+                    NotionService.openInNotionApp(existing)
+                }
+                return
+            }
+
+            let created = await notion.createMeetingPage(for: event)
+            await MainActor.run {
+                isCreatingNote = false
+                if let created {
+                    meetingNoteURL = created
+                    NotionService.openInNotionApp(created)
+                } else {
+                    loadError = notion.lastError ?? "Couldn't create the meeting note in Notion."
+                }
+            }
+        }
     }
 
     // MARK: - Actions
@@ -693,6 +800,7 @@ final class BriefPanelWindowController {
     func show(
         event: MeetingEvent,
         service: PreCallBriefService,
+        notion: NotionService,
         onClose: @escaping () -> Void
     ) {
         close()
@@ -722,6 +830,7 @@ final class BriefPanelWindowController {
         let view = BriefPanelView(
             event: event,
             service: service,
+            notion: notion,
             onClose: { [weak self] in
                 self?.close()
                 onClose()
