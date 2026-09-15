@@ -6,6 +6,17 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 _Becomes 3.5.0 when tagged — see docs/RELEASING.md; the tag drives MARKETING_VERSION._
 
+### Fixed
+- **Calendar→Notion sync could create duplicate rows for the same Apple Event ID.**
+  The upsert resolved create-vs-update against `existing`, a snapshot of Notion taken
+  once at run start and never updated, so a repeated Apple Event ID fell through to
+  CREATE a second time. Two layers now close this: a run-scoped registry
+  (`CalendarSyncRunRegistry`) absorbs a repeat within a run — e.g. one event shared by
+  two opted-in calendars, whose composite ID is calendar-independent — and a pre-create
+  lookup (`CalendarSyncNotionQueries.findPageID`) asks Notion directly before minting a
+  row, so a stale snapshot adopts the existing row instead of twinning it. Both paths
+  log a warning. Steady-state cost is nil: the lookup only runs on the create path.
+
 ### Added
 - **Menu bar display modes** — Settings → General now offers Full, Icon Only, and
   Hidden modes. Hidden mode leaves reminders and background services running; reopening
