@@ -86,6 +86,39 @@ Distinguish `available`, `no matching content`, `unavailable` and `truncated` pe
 
 Select context by meeting relevance and recency, and paginate source reads as needed. Query the runtime context capacity and token count, reserving space for instructions, tool schemas and output. Summarize or select long source material in bounded stages where necessary. Treat retrieved text as evidence, not instructions to execute.
 
+### Token limits and budget
+
+Context size is a primary design constraint. Apple's WWDC26 example reports **8,192 tokens** from `SystemLanguageModel.contextSize`, while some Apple documentation still describes **4,096 tokens**. Neither establishes the capacity on Adam's machine before the upgrade. Read the installed model's capacity at runtime and support a smaller budget; do not assume every macOS 27 configuration has 8K available.
+
+This is the total session context, not a daily token allowance or an input-only limit. Instructions, prompts, tool definitions and arguments/results, generated type schemas and guide descriptions, previous session turns, and the response all consume space.
+
+Illustrative starting budgets for a fresh final-generation session:
+
+| Content | 8,192-token model | 4,096-token model |
+|---|---:|---:|
+| Instructions and output schema | 800 | 600 |
+| Meeting details | 400 | 300 |
+| Selected Notion and Teams evidence | 5,000 | 2,000 |
+| Generated briefing reserve | 1,200 | 700 |
+| Safety margin | 792 | 496 |
+| **Total** | **8,192** | **4,096** |
+
+These are planning allocations, not measured prompt sizes or guaranteed output lengths. Count the actual instructions, schema and serialized evidence using the framework's token-counting APIs. If tool definitions or additional session history are introduced, charge them against the same budget and reduce the evidence allowance. Configure an output cap where supported; an output reserve alone does not constrain generation.
+
+The final generation route should normally expose no MCP catalogue to the model. The app can discover and invoke MCP tools independently, then pass only selected evidence to a fresh model session. The full main-agent ruleset, raw MCP JSON, complete transcripts and broad tool descriptions are unsuitable default input for this budget.
+
+### Long-source processing
+
+1. Retrieve and filter sources in application code using meeting identity, participants, relevance and recency. Keep source IDs, dates and links alongside excerpts.
+2. If useful material exceeds the evidence allowance, divide it into token-bounded chunks. Extract compact facts, decisions, unresolved questions and actions in separate fresh sessions, each with its own measured input and output budget.
+3. Preserve source references, names, dates, action owners and uncertainty in each extraction. Keep originals available outside model context for verification and later main-model enrichment.
+4. Deduplicate and select extracted evidence in code before final synthesis. Count the combined evidence again: chunking inputs does not guarantee the summaries fit together. Prefer selecting the most useful evidence over repeatedly compressing summaries until their provenance is lost.
+5. Generate one compact briefing in a fresh session using the applicable budget above. Explicitly record material source omissions or truncation.
+
+Chunking allows processing more material across calls, but does not expand the context available to any one call. It can lose details and connections between sources, so evaluate it against representative long notes and Teams threads. Bound calls, elapsed time and retries so a fallback still arrives in time to help. If necessary, deliver a smaller grounded brief with coverage gaps and leave deeper synthesis for main-model recovery.
+
+If generation nevertheless exceeds the context window, retry once in a fresh session with less evidence and a shorter output target. Preserve meeting identity and source coverage information. If that fails, retain the pending job and report the failure rather than marking the briefing complete.
+
 ## Detecting exhaustion and recovery
 
 The main runner should return a structured result that separates generation, page persistence and delivery outcomes. Prefer explicit provider/CLI usage-limit signals over broad matching of arbitrary output text.
@@ -135,7 +168,7 @@ The scheduled runner and app must share the same identity and quality rules: an 
 1. Verify macOS/Xcode/SDK versions, actual local model availability, runtime capacity and background execution. Keep older macOS behaviour available through appropriate availability checks.
 2. Inventory the main runner's error/reset signals, actual briefing rules and independently usable Notion/Teams connections. Prove source retrieval works while model access is limited.
 3. Introduce durable job state, stable page mapping and separate persistence/delivery outcomes; reconcile partial main runs.
-4. Complete local generation, source coverage reporting, full-brief persistence and normal delivery.
+4. Implement measured context budgets, bounded long-source extraction and fresh-session synthesis; complete source coverage reporting, full-brief persistence and normal delivery.
 5. Add confirmed-limit routing and cooldown handling.
 6. Add recovery enrichment, preservation of user edits and shared deduplication with the scheduled runner.
 7. Evaluate on representative meetings, then enable through an explicit fallback setting.
@@ -150,6 +183,8 @@ The scheduled runner and app must share the same identity and quality rules: an 
 - Edits made by Adam between fallback and enrichment survive, including edits inside generated content and completed actions.
 - Failed enrichment or an interrupted multi-block write leaves the existing briefing readable and can be reconciled safely.
 - Recurring meetings, reschedules, cancellations, missing pages and two runners competing for the same job are handled explicitly.
+- Budget calculations cover both 4,096- and 8,192-token capacities, accounting for schemas, optional tool definitions, output reserves and history. Validate real token counts on the installed model; simulated capacities test budgeting, not model availability.
+- Oversized notes, Teams threads and combined chunk summaries are reduced within budget while retaining source references and key actions. Context overflow gets one smaller fresh-session retry; processing stays within its call/time limits.
 - Real-model evaluation checks factual accuracy, missing key actions, source attribution, latency and behaviour near the context limit. Protocol compatibility alone does not establish reliable autonomous tool use.
 
 ## Evidence and unresolved details
@@ -157,6 +192,7 @@ The scheduled runner and app must share the same identity and quality rules: an 
 This design uses the primary documentation checked on 2026-09-15:
 
 - [Apple: What's new in Foundation Models, WWDC26](https://developer.apple.com/videos/play/wwdc2026/241/) demonstrates an 8,192-token context size and describes improved on-device capabilities. Query the installed model rather than hard-coding the demonstration value.
+- [Apple: Managing the on-device foundation model's context window (TN3193)](https://developer.apple.com/documentation/Technotes/tn3193-managing-the-on-device-foundation-model-s-context-window) still specifies 4,096 tokens and explains that tool schemas, generated schemas, inputs and responses all count. The differing published capacities reinforce the need for runtime verification.
 - [Apple: Foundation Models updates](https://developer.apple.com/documentation/updates/foundationmodels) recommends re-testing prompts when OS updates change the model.
 - [Apple: Foundation Models](https://developer.apple.com/documentation/foundationmodels) documents guided generation and custom tool calling.
 - [Official MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) provides clients, tool discovery/invocation and local/remote transports. Wiring these into Foundation Models is application integration work.
