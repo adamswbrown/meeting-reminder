@@ -57,7 +57,11 @@ final class NotionService: ObservableObject {
     /// Kept as an alias so existing call sites don't churn. Same as `isConfigured`.
     var isActive: Bool { isConfigured }
 
-    init() {}
+    init() {
+        // Restore the duplicate guard from disk. Without this a relaunch
+        // forgets every page it created and would happily make a second one.
+        createdEventIDs = Set(noteLinks.keys)
+    }
 
     // MARK: - Token management
 
@@ -272,7 +276,14 @@ final class NotionService: ObservableObject {
                let result = URL(string: pageURL) {
                 // Only mark as created after a confirmed successful API response so
                 // that transient failures don't permanently suppress retries.
-                createdEventIDs.insert(event.id)
+                rememberMeetingNote(result, for: event.id)
+
+                // Relate the note to its Calendar Events row. Detached so the
+                // caller can open the page immediately — the link is a
+                // bookkeeping nicety, not something worth waiting on.
+                if let notePageID = json["id"] as? String {
+                    Task { await self.linkToCalendarEvent(notePageID: notePageID, for: event) }
+                }
                 return result
             }
             lastError = "Notion returned 200 but no page URL in response body"
@@ -281,6 +292,180 @@ final class NotionService: ObservableObject {
         }
 
         return nil
+    }
+
+    // MARK: - Finding an existing meeting note
+
+    /// Event ID → Notion page URL for notes this app has created.
+    ///
+    /// `createdEventIDs` alone is in-memory, so before this existed a relaunch
+    /// forgot every page it had made and the duplicate guard reset with it.
+    private static let noteLinksKey = "meetingNoteLinks"
+
+    private var noteLinks: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: Self.noteLinksKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: Self.noteLinksKey) }
+    }
+
+    /// The note this app previously created for `eventID`, if any. Cheap and
+    /// synchronous — the panel calls this before reaching for the network.
+    func knownMeetingNote(for eventID: String) -> URL? {
+        noteLinks[eventID].flatMap(URL.init(string:))
+    }
+
+    private func rememberMeetingNote(_ url: URL, for eventID: String) {
+        var links = noteLinks
+        links[eventID] = url.absoluteString
+        noteLinks = links
+        createdEventIDs.insert(eventID)
+    }
+
+    /// Resolves the Notion meeting note for an event: the locally recorded one
+    /// if this app made it, otherwise an unambiguous title+day match in the
+    /// Meeting Notes database.
+    ///
+    /// The Notion search is what catches a page created *by hand*, which is
+    /// the case that matters — without it, pressing "create" would silently
+    /// make a second page alongside one the user had already written.
+    ///
+    /// Returns nil when there is no match, and also when several rows share
+    /// the title on that day; an ambiguous result sets `lastError` rather than
+    /// picking one, because opening the wrong meeting's notes is worse than
+    /// opening none.
+    func findMeetingNote(for event: MeetingEvent) async -> URL? {
+        if let known = knownMeetingNote(for: event.id) { return known }
+
+        guard let token = apiToken else { return nil }
+        let client = CalendarSyncNotionClient(token: token, logger: CalendarSyncLogger())
+
+        // Strategy 1: the Calendar Events row's `Meeting Notes` relation.
+        // Authoritative — it points at a page ID, so unlike title matching it
+        // survives the note being renamed after the fact.
+        if let row = await calendarEventRow(for: event, client: client) {
+            switch row.noteIDs.count {
+            case 1:
+                let url = MeetingNoteMatcher.pageURL(forPageID: row.noteIDs[0])
+                rememberMeetingNote(url, for: event.id)
+                return url
+            case 0:
+                break  // fall through to the title search
+            default:
+                lastError = "\(row.noteIDs.count) notes are linked to this calendar event — open Notion and merge them."
+                return nil
+            }
+        }
+
+        // Strategy 2: unambiguous title + day match in Meeting Notes. Catches
+        // a page made by hand before the sync has related it to anything.
+        let day = MeetingNoteMatcher.dayString(for: event.startDate)
+        let title = event.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+
+        var candidates: [MeetingNoteMatcher.Candidate] = []
+        var cursor: String?
+        var page = 0
+
+        // Page through. The ambiguity guard depends on seeing every candidate —
+        // a truncated read could hide a second exact match and let this open a
+        // page it shouldn't. Capped to bound a pathological loop.
+        repeat {
+            let body = MeetingNoteMatcher.titleDayQueryBody(
+                titleProperty: CalendarSyncConstants.meetingNotesTitleProperty,
+                dateProperty: CalendarSyncConstants.meetingNotesDateProperty,
+                titleNeedle: title,
+                day: day,
+                cursor: cursor)
+            do {
+                let resp = try await client.post(
+                    path: "/data_sources/\(CalendarSyncConstants.meetingNotesDataSourceID)/query",
+                    body: body)
+                candidates += MeetingNoteMatcher.candidates(
+                    from: resp,
+                    titleProperty: CalendarSyncConstants.meetingNotesTitleProperty)
+                cursor = MeetingNoteMatcher.nextCursor(from: resp)
+            } catch {
+                lastError = "Notion lookup failed — \(error.localizedDescription)"
+                return nil
+            }
+            page += 1
+        } while cursor != nil && page < 10
+
+        switch MeetingNoteMatcher.resolve(candidates: candidates, title: title) {
+        case .none:
+            return nil
+        case .unique(let hit):
+            rememberMeetingNote(hit.url, for: event.id)
+            return hit.url
+        case .ambiguous(let pageIDs):
+            lastError = "\(pageIDs.count) notes titled “\(title)” on \(day) — open Notion and merge them."
+            return nil
+        }
+    }
+
+    // MARK: - Calendar Events relation
+
+    /// Links a freshly created meeting note to its Calendar Events row.
+    ///
+    /// Patches the relation on the Calendar Events side, matching
+    /// `RelationLinker`; Notion mirrors the inverse `Calendar Event` property
+    /// onto the note automatically. Best-effort — a meeting note that exists
+    /// but isn't linked is still useful, so failures are logged to
+    /// `lastError` and never block opening the page.
+    /// Finds the Calendar Events row for an event, with whatever it already
+    /// has in its `Meeting Notes` relation.
+    ///
+    /// Returns nil when the event carries no Exchange UID (ad-hoc meetings),
+    /// when the sync hasn't written a row yet, or on a transport error — all
+    /// of which mean "no relation information available", not "no note".
+    private func calendarEventRow(
+        for event: MeetingEvent,
+        client: CalendarSyncNotionClient
+    ) async -> (pageID: String, noteIDs: [String])? {
+        guard let externalID = event.externalID, !externalID.isEmpty else { return nil }
+
+        let appleID = MeetingNoteMatcher.appleEventID(
+            externalID: externalID,
+            isRecurring: event.isRecurring,
+            start: event.startDate)
+
+        do {
+            let lookup = try await client.post(
+                path: "/data_sources/\(CalendarSyncConstants.calendarEventsDataSourceID)/query",
+                body: MeetingNoteMatcher.appleEventIDQueryBody(
+                    property: CalendarSyncConstants.appleEventIDProperty,
+                    value: appleID))
+            guard let pageID = MeetingNoteMatcher.firstPageID(from: lookup) else { return nil }
+            let noteIDs = MeetingNoteMatcher.relationPageIDs(
+                from: lookup,
+                property: CalendarSyncConstants.calendarEventsMeetingNotesRelation)
+            return (pageID: pageID, noteIDs: noteIDs)
+        } catch {
+            return nil
+        }
+    }
+
+    private func linkToCalendarEvent(notePageID: String, for event: MeetingEvent) async {
+        guard let token = apiToken else { return }
+        let client = CalendarSyncNotionClient(token: token, logger: CalendarSyncLogger())
+
+        // No row yet — the 06:00 sync hasn't seen this event. The sync's own
+        // auto-link pass will pick it up later; nothing to do here.
+        guard let row = await calendarEventRow(for: event, client: client) else { return }
+        let calendarEventPageID = row.pageID
+
+        do {
+            _ = try await client.patch(
+                path: "/pages/\(calendarEventPageID)",
+                body: [
+                    "properties": [
+                        CalendarSyncConstants.calendarEventsMeetingNotesRelation: [
+                            "relation": [["id": notePageID]]
+                        ]
+                    ]
+                ])
+        } catch {
+            lastError = "Note created, but linking it to the calendar event failed — \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Open in Notion desktop app

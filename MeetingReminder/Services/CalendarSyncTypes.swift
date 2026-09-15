@@ -119,6 +119,9 @@ enum CalendarSyncConstants {
     static let preCallBriefingsDateProperty = "Date & Time"
     static let calendarEventsMeetingNotesRelation = "Meeting Notes"
     static let calendarEventsPreCallBriefingRelation = "Pre-Call Briefing"
+    /// Composite upsert key on Calendar Events — see
+    /// `CalendarEventMapper.compositeAppleID` for how it's built.
+    static let appleEventIDProperty = "Apple Event ID"
 }
 
 // MARK: - Logger
