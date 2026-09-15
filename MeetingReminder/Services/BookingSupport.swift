@@ -160,7 +160,8 @@ enum BookingEmailSanitizer {
 enum BookingICS {
     /// RFC-5545 VEVENT (CRLF line endings) for a confirmed booking, sent as an
     /// invite (METHOD:REQUEST) the attendee can accept. Mirrors the web builder
-    /// at availability-page/lib/booking.ts `buildICSContent` for format consistency.
+    /// at `lib/booking.ts` `buildICSContent` in the adamswbrown/availability-page
+    /// repo (extracted from this one on 2026-09-15) for format consistency.
     static func build(title: String, start: Date, end: Date,
                       organizerEmail: String, attendeeEmail: String,
                       description: String) throws -> String {
