@@ -12,18 +12,19 @@ Mac app (AvailabilityPushService)  --service-role write-->  Supabase
 Vercel / Next.js page  <--anon-key read--------------------- ┘
 ```
 
-## Two halves, one repo (monorepo)
+## Two halves, two repos
 
 | Half | Where | What it is |
 |------|-------|-----------|
-| **Push** | `MeetingReminder/Services/AvailabilityPushService.swift` | Snapshots EventKit, writes to Supabase on a timer |
-| **Frontend** | `availability-page/` (this repo) | Next.js page deployed to Vercel that reads the sanitised view |
+| **Push** | `MeetingReminder/Services/AvailabilityPushService.swift` (this repo) | Snapshots EventKit, writes to Supabase on a timer |
+| **Frontend** | [`adamswbrown/availability-page`](https://github.com/adamswbrown/availability-page) | Next.js page deployed to Vercel that reads the sanitised view |
 
-> The Next.js frontend lives **in this repo** under `availability-page/` (it was
-> previously a separate repo, centralised back in as a monorepo). Build output
-> (`.next/`, `node_modules`) is gitignored by `availability-page/.gitignore`.
-> On Vercel, import this repo and set the project's **Root Directory** to
-> `availability-page`. See `availability-page/README.md`.
+> The Next.js frontend lives in its **own private repo**, extracted from this
+> one on 2026-09-15. Vercel deploys it from that repo's root (no Root Directory
+> override) to `book.askadam.cloud`. Nothing in this repo builds or deploys it.
+>
+> The two halves share no code — only the Supabase schema below is contractual
+> between them. Change a column name here and you must change it there too.
 
 ---
 
@@ -109,18 +110,19 @@ stays in macOS Keychain and never reaches the browser.
 
 ## 3. Deploy the frontend
 
-The frontend lives in this repo under `availability-page/`:
+The frontend lives in its own repo:
 
 ```bash
+git clone https://github.com/adamswbrown/availability-page
 cd availability-page
 cp .env.local.example .env.local   # paste Supabase URL + publishable (anon) key
 pnpm install
 pnpm dev                            # http://localhost:3000
 ```
 
-Deploy: import `adamswbrown/meeting-reminder` in **Vercel**, set the project's
-**Root Directory** to `availability-page`, and add two env vars in Project
-Settings → Environment Variables (both are `NEXT_PUBLIC_*`, safe for the browser):
+Deploy: the Vercel project `availability-page` is connected to that repo and
+deploys from its root. Two env vars in Project Settings → Environment
+Variables (both are `NEXT_PUBLIC_*`, safe for the browser):
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co

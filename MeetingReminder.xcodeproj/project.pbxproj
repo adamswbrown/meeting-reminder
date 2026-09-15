@@ -51,6 +51,7 @@
 		A1000041 /* CalendarEventMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000041 /* CalendarEventMapper.swift */; };
 		A1000042 /* CalendarNotionSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000042 /* CalendarNotionSyncService.swift */; };
 		A1000053 /* CalendarSyncCascade.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000053 /* CalendarSyncCascade.swift */; };
+		A1000054 /* CalendarSyncRunRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000054 /* CalendarSyncRunRegistry.swift */; };
 		A100009A /* OverlayCatchUp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100009A /* OverlayCatchUp.swift */; };
 		A1000043 /* CalendarSyncMigrations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000043 /* CalendarSyncMigrations.swift */; };
 		A1000044 /* RelationLinker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000044 /* RelationLinker.swift */; };
@@ -66,6 +67,7 @@
 		T2000005 /* CalendarEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000005 /* CalendarEventMapperTests.swift */; };
 		T2000012 /* CalendarSyncCascadeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000012 /* CalendarSyncCascadeTests.swift */; };
 		T2000050 /* MeetingNoteMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000050 /* MeetingNoteMatcherTests.swift */; };
+		T2000051 /* CalendarSyncRunRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000051 /* CalendarSyncRunRegistryTests.swift */; };
 		T2000020 /* OverlayCatchUpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000020 /* OverlayCatchUpTests.swift */; };
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
@@ -138,6 +140,7 @@
 		B1000099 /* MeetingLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLauncher.swift; sourceTree = "<group>"; };
 		B1000040 /* CalendarSyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncTypes.swift; sourceTree = "<group>"; };
 		B1000053 /* CalendarSyncCascade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncCascade.swift; sourceTree = "<group>"; };
+		B1000054 /* CalendarSyncRunRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncRunRegistry.swift; sourceTree = "<group>"; };
 		B100009A /* OverlayCatchUp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayCatchUp.swift; sourceTree = "<group>"; };
 		B1000041 /* CalendarEventMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapper.swift; sourceTree = "<group>"; };
 		B1000042 /* CalendarNotionSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarNotionSyncService.swift; sourceTree = "<group>"; };
@@ -155,6 +158,7 @@
 		T1000005 /* CalendarEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMapperTests.swift; sourceTree = "<group>"; };
 		T1000012 /* CalendarSyncCascadeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncCascadeTests.swift; sourceTree = "<group>"; };
 		T1000050 /* MeetingNoteMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingNoteMatcherTests.swift; sourceTree = "<group>"; };
+		T1000051 /* CalendarSyncRunRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncRunRegistryTests.swift; sourceTree = "<group>"; };
 		T1000020 /* OverlayCatchUpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayCatchUpTests.swift; sourceTree = "<group>"; };
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
@@ -250,6 +254,7 @@
 				AABB0002 /* AudioProcessMonitor.swift */,
 				B1000040 /* CalendarSyncTypes.swift */,
 				B1000053 /* CalendarSyncCascade.swift */,
+				B1000054 /* CalendarSyncRunRegistry.swift */,
 				B100009A /* OverlayCatchUp.swift */,
 				B1000041 /* CalendarEventMapper.swift */,
 				B1000042 /* CalendarNotionSyncService.swift */,
@@ -315,6 +320,7 @@
 				T1000005 /* CalendarEventMapperTests.swift */,
 				T1000012 /* CalendarSyncCascadeTests.swift */,
 				T1000050 /* MeetingNoteMatcherTests.swift */,
+				T1000051 /* CalendarSyncRunRegistryTests.swift */,
 				T1000020 /* OverlayCatchUpTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
 				T1000008 /* IntradayBriefGateTests.swift */,
@@ -452,6 +458,7 @@
 				A1000051 /* BusyLightSettingsView.swift in Sources */,
 				A1000040 /* CalendarSyncTypes.swift in Sources */,
 				A1000053 /* CalendarSyncCascade.swift in Sources */,
+				A1000054 /* CalendarSyncRunRegistry.swift in Sources */,
 				A100009A /* OverlayCatchUp.swift in Sources */,
 				A1000041 /* CalendarEventMapper.swift in Sources */,
 				A1000042 /* CalendarNotionSyncService.swift in Sources */,
@@ -481,6 +488,7 @@
 				T2000005 /* CalendarEventMapperTests.swift in Sources */,
 				T2000012 /* CalendarSyncCascadeTests.swift in Sources */,
 				T2000050 /* MeetingNoteMatcherTests.swift in Sources */,
+				T2000051 /* CalendarSyncRunRegistryTests.swift in Sources */,
 				T2000020 /* OverlayCatchUpTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,
