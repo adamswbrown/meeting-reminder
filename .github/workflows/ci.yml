@@ -44,6 +44,11 @@ jobs:
           swift --version
 
       # Debug + test first: fastest path to a real failure signal.
+      #
+      # Signing is overridden to ad-hoc. The Debug config pins a specific
+      # "Apple Development: ..." certificate for team NZ87XY99SR, which exists
+      # only on Adam's machine — a runner without it fails the build before a
+      # single test runs. Ad-hoc (`-`) is enough to launch the test host.
       - name: Test
         run: |
           set -o pipefail
@@ -52,6 +57,11 @@ jobs:
             -scheme "$SCHEME" \
             -configuration Debug \
             -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             test
 
       # Release differs from Debug in optimisation and dead-code stripping, so
@@ -67,4 +77,9 @@ jobs:
             -configuration Release \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             build
