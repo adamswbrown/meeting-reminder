@@ -264,6 +264,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `hasCompletedOnboarding` | Bool | false | Onboarding finished — skip on next launch |
+| `meetingNoteLinks` | Dict (JSON) | {} | Event ID → Notion meeting-note page URL for notes the app created. Restores `NotionService.createdEventIDs` at launch so the duplicate guard survives a relaunch |
 | `reminderMinutes` | Int | 5 | Minutes before meeting to show the full-screen overlay (1/2/3/5/10/15). Configured in **Alerts** tab → "Full-Screen Overlay" |
 | `soundEnabled` | Bool | true | Play alert sound with overlay |
 | `colorBlindMode` | Bool | false | Use colour-blind friendly menu bar palette |
