@@ -1,4 +1,4 @@
-# Local briefing fallback when the main model reaches its usage limit
+# Apple model briefing fallbacks when the main model reaches its usage limit
 
 **Date:** 2026-09-15
 
@@ -8,6 +8,8 @@
 
 When the main briefing model has exhausted its credits or usage allowance, Meeting Reminder should produce a useful briefing with Apple's on-device model. It must still retrieve relevant Notion and Teams context and save the briefing through the usual workflow.
 
+Also evaluate a personal Shortcuts **Use Model → Cloud / Cloud Pro** route as an optional first fallback. This app is not intended for App Store distribution. Direct PCC developer API access is not a dependency of this plan. The proposed order, if Shortcuts testing succeeds, is **main model → PCC through Shortcuts → on-device model**.
+
 When the main model becomes available again, it should enrich **the same existing Notion briefing page**, preserving its link, Adam's edits and meeting notes. Recovery must not create another briefing, duplicate action items or send another new-meeting alert.
 
 Example: a meeting arrives while the main model is limited. The app gathers available context, writes a short briefing labelled **Local fallback**, and delivers its link. After the limit resets, the main model reads that page and additional context, improves the generated sections, and changes the label to **Full briefing** only after the update succeeds.
@@ -16,6 +18,7 @@ Example: a meeting arrives while the main model is limited. The app gathers avai
 
 - Keep the main model as the preferred briefing generator.
 - Use Apple's on-device model as a fallback for confirmed model credit or usage exhaustion.
+- Prototype optional PCC generation through a personal shortcut; retain the on-device route if the shortcut is unavailable, limited or unsuccessful.
 - Make context retrieval and delivery independent of that model's allowance.
 - Support the relevant Notion MCP and `teams-mcp` capabilities, or existing direct integrations where suitable.
 - Persist unfinished enrichment work across app restarts and sleep.
@@ -47,13 +50,14 @@ Calendar event / briefing request
        Main briefing runner             Independent context retrieval
                 |                       (Calendar, Notion, Teams)
                 |                               |
-                |                       On-device brief generation
+                |                       Optional PCC shortcut
+                |                       then on-device if needed
                 |                               |
                 +-------- Save/update same Notion page
                                                 |
                                      Deliver once; persist outcome
                                                 |
-                                  Local fallback awaits enrichment
+                                  Fallback awaits enrichment
                                                 |
                                  Main model access returns
                                                 |
@@ -77,6 +81,45 @@ Apple's model can call application-defined tools. An MCP client in the applicati
 Ordinary source reads must not require a successful call to the exhausted main model. MCP servers and underlying services can have their own availability, permissions and quotas; local generation does not remove those dependencies. Any tool that internally invokes a paid model needs separate assessment.
 
 “Local fallback” describes model inference. Notion and Teams retrieval and external delivery still use the network. An unavailable on-device model must be reported explicitly; do not silently substitute Private Cloud Compute.
+
+### Optional PCC access through Shortcuts
+
+Apple documents PCC in the user-facing **Use Model** action independently of direct access through `PrivateCloudComputeLanguageModel`. The direct developer API requires Small Business Program eligibility and a PCC entitlement, with production distribution described for App Store apps and testing through TestFlight or ad hoc distribution. A personal shortcut is the route to evaluate for this privately used app; do not treat it as granting the app direct API access.
+
+Proposed shortcut contract:
+
+1. The app retrieves Notion/Teams/calendar evidence through its independent integrations, selects relevant material and writes a private input file for this run.
+2. Invoke a configured personal shortcut using `shortcuts run` with input and output file paths. Use unique files per attempt and clean up temporary source content after processing.
+3. The shortcut reads the input as text, passes it to **Use Model** with Cloud or Cloud Pro explicitly selected, and returns the response using **Stop and Output**. Disable Follow Up and avoid actions that request interactive input during normal runs.
+4. The app validates the returned briefing, then performs the existing page save/update and delivery stages. The shortcut performs generation only; it does not independently create Notion pages or send alerts.
+
+MCP connections remain in the app or helper. The Use Model action receives selected evidence; it does not inherit the main assistant's MCP tools or credentials. Shortcuts can return text or dictionary output, but do not assume the Swift framework's guided-generation guarantees or token/availability APIs are exposed through this action. Validate required fields and preserve a recoverable error if output is malformed or empty.
+
+Use Model was introduced in the macOS 26 generation, so a standalone prototype may be possible before the macOS 27 upgrade on an eligible, configured Mac. The available model choices can differ by OS version. The updated guide describes **Cloud** and **Cloud Pro**, with extended context for Cloud Pro. Check the actual installed action rather than hard-coding assumptions about its model.
+
+Apple supports command-line execution of shortcuts, but unattended execution of this specific action from Meeting Reminder remains to be tested after initial permissions. Bound execution time, capture exit status and validate output. Handle quota errors, unavailable models, interactive prompts and timeouts without marking the briefing delivered. Fall through to the on-device generator when appropriate; preserve unknown errors as unknown instead of calling them credit exhaustion. Apple cloud usage restrictions are independent of the main model's allowance, and no fixed per-user quota should be assumed.
+
+Label successful shortcut output **Apple cloud fallback** and retain its eligibility for main-model enrichment. Use **Local fallback** only for on-device inference. Both keep the same page identity and preservation rules.
+
+### Shortcuts PCC context window: undocumented; measurement required
+
+The primary sources reviewed on 2026-09-15 do not establish a numeric context limit for PCC through **Use Model**:
+
+| Access route | Published context information |
+|---|---|
+| Shortcuts → Cloud | No numeric token limit found in Apple's Shortcuts documentation. |
+| Shortcuts → Cloud Pro | Described as having extended context for larger tasks; no numeric token limit found. |
+| Foundation Models API → PCC | 32K tokens, with 32,768 shown in Apple's API example. This is not a verified Shortcuts limit. |
+
+Do not transfer the developer API's 32K figure to Shortcuts or assume its usable prompt budget, output limit, reasoning overhead or tokenization is identical. The app cannot rely on `PrivateCloudComputeLanguageModel.contextSize` to measure the shortcut's selected model. Token counts from a local tokenizer must be labelled estimates if used for sizing shortcut input.
+
+Before choosing a working budget, test Cloud and Cloud Pro separately where available:
+
+- Record the macOS build, action configuration, selected model, input size and output target.
+- Increase synthetic input sizes gradually, placing unique facts near the beginning, middle and end. Check correct retrieval from every region as well as whether the request succeeds.
+- Include a task requiring facts from different regions, then evaluate representative briefing material. A successful request or a single retrieved fact does not establish that the entire input was retained or used reliably.
+- Record failures, apparent truncation, incomplete responses, latency and repeatability. Stop when the useful budget is established; do not continue expensive probes through quota failures.
+- Choose a conservative observed working budget with output headroom and keep bounded chunking available. Treat results as version-specific measurements, not an Apple-guaranteed maximum, and recheck after relevant updates.
 
 ### Context supplied to the local model
 
@@ -126,7 +169,8 @@ The main runner should return a structured result that separates generation, pag
 | Result | Behaviour |
 |---|---|
 | Main briefing succeeds | Record the page ID and completed delivery stages. |
-| Confirmed credits exhausted or model usage limit reached | Record a cooldown and invoke local fallback. |
+| Confirmed credits exhausted or model usage limit reached | Record a cooldown and invoke the configured fallback: validated PCC shortcut if enabled, otherwise local generation. |
+| PCC shortcut fails or reaches an independent limit | Record the shortcut outcome separately and attempt local generation within the job's remaining time budget. |
 | Authentication failure, source-service rate limit, network error or unknown failure | Report/classify separately; do not label it credit exhaustion. |
 | Local model unavailable or generation fails | Retain recoverable work and report the failure; do not mark it delivered. |
 | Page save succeeds but delivery fails | Retry delivery for the existing page without regenerating it. |
@@ -144,7 +188,7 @@ Maintain one logical job per meeting occurrence, mapped to the existing Calendar
 Persist at least:
 
 - Meeting/occurrence key and Notion briefing page ID.
-- Generation quality (`localFallback` or `full`) separately from save, delivery and enrichment states.
+- Generation quality (`fallback` or `full`) and generator (`main`, `shortcutsPCC` or `onDevice`) separately from save, delivery and enrichment states; record the configured shortcut model when known.
 - Last completed stage, attempts, retry time and limit metadata.
 - Source references, coverage and evidence timestamps.
 - IDs and last-written fingerprints of application-managed Notion blocks.
@@ -157,11 +201,11 @@ Create identifiable generated sections and a separate area for Adam's own notes.
 - Preserve unrelated blocks, comments and meeting notes; do not replace the whole page body.
 - Reconcile actions by stable identity and preserve user edits and completion state. Do not create duplicates because wording changed.
 - Keep the existing delivery link. Where supported, update the original status message instead of posting another alert.
-- Mark **Full briefing** only after all required page updates are confirmed. A failed enrichment leaves the local briefing usable and the job retryable.
+- Mark **Full briefing** only after all required page updates are confirmed. A failed enrichment leaves the existing fallback briefing usable and the job retryable.
 
 Retries must converge on the same result, including after a timeout with an unknown write outcome. Notion writes are not assumed to be transactional. Re-read to reconcile partial writes and record progress per stage.
 
-The scheduled runner and app must share the same identity and quality rules: an existing local page means “enrich this page,” not “skip forever” or “create another.” Establish one owner for an active job and a recovery mechanism for abandoned work. A local lock alone cannot coordinate with an external runner; select and verify a shared coordination approach before allowing both writers to enrich concurrently.
+The scheduled runner and app must share the same identity and quality rules: an existing fallback page means “enrich this page,” not “skip forever” or “create another.” Establish one owner for an active job and a recovery mechanism for abandoned work. A local lock alone cannot coordinate with an external runner; select and verify a shared coordination approach before allowing both writers to enrich concurrently.
 
 ## Implementation sequence after the upgrade
 
@@ -169,13 +213,16 @@ The scheduled runner and app must share the same identity and quality rules: an 
 2. Inventory the main runner's error/reset signals, actual briefing rules and independently usable Notion/Teams connections. Prove source retrieval works while model access is limited.
 3. Introduce durable job state, stable page mapping and separate persistence/delivery outcomes; reconcile partial main runs.
 4. Implement measured context budgets, bounded long-source extraction and fresh-session synthesis; complete source coverage reporting, full-brief persistence and normal delivery.
-5. Add confirmed-limit routing and cooldown handling.
+5. Prototype the PCC shortcut, measure its usable input budget and background reliability, then add confirmed-limit routing and cooldown handling with the optional shortcut before local generation.
 6. Add recovery enrichment, preservation of user edits and shared deduplication with the scheduled runner.
 7. Evaluate on representative meetings, then enable through an explicit fallback setting.
 
 ## Acceptance checks
 
 - Simulated main credit exhaustion produces a source-grounded local briefing in the usual Notion destination with one delivery.
+- With the optional shortcut enabled, confirmed main exhaustion tries Shortcuts PCC first; shortcut failure falls through to local generation with no duplicate saves or delivery. Either result remains eligible for enrichment of the same page.
+- The PCC shortcut runs from the app after initial setup without routine user interaction. Empty/malformed output, timeout, cancellation, unavailable models and quota failures retain accurate stage state.
+- Shortcuts input budgets are supported by recorded tests of facts at the beginning, middle and end plus cross-source synthesis; no Shortcuts limit is presented as the API's documented 32K limit.
 - Notion and Teams retrieval work without invoking the main model; absent permissions and unavailable sources are represented accurately.
 - A partial main run followed by fallback uses the already-created page and does not repeat completed side effects.
 - A cooldown prevents repeated failing main invocations; recovery enriches the same page and retains its URL.
@@ -196,7 +243,13 @@ This design uses the primary documentation checked on 2026-09-15:
 - [Apple: Foundation Models updates](https://developer.apple.com/documentation/updates/foundationmodels) recommends re-testing prompts when OS updates change the model.
 - [Apple: Foundation Models](https://developer.apple.com/documentation/foundationmodels) documents guided generation and custom tool calling.
 - [Official MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) provides clients, tool discovery/invocation and local/remote transports. Wiring these into Foundation Models is application integration work.
+- [Apple: Use Apple Intelligence in Shortcuts on Mac](https://support.apple.com/sl-si/guide/shortcuts-mac/mchl91750563/mac) describes Cloud and Cloud Pro, including extended context for Cloud Pro, without a numeric token limit. This regional copy of the guide exposed the updated English text during research.
+- [Apple: Run shortcuts from the command line](https://support.apple.com/en-gb/guide/shortcuts-mac/apd455c82f02/mac) documents input/output files and notes that actions asking for input pause command-line execution.
+- [Apple: Develop for Shortcuts and Spotlight with App Intents, WWDC25](https://developer.apple.com/videos/play/wwdc2025/260/) introduces Use Model, including PCC and structured dictionary output.
+- [Apple: Adding server-side intelligence with Private Cloud Compute](https://developer.apple.com/documentation/foundationmodels/adding-server-side-intelligence-with-private-cloud-compute?changes=latest_major) specifies 32K for the Foundation Models API; it does not document a Shortcuts context window.
+- [Apple: Accessing Private Cloud Compute](https://developer.apple.com/private-cloud-compute/) gives the direct developer API eligibility and distribution requirements.
+- [Apple: Apple Intelligence usage limits](https://support.apple.com/en-ie/127901) includes Cloud and Cloud Pro in Shortcuts and describes variable usage restrictions without a fixed numeric allowance.
 
 The earlier [August on-device research](2026-08-09-macos-golden-gate-on-device-ai-research.md) records provisional claims and recommends local triage. This document defines a narrower fallback use case where a shorter useful brief is acceptable. Its hardware, context and routing assumptions must be verified from the installed runtime and primary documentation rather than inherited from that research.
 
-Still to establish during implementation: the exact `teams-mcp` connection and authorization path, current task/delivery destinations, reliable main-runner reset metadata, a shared coordination mechanism, and the quality of Apple's installed model on Adam's actual briefing material.
+Still to establish during implementation: the exact `teams-mcp` connection and authorization path, current task/delivery destinations, reliable main-runner reset metadata, a shared coordination mechanism, Shortcuts PCC's usable input/output budget and unattended reliability, and the quality of Apple's selected models on Adam's actual briefing material.
