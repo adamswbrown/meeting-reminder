@@ -297,3 +297,145 @@ final class BriefingAppleSmokeTests: XCTestCase {
         print("Synthetic Shortcuts briefing: \(draft.summary.count) summary characters; valid JSON schema")
     }
 }
+
+// MARK: - Cross-runner coordination lease (item 1)
+
+/// A scriptable Notion transport. Each call records its path/body so a test can
+/// assert what was written, and `onPatch` lets a test simulate a competing
+/// runner overwriting the lease between our claim and our read-back.
+final class FakeBriefingTransport: BriefingNotionTransport, @unchecked Sendable {
+    var lockText = ""
+    var rowCount = 1
+    var failQueries = false
+    var onPatch: (() -> Void)?
+    private(set) var patchedLocks: [String] = []
+
+    func get(path: String) async throws -> [String: Any] { [:] }
+
+    func post(path: String, body: [String: Any]) async throws -> [String: Any] {
+        if failQueries { throw BriefingFallbackError.unavailable("network") }
+        let rows = (0..<rowCount).map { index -> [String: Any] in
+            ["id": "row-\(index)", "properties": [
+                BriefingNotionRepository.lockProperty: ["rich_text": lockText.isEmpty ? []
+                    : [["plain_text": lockText]]]]]
+        }
+        return ["results": rows, "has_more": false]
+    }
+
+    func patch(path: String, body: [String: Any]) async throws -> [String: Any] {
+        let properties = body["properties"] as? [String: Any] ?? [:]
+        let rich = (properties[BriefingNotionRepository.lockProperty] as? [String: Any])?["rich_text"] as? [[String: Any]] ?? []
+        lockText = rich.compactMap { ($0["text"] as? [String: Any])?["content"] as? String }.joined()
+        patchedLocks.append(lockText)
+        onPatch?()
+        return [:]
+    }
+}
+
+final class BriefingCoordinationLeaseTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+    private func meeting(recurring: Bool = false, externalID: String? = "ics-uid") -> MeetingEvent {
+        MeetingEvent(id: "local-id", title: "Customer review", startDate: start,
+                     endDate: start.addingTimeInterval(1800), calendar: "Test",
+                     externalID: externalID, isRecurring: recurring)
+    }
+
+    func testLeaseRoundTripsAndRejectsMalformedText() {
+        let lease = BriefingLease(owner: BriefingLease.appOwner, jobID: "job-1",
+                                  expiresAt: Date(timeIntervalSince1970: 1_800_000_600))
+        XCTAssertEqual(BriefingLease.parse(lease.serialised), lease)
+        // A half-written or foreign-format value must never be read as a valid
+        // lease — that would silently grant exclusion nobody actually holds.
+        XCTAssertNil(BriefingLease.parse(""))
+        XCTAssertNil(BriefingLease.parse("meeting-reminder|job-1"))
+        XCTAssertNil(BriefingLease.parse("meeting-reminder|job-1|not-a-date"))
+        XCTAssertNil(BriefingLease.parse("|job-1|2027-01-01T00:00:00Z"))
+    }
+
+    func testExpiredOrForeignLeasesBlockCorrectly() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let mine = BriefingLease(owner: BriefingLease.appOwner, jobID: "job-1", expiresAt: now.addingTimeInterval(60))
+        let theirs = BriefingLease(owner: BriefingLease.scheduledOwner, jobID: "job-1", expiresAt: now.addingTimeInterval(60))
+        let stale = BriefingLease(owner: BriefingLease.scheduledOwner, jobID: "job-1", expiresAt: now.addingTimeInterval(-1))
+        XCTAssertFalse(mine.blocks(owner: BriefingLease.appOwner, jobID: "job-1", now: now))
+        XCTAssertTrue(theirs.blocks(owner: BriefingLease.appOwner, jobID: "job-1", now: now))
+        XCTAssertFalse(stale.blocks(owner: BriefingLease.appOwner, jobID: "job-1", now: now), "An expired lease must not park the occurrence forever")
+        // Our own lease for a *different* occurrence is still someone else's turn.
+        XCTAssertTrue(mine.blocks(owner: BriefingLease.appOwner, jobID: "job-2", now: now))
+    }
+
+    func testAppleEventIDMatchesTheSyncUpsertKey() {
+        XCTAssertEqual(BriefingNotionRepository.appleEventID(for: meeting()), "ics-uid")
+        // Recurring occurrences carry the Europe/London day suffix the Calendar
+        // Events sync writes, so the lease lands on that occurrence's own row.
+        XCTAssertEqual(BriefingNotionRepository.appleEventID(for: meeting(recurring: true)), "ics-uid_2027-01-15")
+        XCTAssertNil(BriefingNotionRepository.appleEventID(for: meeting(externalID: nil)))
+    }
+
+    func testClaimSucceedsOnAFreeRowAndReleasesCleanly() async {
+        let transport = FakeBriefingTransport()
+        let repository = BriefingNotionRepository(client: transport)
+        let outcome = await repository.claimLease(meeting(), jobID: "job-1", settle: 0)
+        XCTAssertEqual(outcome, .acquired)
+        XCTAssertTrue(transport.lockText.hasPrefix("\(BriefingLease.appOwner)|job-1|"))
+        await repository.releaseLease(meeting(), jobID: "job-1")
+        XCTAssertEqual(transport.lockText, "", "Releasing must clear the property so the other runner can claim it")
+    }
+
+    func testClaimDefersToALiveForeignLeaseWithoutOverwritingIt() async {
+        let transport = FakeBriefingTransport()
+        let held = BriefingLease(owner: BriefingLease.scheduledOwner, jobID: "other",
+                                 expiresAt: Date().addingTimeInterval(300))
+        transport.lockText = held.serialised
+        let repository = BriefingNotionRepository(client: transport)
+        let outcome = await repository.claimLease(meeting(), jobID: "job-1", settle: 0)
+        XCTAssertEqual(outcome, .heldByOther(BriefingLease.scheduledOwner))
+        XCTAssertTrue(transport.patchedLocks.isEmpty, "Deferring must not stamp over the holder's lease")
+        XCTAssertEqual(transport.lockText, held.serialised)
+    }
+
+    func testReadBackDetectsARunnerThatRacedOurClaim() async {
+        let transport = FakeBriefingTransport()
+        let repository = BriefingNotionRepository(client: transport)
+        // Simulate the scheduled runner claiming immediately after our PATCH: the
+        // verify read is the only thing that can catch this, and it must lose.
+        transport.onPatch = { [weak transport] in
+            guard transport?.patchedLocks.isEmpty == false else { return }
+            transport?.lockText = BriefingLease(owner: BriefingLease.scheduledOwner, jobID: "other",
+                                                expiresAt: Date().addingTimeInterval(300)).serialised
+        }
+        let outcome = await repository.claimLease(meeting(), jobID: "job-1", settle: 0)
+        XCTAssertEqual(outcome, .heldByOther(BriefingLease.scheduledOwner))
+    }
+
+    func testReleaseLeavesAForeignLeaseAlone() async {
+        let transport = FakeBriefingTransport()
+        let held = BriefingLease(owner: BriefingLease.scheduledOwner, jobID: "other",
+                                 expiresAt: Date().addingTimeInterval(300)).serialised
+        transport.lockText = held
+        await BriefingNotionRepository(client: transport).releaseLease(meeting(), jobID: "job-1")
+        XCTAssertEqual(transport.lockText, held, "Releasing must never clear another runner's lease")
+    }
+
+    func testUnlockableOccurrencesDegradeRatherThanBlock() async {
+        // No Calendar Events row (or two ambiguous ones), and an unreachable
+        // Notion, must all yield `.unavailable` — the briefing still proceeds on
+        // the weaker pre-write page check rather than being dropped.
+        let noRow = FakeBriefingTransport(); noRow.rowCount = 0
+        if case .unavailable = await BriefingNotionRepository(client: noRow).claimLease(meeting(), jobID: "j", settle: 0) {} else {
+            XCTFail("A missing Calendar Events row must degrade, not block")
+        }
+        let duplicated = FakeBriefingTransport(); duplicated.rowCount = 2
+        if case .unavailable = await BriefingNotionRepository(client: duplicated).claimLease(meeting(), jobID: "j", settle: 0) {} else {
+            XCTFail("Ambiguous rows must degrade rather than lock an arbitrary twin")
+        }
+        let broken = FakeBriefingTransport(); broken.failQueries = true
+        if case .unavailable = await BriefingNotionRepository(client: broken).claimLease(meeting(), jobID: "j", settle: 0) {} else {
+            XCTFail("A Notion error must degrade, not block")
+        }
+        let noID = FakeBriefingTransport()
+        if case .unavailable = await BriefingNotionRepository(client: noID).claimLease(meeting(externalID: nil), jobID: "j", settle: 0) {} else {
+            XCTFail("An occurrence with no external UID cannot be locked")
+        }
+    }
+}

@@ -122,10 +122,28 @@ final class BriefingFallbackCoordinator: ObservableObject {
                 try checkpoint(job); return "Meeting excluded by briefing skip rules."
             }
             if job.phase == .pending {
-                let context = await gather(job.meeting, notion)
+                // Cross-runner exclusion BEFORE spending a generation. The scheduled
+                // runner can be mid-write for this same occurrence; deferring costs
+                // one retry, duplicating costs a second briefing page.
+                var leaseNote: String?
+                switch await notion.claimLease(job.meeting, jobID: job.id) {
+                case .heldByOther(let owner):
+                    job.retry("Another briefing runner (\(owner)) holds this occurrence.")
+                    try checkpoint(job)
+                    return "Deferred to the \(owner) briefing runner."
+                case .unavailable(let reason):
+                    leaseNote = reason
+                case .acquired:
+                    break
+                }
+                var context = await gather(job.meeting, notion)
+                if let leaseNote { context.coverage.append(leaseNote) }
                 let shortcut = defaults.string(forKey: Keys.shortcut) ?? ""
                 let (draft, provider, usedContext) = try await generate(context, shortcut)
-                guard canWrite(job.id), occurrenceExists(job.meeting) == true else { return nil }
+                guard canWrite(job.id), occurrenceExists(job.meeting) == true else {
+                    await notion.releaseLease(job.meeting, jobID: job.id)
+                    return nil
+                }
                 job.context = usedContext; job.draft = draft; job.provider = provider
                 job.phase = .creating
                 try checkpoint(job) // durable BEFORE the first potentially ambiguous remote write
@@ -133,6 +151,9 @@ final class BriefingFallbackCoordinator: ObservableObject {
                 job.pageID = page.id; job.pageURL = page.url; job.phase = .saved
                 job.lastError = nil; job.attempts = 0; job.nextAttempt = Date().addingTimeInterval(900)
                 try checkpoint(job)
+                // The page now exists, so it is its own dedup key; holding the lease
+                // any longer would only block the scheduled runner's own reconciliation.
+                await notion.releaseLease(job.meeting, jobID: job.id)
                 return "Fallback saved to Notion (\(provider)); enrichment queued."
             }
             if job.phase == .saved {
@@ -165,6 +186,11 @@ final class BriefingFallbackCoordinator: ObservableObject {
             // Keep uncertain-write phases for read-only reconciliation on the next run.
             // Do not persist provider stderr, credentials or source text as errors.
             let message = (error as? BriefingFallbackError)?.localizedDescription ?? "Fallback operation failed; retry scheduled."
+            if job.phase == .pending, let notion = try? makeNotion(logPath) {
+                // Only the pending phase can still be holding a lease; a creating/
+                // enriching job has already written and must keep its checkpoint.
+                await notion.releaseLease(job.meeting, jobID: job.id)
+            }
             job.retry(message)
             do { try checkpoint(job) }
             catch { loadError = "Fallback checkpoint failed; paused to protect against duplicate writes."; status = loadError! }
