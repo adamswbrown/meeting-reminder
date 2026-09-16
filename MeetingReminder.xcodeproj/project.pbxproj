@@ -91,6 +91,7 @@
 		52C8C1616EC0443CA1C980FF /* BriefingPartnerResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18CFEAD44BE143088C51C20D /* BriefingPartnerResolver.swift */; };
 		A966495A0D5144E9BD59913F /* BriefingCoordinationLease.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F116FA4CAD4CBAA6E301ED /* BriefingCoordinationLease.swift */; };
 		D36BE3ADD2B24F12831B2054 /* BriefingFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D1C553BDEC1443CA92CE178 /* BriefingFallbackTests.swift */; };
+		998A0D14A9C04827B3B10944 /* BriefingDryRunTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C80C035332154C90B3E4EBB8 /* BriefingDryRunTests.swift */; };
 		CD03B21351D5456EBA28D2DC /* briefing-teams-context.py in Resources */ = {isa = PBXBuildFile; fileRef = BF8CCFB997B044D5A2FB6B78 /* briefing-teams-context.py */; };
 /* End PBXBuildFile section */
 
@@ -193,6 +194,7 @@
 		18CFEAD44BE143088C51C20D /* BriefingPartnerResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingPartnerResolver.swift"; sourceTree = "<group>"; };
 		43F116FA4CAD4CBAA6E301ED /* BriefingCoordinationLease.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingCoordinationLease.swift"; sourceTree = "<group>"; };
 		3D1C553BDEC1443CA92CE178 /* BriefingFallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingFallbackTests.swift"; sourceTree = "<group>"; };
+		C80C035332154C90B3E4EBB8 /* BriefingDryRunTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingDryRunTests.swift"; sourceTree = "<group>"; };
 		BF8CCFB997B044D5A2FB6B78 /* briefing-teams-context.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = "briefing-teams-context.py"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -343,6 +345,7 @@
 			isa = PBXGroup;
 			children = (
 				3D1C553BDEC1443CA92CE178 /* BriefingFallbackTests.swift */,
+				C80C035332154C90B3E4EBB8 /* BriefingDryRunTests.swift */,
 				T1000001 /* VideoLinkDetectorTests.swift */,
 				T1000002 /* MeetingEventTests.swift */,
 				T1000003 /* OverlayBackgroundTests.swift */,
@@ -520,6 +523,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D36BE3ADD2B24F12831B2054 /* BriefingFallbackTests.swift in Sources */,
+				998A0D14A9C04827B3B10944 /* BriefingDryRunTests.swift in Sources */,
 				T2000001 /* VideoLinkDetectorTests.swift in Sources */,
 				T2000002 /* MeetingEventTests.swift in Sources */,
 				T2000003 /* OverlayBackgroundTests.swift in Sources */,
