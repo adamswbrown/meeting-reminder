@@ -115,11 +115,12 @@ struct BriefingDeliveryService {
         let partner = metadata?.partner.map { " (\($0))" } ?? ""
         lines.append("🆕 \(time.string(from: job.meeting.startDate)) — \(job.meeting.title)\(partner)")
         if metadata?.isKeyMeeting == true { lines.append("   🔬 Google Colab — Key Meeting.") }
-        // One prep cue for this meeting: the briefing's opening sentence, or an
-        // explicit note that there was no history to work from.
+        // One prep cue for this meeting. Splitting on "." to take the first sentence
+        // looks right until the summary says "Dr. Migrate" and the cue truncates to
+        // "regarding the Dr." — abbreviations make sentence-splitting a trap. Take a
+        // word-bounded prefix instead: slightly longer, never mangled.
         if let summary = job.draft?.summary, !summary.isEmpty {
-            let sentence = summary.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true).first
-            lines.append("   \(String(sentence ?? Substring(summary)).trimmingCharacters(in: .whitespacesAndNewlines)).")
+            lines.append("   " + Self.cue(from: summary))
         } else if !context.evidence.contains(where: { $0.id.hasPrefix("notes") }) {
             lines.append("   No prior meeting notes found — treat history as unknown.")
         }
@@ -131,6 +132,18 @@ struct BriefingDeliveryService {
         if let url = job.pageURL { lines += ["", "📂 \(url)"] }
         lines += ["", "_Generated without the main model; it will be enriched automatically when access returns._"]
         return lines.joined(separator: "\n")
+    }
+
+    /// A single-line cue: the summary, trimmed to a whole word near `limit` and
+    /// ellipsised only if it actually had to cut.
+    static func cue(from summary: String, limit: Int = 180) -> String {
+        let flat = summary.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard flat.count > limit else { return flat }
+        let clipped = String(flat.prefix(limit))
+        guard let lastSpace = clipped.lastIndex(of: " ") else { return clipped + "…" }
+        return clipped[clipped.startIndex..<lastSpace]
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ,;:-")) + "…"
     }
 
     // MARK: - Todoist

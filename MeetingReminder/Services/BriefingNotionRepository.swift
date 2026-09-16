@@ -27,11 +27,10 @@ struct BriefingNotionRepository {
         let rows = try await queryAll(CalendarSyncConstants.skipListDataSourceID, body: [:])
         return rows.contains { row in
             let properties = row["properties"] as? [String: Any] ?? [:]
-            guard (properties["Active"] as? [String: Any])?["checkbox"] as? Bool != false,
-                  let titleParts = (properties["Meeting Title"] as? [String: Any])?["title"] as? [[String: Any]] else { return false }
-            let title = titleParts.map { $0["plain_text"] as? String ?? (($0["text"] as? [String: Any])?["content"] as? String ?? "") }.joined()
+            guard (properties["Active"] as? [String: Any])?["checkbox"] as? Bool != false else { return false }
+            let title = Self.propertyText(properties["Meeting Title"])
             guard !title.isEmpty else { return false }
-            let type = ((properties["Match Type"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String
+            let type = Self.propertyText(properties["Match Type"])
             let lhs = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let rhs = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             return type == "Title Contains" ? lhs.contains(rhs) : lhs == rhs
@@ -41,16 +40,16 @@ struct BriefingNotionRepository {
     /// Reads the shared Customer / Partner mapping rules. Read-only: the fallback
     /// classifies against these but never proposes or edits a rule (the skill's
     /// Step 8B Suggestions write is not implemented on this path).
-    func mappingRules() async throws -> [BriefingMappingRule] {
-        try await queryAll(CalendarSyncConstants.mappingRulesDataSourceID, body: [:]).compactMap { row in
+    func mappingRules() async throws -> BriefingMappingRuleSet {
+        let rows = try await queryAll(CalendarSyncConstants.mappingRulesDataSourceID, body: [:])
+        var set = BriefingMappingRuleSet(rowsSeen: rows.count)
+        set.rules = rows.compactMap { row in
             let properties = row["properties"] as? [String: Any] ?? [:]
-            let titleParts = (properties["Match Value"] as? [String: Any])?["title"] as? [[String: Any]] ?? []
-            let value = titleParts.map { $0["plain_text"] as? String ?? (($0["text"] as? [String: Any])?["content"] as? String ?? "") }.joined()
-            guard !value.isEmpty,
-                  let typeName = ((properties["Match Type"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String,
-                  let type = BriefingMappingRule.MatchType(rawValue: typeName),
-                  let partner = ((properties["Customer / Partner"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String,
-                  !partner.isEmpty else { return nil }
+            let value = Self.propertyText(properties["Match Value"])
+            let partner = Self.propertyText(properties["Customer / Partner"])
+            guard !value.isEmpty, !partner.isEmpty,
+                  let type = BriefingMappingRule.MatchType(rawValue: Self.propertyText(properties["Match Type"]))
+            else { return nil }
             return BriefingMappingRule(
                 matchValue: value, matchType: type, customerPartner: partner,
                 isPartner: (properties["Is Partner"] as? [String: Any])?["checkbox"] as? Bool ?? false,
@@ -58,6 +57,7 @@ struct BriefingNotionRepository {
                 // the rule is off — treat it as live, matching the skill.
                 active: (properties["Active"] as? [String: Any])?["checkbox"] as? Bool ?? true)
         }
+        return set
     }
 
     /// Full-depth retrieval: classify the meeting, then target prior history at the
@@ -71,11 +71,17 @@ struct BriefingNotionRepository {
             coverage: ["Calendar: EventKit snapshot; attendee email coverage may be incomplete."])
         var metadata = BriefingMetadata()
 
-        var rules: [BriefingMappingRule] = []
-        do { rules = try await mappingRules() }
+        var ruleSet = BriefingMappingRuleSet()
+        do { ruleSet = try await mappingRules() }
         catch { context.coverage.append("Mapping Rules unavailable; partner resolved without them.") }
+        // Rows that all fail to parse mean a column type changed under us. Without
+        // this the ladder degrades to the convener fallback and looks merely
+        // unlucky rather than broken.
+        if ruleSet.looksBroken {
+            context.coverage.append("Mapping Rules returned \(ruleSet.rowsSeen) rows but none parsed — the schema may have changed; partner resolution is running blind.")
+        }
         let resolution = BriefingPartnerResolver.resolve(
-            attendees: meeting.attendees ?? [], title: meeting.title, rules: rules)
+            attendees: meeting.attendees ?? [], title: meeting.title, rules: ruleSet.rules)
         metadata.partner = resolution.partner
         metadata.partnerByInference = resolution.byInference
         metadata.isKeyMeeting = resolution.isGoogleColab
@@ -131,11 +137,11 @@ struct BriefingNotionRepository {
             guard let id = row["id"] as? String else { continue }
             metadata.priorPageIDs.append(id)
             let properties = row["properties"] as? [String: Any] ?? [:]
-            let status = ((properties["Status"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String
+            let status = Self.propertyText(properties["Status"])
             let text = (try? await pageText(id, maxCharacters: 8000)) ?? "[unreadable]"
             context.evidence.append(.init(
                 id: "notes-\(index + 1)",
-                source: "Prior meeting notes (\(status ?? "status unknown"))",
+                source: "Prior meeting notes (\(status.isEmpty ? "status unknown" : status))",
                 text: text,
                 url: row["url"] as? String ?? "https://www.notion.so/\(id.replacingOccurrences(of: "-", with: ""))"))
         }
@@ -194,7 +200,7 @@ struct BriefingNotionRepository {
               abs(start.timeIntervalSince(meeting.startDate)) < 1 else {
             throw BriefingFallbackError.unavailable("Briefing page is archived or the meeting time changed; review required.")
         }
-        let outcome = ((properties["Meeting Outcome"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String
+        let outcome = Self.propertyText(properties["Meeting Outcome"])
         if outcome == "Cancelled" { throw BriefingFallbackError.unavailable("Meeting was cancelled.") }
     }
 
@@ -326,6 +332,31 @@ struct BriefingNotionRepository {
     static func rich(_ text: String) -> [[String: Any]] {
         [["type": "text", "text": ["content": String(text.prefix(1900))]]]
     }
+    /// Reads a Notion property's text regardless of which property TYPE it is.
+    ///
+    /// These databases mix `select`, `status`, `rich_text` and `title` for fields
+    /// that are conceptually the same string — Mapping Rules stores
+    /// `Customer / Partner` as rich_text while Pre-Call Briefings stores it as a
+    /// select, and Meeting Notes `Status` is Notion's `status` type, not a select.
+    /// A reader that assumes one type fails **silently**, which is exactly how the
+    /// mapping-rules ladder sat dead: every rule parsed to an empty partner and was
+    /// dropped by its own validity guard. Handling all four is cheaper than being
+    /// wrong, and cannot regress if a column's type is changed in Notion.
+    static func propertyText(_ property: Any?) -> String {
+        guard let property = property as? [String: Any] else { return "" }
+        for key in ["select", "status"] {
+            if let value = property[key] as? [String: Any], let name = value["name"] as? String { return name }
+        }
+        for key in ["rich_text", "title"] {
+            if let parts = property[key] as? [[String: Any]] {
+                return parts.map {
+                    $0["plain_text"] as? String ?? (($0["text"] as? [String: Any])?["content"] as? String ?? "")
+                }.joined()
+            }
+        }
+        return ""
+    }
+
     static func blockText(_ block: [String: Any]) -> String {
         guard let type = block["type"] as? String,
               let payload = block[type] as? [String: Any], let rich = payload["rich_text"] as? [[String: Any]] else { return "" }

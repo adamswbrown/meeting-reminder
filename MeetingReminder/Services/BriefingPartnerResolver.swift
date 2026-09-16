@@ -35,6 +35,15 @@ struct BriefingMappingRule: Equatable {
     }
 }
 
+/// The mapping rules plus enough diagnostics to tell "no rule matched" apart from
+/// "nothing parsed". Those look identical downstream — both yield the convener
+/// fallback — but one is normal and the other means partner resolution is dead.
+struct BriefingMappingRuleSet: Equatable {
+    var rules: [BriefingMappingRule] = []
+    var rowsSeen = 0
+    var looksBroken: Bool { rowsSeen > 0 && rules.isEmpty }
+}
+
 struct BriefingPartnerResolution: Equatable {
     /// Canonical `Customer / Partner` select value, or nil when nothing resolved.
     var partner: String?

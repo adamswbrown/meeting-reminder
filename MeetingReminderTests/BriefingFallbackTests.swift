@@ -306,6 +306,9 @@ final class BriefingAppleSmokeTests: XCTestCase {
 final class FakeBriefingTransport: BriefingNotionTransport, @unchecked Sendable {
     var lockText = ""
     var rowCount = 1
+    /// When set, queries return these rows verbatim instead of the synthetic
+    /// lock rows — used by the mapping-rules tests.
+    var rows: [[String: Any]]?
     var failQueries = false
     var onPatch: (() -> Void)?
     private(set) var patchedLocks: [String] = []
@@ -314,6 +317,7 @@ final class FakeBriefingTransport: BriefingNotionTransport, @unchecked Sendable 
 
     func post(path: String, body: [String: Any]) async throws -> [String: Any] {
         if failQueries { throw BriefingFallbackError.unavailable("network") }
+        if let rows { return ["results": rows, "has_more": false] }
         let rows = (0..<rowCount).map { index -> [String: Any] in
             ["id": "row-\(index)", "properties": [
                 BriefingNotionRepository.lockProperty: ["rich_text": lockText.isEmpty ? []
@@ -701,7 +705,24 @@ final class BriefingDeliveryTests: XCTestCase {
         XCTAssertTrue(text.contains("Send SOW (#AI-f23cd7)"))
         XCTAssertTrue(text.contains("https://notion.so/brief"))
         XCTAssertTrue(text.contains("enriched automatically"), "The reader must know this is not the full briefing")
-        XCTAssertTrue(text.contains("Renewal is at risk."), "The prep cue should be the briefing's opening sentence")
+        XCTAssertTrue(text.contains("Renewal is at risk"), "The prep cue should carry the briefing's opening")
+    }
+
+    func testPrepCueIsNotManagledByAbbreviations() {
+        // The real 2026-09-16 dry run truncated a cue to "regarding the Dr." because
+        // it split on "." and the summary said "Dr. Migrate".
+        let summary = "This meeting is part of the FY27 enablement office hours, providing a space for Q&A regarding the Dr. Migrate 6.0 release."
+        let cue = BriefingDeliveryService.cue(from: summary)
+        XCTAssertTrue(cue.contains("Dr. Migrate"), "An abbreviation must not end the cue")
+        XCTAssertFalse(cue.hasSuffix("the Dr."))
+        // Long summaries clip on a word boundary, never mid-word.
+        let long = String(repeating: "alpha beta ", count: 60)
+        let clipped = BriefingDeliveryService.cue(from: long)
+        XCTAssertTrue(clipped.hasSuffix("…"))
+        XCTAssertLessThanOrEqual(clipped.count, 181)
+        XCTAssertFalse(clipped.dropLast().hasSuffix("alph"), "Must clip at a word boundary")
+        // A short summary is passed through untouched, with no ellipsis.
+        XCTAssertEqual(BriefingDeliveryService.cue(from: "Short one."), "Short one.")
     }
 }
 
@@ -772,5 +793,99 @@ final class BriefingReviewQueueTests: XCTestCase {
         coordinator.resumeReview(active.id)
         coordinator.dismissReview(active.id)
         XCTAssertEqual(try store.load().first?.phase, .saved, "Only a parked job may be resumed or dismissed")
+    }
+}
+
+// MARK: - Notion property-type handling (regressions found by the 2026-09-16 dry run)
+
+final class BriefingNotionPropertyTests: XCTestCase {
+    /// Payload shapes copied from the live databases. Mapping Rules stores
+    /// `Customer / Partner` as rich_text, Pre-Call Briefings stores it as a select,
+    /// and Meeting Notes `Status` is Notion's `status` type. Reading any one of
+    /// those with the wrong accessor fails silently.
+    func testPropertyTextReadsEveryTypeTheseDatabasesUse() {
+        XCTAssertEqual(BriefingNotionRepository.propertyText(
+            ["type": "select", "select": ["name": "Microsoft"]]), "Microsoft")
+        XCTAssertEqual(BriefingNotionRepository.propertyText(
+            ["type": "status", "status": ["name": "Completed"]]), "Completed")
+        XCTAssertEqual(BriefingNotionRepository.propertyText(
+            ["type": "rich_text", "rich_text": [["text": ["content": "Source Code Control"]]]]), "Source Code Control")
+        XCTAssertEqual(BriefingNotionRepository.propertyText(
+            ["type": "title", "title": [["plain_text": "sourcecodecontrol.com"]]]), "sourcecodecontrol.com")
+        // Absent, empty and cleared properties must all read as empty, never crash.
+        XCTAssertEqual(BriefingNotionRepository.propertyText(nil), "")
+        XCTAssertEqual(BriefingNotionRepository.propertyText(["type": "select", "select": NSNull()]), "")
+        XCTAssertEqual(BriefingNotionRepository.propertyText(["type": "rich_text", "rich_text": [[String: Any]]()]), "")
+    }
+
+    /// The exact shape of the live `sourcecodecontrol.com` rule. Before the fix its
+    /// rich_text partner read as nil, the rule was dropped by its own validity
+    /// guard, and EVERY meeting fell through to the Tier 3 convener fallback.
+    func testRichTextPartnerRuleParsesAndWinsAsTier1() async throws {
+        let transport = FakeBriefingTransport()
+        transport.rows = [[
+            "id": "rule-1",
+            "properties": [
+                "Match Value": ["type": "title", "title": [["text": ["content": "sourcecodecontrol.com"]]]],
+                "Match Type": ["type": "select", "select": ["name": "Email Domain"]],
+                "Customer / Partner": ["type": "rich_text", "rich_text": [["text": ["content": "Source Code Control"]]]],
+                "Is Partner": ["type": "checkbox", "checkbox": true],
+                "Active": ["type": "checkbox", "checkbox": true],
+            ],
+        ]]
+        let set = try await BriefingNotionRepository(client: transport).mappingRules()
+        XCTAssertEqual(set.rules.count, 1)
+        XCTAssertFalse(set.looksBroken)
+        let rule = try XCTUnwrap(set.rules.first)
+        XCTAssertEqual(rule.customerPartner, "Source Code Control")
+        XCTAssertTrue(rule.isPartner)
+
+        // A Microsoft-convened partner meeting must resolve to the partner, not to
+        // the convener — the real-world failure the dry run exposed.
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["gourav.tandon@sourcecodecontrol.com", "lisalaber@microsoft.com",
+                        "v-absarna@microsoft.com", "luke.lloyd@altra.cloud"],
+            title: "SCC FY27 Office Hours", rules: set.rules)
+        XCTAssertEqual(resolution.partner, "Source Code Control")
+        XCTAssertFalse(resolution.byInference, "A real Tier 1 rule matched; this is not an inference")
+        XCTAssertEqual(resolution.primaryDomain, "microsoft.com")
+    }
+
+    /// Rows that all fail to parse are indistinguishable downstream from "no rule
+    /// matched" — both give the convener fallback. One is normal, the other means
+    /// partner resolution is dead, so they must not look the same.
+    func testWholesaleParseFailureIsDetectable() async throws {
+        let transport = FakeBriefingTransport()
+        transport.rows = (0..<3).map { index in
+            ["id": "rule-\(index)", "properties": [
+                "Match Value": ["type": "title", "title": [["text": ["content": "example.com"]]]],
+                "Match Type": ["type": "select", "select": ["name": "Email Domain"]],
+                // Partner cleared / unreadable.
+                "Customer / Partner": ["type": "rich_text", "rich_text": [[String: Any]]()],
+            ]]
+        }
+        let set = try await BriefingNotionRepository(client: transport).mappingRules()
+        XCTAssertTrue(set.rules.isEmpty)
+        XCTAssertEqual(set.rowsSeen, 3)
+        XCTAssertTrue(set.looksBroken)
+
+        // No rows at all is an empty workspace, not a broken schema.
+        let empty = FakeBriefingTransport(); empty.rows = []
+        let none = try await BriefingNotionRepository(client: empty).mappingRules()
+        XCTAssertFalse(none.looksBroken)
+    }
+
+    func testUnknownMatchTypeAndInactiveRulesAreStillRejected() async throws {
+        let transport = FakeBriefingTransport()
+        transport.rows = [[
+            "id": "rule-1", "properties": [
+                "Match Value": ["type": "title", "title": [["text": ["content": "example.com"]]]],
+                "Match Type": ["type": "select", "select": ["name": "Carrier Pigeon"]],
+                "Customer / Partner": ["type": "rich_text", "rich_text": [["text": ["content": "Example"]]]],
+            ],
+        ]]
+        let set = try await BriefingNotionRepository(client: transport).mappingRules()
+        XCTAssertTrue(set.rules.isEmpty, "An unrecognised Match Type must not become a rule")
+        XCTAssertTrue(set.looksBroken)
     }
 }
