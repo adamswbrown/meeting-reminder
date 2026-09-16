@@ -13,6 +13,8 @@ Design + full validation trail:
 
 ---
 
+> **When Claude is out of credit**, an opt-in Apple Intelligence fallback takes over this path and produces the briefing on-device or via a Shortcut, then lets Claude enrich the same page on recovery. See [BRIEFING-FALLBACK.md](BRIEFING-FALLBACK.md).
+
 ## Why this exists
 
 Co Work runs on a schedule (~3×/day). A meeting booked *between* runs goes un-briefed
