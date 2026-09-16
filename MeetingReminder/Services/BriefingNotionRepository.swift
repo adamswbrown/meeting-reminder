@@ -110,8 +110,15 @@ struct BriefingNotionRepository {
             ladder.append(("partner title match", ["property": CalendarSyncConstants.meetingNotesTitleProperty,
                                                    "title": ["contains": partner]]))
         }
-        if let domain = resolution.primaryDomain {
-            ladder.append(("attendee domain match", ["property": "Attendees Email", "rich_text": ["contains": domain]]))
+        for domain in resolution.partnerDomains {
+            ladder.append(("partner domain match (\(domain))",
+                           ["property": "Attendees Email", "rich_text": ["contains": domain]]))
+        }
+        // Only worth trying if it is not already covered above: on a convened call
+        // this is usually the convener's domain, not the partner's.
+        if let domain = resolution.primaryDomain, !resolution.partnerDomains.contains(domain) {
+            ladder.append(("most-frequent domain match (\(domain))",
+                           ["property": "Attendees Email", "rich_text": ["contains": domain]]))
         }
         ladder.append(("meeting title match", ["property": CalendarSyncConstants.meetingNotesTitleProperty,
                                                "title": ["contains": meeting.title]]))
@@ -267,7 +274,16 @@ struct BriefingNotionRepository {
             if response["has_more"] as? Bool == true { pieces.append("[additional blocks omitted]") }
             for block in response["results"] as? [[String: Any]] ?? [] {
                 guard remaining > 0 else { break }
-                let text = String(Self.blockText(block).prefix(remaining))
+                // Render a to_do as "- [ ] …" / "- [x] …". Without the marker and its
+                // checked state, `BriefingPartnerResolver.openActionItems` can never
+                // match a carried-forward item, and a completed item is
+                // indistinguishable from an open one.
+                var rendered = Self.blockText(block)
+                if block["type"] as? String == "to_do" {
+                    let checked = (block["to_do"] as? [String: Any])?["checked"] as? Bool ?? false
+                    rendered = "- [\(checked ? "x" : " ")] " + rendered
+                }
+                let text = String(rendered.prefix(remaining))
                 pieces.append(text); remaining -= text.count
                 if block["has_children"] as? Bool == true, let childID = block["id"] as? String {
                     if depth < 2 { try await walk(childID, depth: depth + 1) }

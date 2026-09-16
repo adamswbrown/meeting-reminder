@@ -313,7 +313,13 @@ final class FakeBriefingTransport: BriefingNotionTransport, @unchecked Sendable 
     var onPatch: (() -> Void)?
     private(set) var patchedLocks: [String] = []
 
-    func get(path: String) async throws -> [String: Any] { [:] }
+    /// Block children returned by `get` for page-text reads.
+    var children: [[String: Any]] = []
+
+    func get(path: String) async throws -> [String: Any] {
+        if failQueries { throw BriefingFallbackError.unavailable("network") }
+        return ["results": children, "has_more": false]
+    }
 
     func post(path: String, body: [String: Any]) async throws -> [String: Any] {
         if failQueries { throw BriefingFallbackError.unavailable("network") }
@@ -887,5 +893,71 @@ final class BriefingNotionPropertyTests: XCTestCase {
         let set = try await BriefingNotionRepository(client: transport).mappingRules()
         XCTAssertTrue(set.rules.isEmpty, "An unrecognised Match Type must not become a rule")
         XCTAssertTrue(set.looksBroken)
+    }
+}
+
+// MARK: - Prior-history targeting and action extraction (2026-09-16 dry-run follow-ups)
+
+final class BriefingHistoryTargetingTests: XCTestCase {
+    func testPartnerDomainIsTheMatchedRuleNotTheLoudestAttendee() {
+        // The real SCC call: 3 Microsoft attendees, 1 Source Code Control. The
+        // partner rule matches SCC, but primaryDomain is microsoft.com — so
+        // targeting history at primaryDomain would search the convener's history.
+        let rules = [BriefingMappingRule(matchValue: "sourcecodecontrol.com", matchType: .emailDomain,
+                                         customerPartner: "Source Code Control", isPartner: true, active: true)]
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["gourav.tandon@sourcecodecontrol.com", "lisalaber@microsoft.com",
+                        "v-absarna@microsoft.com", "v-anastev@microsoft.com"],
+            title: "SCC FY27 Office Hours", rules: rules)
+        XCTAssertEqual(resolution.partner, "Source Code Control")
+        XCTAssertEqual(resolution.partnerDomains, ["sourcecodecontrol.com"])
+        XCTAssertEqual(resolution.primaryDomain, "microsoft.com",
+                       "primaryDomain stays the most-frequent domain; it is simply no longer the first thing tried")
+    }
+
+    func testPartnerDomainsAreEmptyWhenNoEmailRuleWon() {
+        // Title-keyword, convener and internal resolutions have no matched domain,
+        // so history targeting must fall back rather than invent one.
+        let byTitle = BriefingPartnerResolver.resolve(
+            attendees: ["someone@contoso.com"], title: "Acme sync",
+            rules: [BriefingMappingRule(matchValue: "acme", matchType: .titleKeyword,
+                                        customerPartner: "Acme", isPartner: false, active: true)])
+        XCTAssertEqual(byTitle.partner, "Acme")
+        XCTAssertTrue(byTitle.partnerDomains.isEmpty)
+
+        let convened = BriefingPartnerResolver.resolve(
+            attendees: ["x@microsoft.com"], title: "Sync", rules: [])
+        XCTAssertEqual(convened.partner, "Microsoft")
+        XCTAssertTrue(convened.partnerDomains.isEmpty)
+    }
+
+    func testSubdomainAttendeesResolveToTheirMatchedDomain() {
+        let rules = [BriefingMappingRule(matchValue: "contoso.com", matchType: .emailDomain,
+                                         customerPartner: "Contoso", isPartner: false, active: true)]
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["a@emea.contoso.com", "b@contoso.com"], title: "Review", rules: rules)
+        XCTAssertEqual(resolution.partnerDomains, ["contoso.com", "emea.contoso.com"],
+                       "Every attendee domain the rule matched is a valid history target")
+    }
+
+    /// `pageText` fed `openActionItems` with the checkbox markers stripped, so no
+    /// carried-forward item could ever be found — which is why every dry run
+    /// reported "Open actions: 0" despite real `- [ ]` items with #AI hashes.
+    func testToDoBlocksKeepTheirCheckboxSoActionsCanBeExtracted() async throws {
+        let transport = FakeBriefingTransport()
+        transport.children = [
+            ["type": "paragraph", "paragraph": ["rich_text": [["plain_text": "## Action Items (from last call)"]]]],
+            ["type": "to_do", "to_do": ["checked": false,
+                "rich_text": [["plain_text": "Coach Lee ahead of his presentation (#AI-bec435)"]]]],
+            ["type": "to_do", "to_do": ["checked": true,
+                "rich_text": [["plain_text": "Already done (#AI-aaaaaa)"]]]],
+        ]
+        let text = try await BriefingNotionRepository(client: transport).pageText("page-1", maxCharacters: 4000)
+        XCTAssertTrue(text.contains("- [ ] Coach Lee"), "An open item must keep its marker")
+        XCTAssertTrue(text.contains("- [x] Already done"), "A completed item must be distinguishable")
+
+        let actions = BriefingPartnerResolver.openActionItems(in: text)
+        XCTAssertEqual(actions.map(\.id), ["#AI-bec435"], "Only the unticked item carries forward")
+        XCTAssertEqual(actions.first?.text, "Coach Lee ahead of his presentation")
     }
 }

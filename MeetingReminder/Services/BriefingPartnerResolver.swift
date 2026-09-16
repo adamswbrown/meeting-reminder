@@ -51,8 +51,14 @@ struct BriefingPartnerResolution: Equatable {
     /// internal fallback. The skill raises a Mapping Rule Suggestion in this case;
     /// the fallback records it in source coverage instead.
     var byInference = false
-    /// Primary external email domain, used to target prior-history queries.
+    /// Most-represented external email domain. A reasonable default, but NOT
+    /// necessarily the partner's: on a Microsoft-convened partner call the
+    /// convener usually outnumbers the partner.
     var primaryDomain: String?
+    /// The domain(s) that actually matched the winning Email Domain rule — the
+    /// partner's own. Empty when the partner came from a title keyword, the
+    /// convener fallback or the internal fallback.
+    var partnerDomains: [String] = []
     /// Any `@google.com` attendee: always brief, and flag as a Key Meeting.
     var isGoogleColab = false
     /// Human-readable account of which rule/tier won, for the coverage line.
@@ -118,6 +124,12 @@ enum BriefingPartnerResolver {
                     return result
                 }
                 result.partner = partner
+                if matchKind == "email domain" {
+                    // Remember which domains won, so prior-history queries target the
+                    // partner rather than whoever brought the most attendees.
+                    result.partnerDomains = Set(tierRules.filter { $0.customerPartner == partner }
+                        .flatMap { rule in external.filter { rule.matchesDomain($0) } }).sorted()
+                }
                 result.rationale = "Tier \(tier) (\(isPartner ? "Partner" : "Customer")) \(matchKind) rule matched \(partner)."
                 return result
             }
