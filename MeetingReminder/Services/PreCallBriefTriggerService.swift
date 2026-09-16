@@ -238,6 +238,9 @@ final class PreCallBriefTriggerService: ObservableObject {
     private let fallback: BriefingFallbackCoordinator
     private var fallbackChanges: AnyCancellable?
     @Published private(set) var fallbackStatus = ""
+    /// Fallback jobs parked for human review — surfaced in Settings so an uncertain
+    /// write is visible rather than sitting silently in the on-disk ledger.
+    @Published private(set) var fallbackReviewItems: [BriefingFallbackJob] = []
 
     private var pending: [MeetingEvent] = []    // detected-but-not-yet-briefed, drained serially
 
@@ -271,7 +274,11 @@ final class PreCallBriefTriggerService: ObservableObject {
         // A child that closes its stdin before we finish writing must not SIGPIPE-kill
         // the whole app (M4). We handle the write error explicitly instead.
         signal(SIGPIPE, SIG_IGN)
-        fallbackChanges = fallback.$status.sink { [weak self] in self?.fallbackStatus = $0 }
+        fallbackChanges = fallback.$status.sink { [weak self] in
+            self?.fallbackStatus = $0
+            self?.fallbackReviewItems = self?.fallback.reviewJobs ?? []
+        }
+        fallbackReviewItems = fallback.reviewJobs
     }
 
     // MARK: Lifecycle
@@ -638,6 +645,18 @@ final class PreCallBriefTriggerService: ObservableObject {
 
     /// Read the skill, substitute the target meeting block. `mode` is `NEW` (brief) or
     /// `REMOVED` (cancellation/reschedule).
+    /// Re-queues a parked job. Reconciliation, not regeneration — see the coordinator.
+    func resumeFallbackReview(_ id: String) {
+        fallback.resumeReview(id)
+        fallbackReviewItems = fallback.reviewJobs
+    }
+
+    /// Stops retrying a parked job. Touches nothing in Notion, Slack or Todoist.
+    func dismissFallbackReview(_ id: String) {
+        fallback.dismissReview(id)
+        fallbackReviewItems = fallback.reviewJobs
+    }
+
     private func buildPrompt(for target: MeetingEvent, mode: String) -> String? {
         guard let template = try? String(contentsOfFile: skillPath, encoding: .utf8) else { return nil }
         let london = TimeZone(identifier: "Europe/London")

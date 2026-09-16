@@ -112,6 +112,10 @@ struct BriefingFallbackJob: Codable, Identifiable {
     var attempts = 0
     var nextAttempt = Date()
     var lastError: String?
+    /// The phase a job was in when it was parked for review. Resuming restores it
+    /// so the run re-enters marker reconciliation rather than blindly regenerating
+    /// — the uncertain write may well have succeeded.
+    var reviewFromPhase: Phase?
     var createdAt = Date()
 
     init(meeting: MeetingEvent) {

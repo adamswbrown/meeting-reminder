@@ -704,3 +704,73 @@ final class BriefingDeliveryTests: XCTestCase {
         XCTAssertTrue(text.contains("Renewal is at risk."), "The prep cue should be the briefing's opening sentence")
     }
 }
+
+// MARK: - Review queue actions (item 5)
+
+@MainActor
+final class BriefingReviewQueueTests: XCTestCase {
+    private func coordinator(_ jobs: [BriefingFallbackJob]) throws -> (BriefingFallbackCoordinator, BriefingFallbackStore) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = BriefingFallbackStore(url: directory.appendingPathComponent("queue.json"))
+        try store.save(jobs)
+        return (BriefingFallbackCoordinator(store: store, defaults: UserDefaults(suiteName: UUID().uuidString)!), store)
+    }
+    private func parked(_ reason: String, from phase: BriefingFallbackJob.Phase?) -> BriefingFallbackJob {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var job = BriefingFallbackJob(meeting: MeetingEvent(
+            id: "local-id", title: "Customer review", startDate: start, endDate: start.addingTimeInterval(1800),
+            calendar: "Test", externalID: "ics-uid", isRecurring: false))
+        job.phase = .needsReview
+        job.reviewFromPhase = phase
+        job.lastError = reason
+        job.attempts = 5
+        job.pageID = "page-1"
+        return job
+    }
+
+    func testResumeReturnsTheJobToReconciliationNotRegeneration() throws {
+        let job = parked("Uncertain fallback write; no marker found.", from: .creating)
+        let (coordinator, store) = try coordinator([job])
+        XCTAssertEqual(coordinator.reviewJobs.count, 1)
+        coordinator.resumeReview(job.id)
+        let resumed = try XCTUnwrap(store.load().first)
+        // .creating re-enters the marker check, which can adopt an existing page.
+        // .pending would generate and write a second briefing.
+        XCTAssertEqual(resumed.phase, .creating)
+        XCTAssertNil(resumed.reviewFromPhase)
+        XCTAssertEqual(resumed.attempts, 0, "Resuming must clear the backoff so the retry happens now")
+        XCTAssertNil(resumed.lastError)
+        XCTAssertTrue(coordinator.reviewJobs.isEmpty)
+    }
+
+    func testResumeAfterTheSevenDayExpiryRestartsTheClock() throws {
+        var job = parked("Recovery paused after seven days.", from: .saved)
+        job.createdAt = Date().addingTimeInterval(-30 * 86400)
+        let (coordinator, store) = try coordinator([job])
+        coordinator.resumeReview(job.id)
+        let resumed = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(resumed.phase, .saved)
+        XCTAssertGreaterThan(resumed.createdAt, Date().addingTimeInterval(-60),
+                             "Without restarting the clock the job would re-expire on its very next run")
+    }
+
+    func testDismissStopsRetriesWithoutTouchingTheRecordedPage() throws {
+        let job = parked("Uncertain enrichment append; no marker found.", from: .enriching)
+        let (coordinator, store) = try coordinator([job])
+        coordinator.dismissReview(job.id)
+        let dismissed = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(dismissed.phase, .cancelled)
+        XCTAssertFalse(dismissed.isActive)
+        XCTAssertEqual(dismissed.pageID, "page-1", "Dismissing must not discard the pointer to the page under review")
+        XCTAssertTrue(coordinator.reviewJobs.isEmpty)
+    }
+
+    func testReviewActionsIgnoreJobsThatAreNotParked() throws {
+        var active = parked("in flight", from: nil)
+        active.phase = .saved
+        let (coordinator, store) = try coordinator([active])
+        coordinator.resumeReview(active.id)
+        coordinator.dismissReview(active.id)
+        XCTAssertEqual(try store.load().first?.phase, .saved, "Only a parked job may be resumed or dismissed")
+    }
+}

@@ -1110,6 +1110,12 @@ struct SettingsView: View {
                         Text("Leave blank for on-device only. A named shortcut receives meeting context and must return the Use Model response without sending messages or changing notes.")
                             .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("Fallback queue", value: preCallBriefTrigger.fallbackStatus)
+                        if !preCallBriefTrigger.fallbackReviewItems.isEmpty {
+                            BriefingReviewList(
+                                items: preCallBriefTrigger.fallbackReviewItems,
+                                resume: preCallBriefTrigger.resumeFallbackReview,
+                                dismiss: preCallBriefTrigger.dismissFallbackReview)
+                        }
                     }
                 }
                 if !preCallBriefTrigger.lastResult.isEmpty {
@@ -1323,6 +1329,62 @@ enum OverlayBackground: String, CaseIterable, Identifiable {
                                         Color(red: 0.086, green: 0.106, blue: 0.133).opacity(0.88)],
                                startPoint: .top, endPoint: .bottom)
             )
+        }
+    }
+}
+
+
+/// Briefing fallback entries parked for human review.
+///
+/// These are writes whose outcome the app could not confirm — a Notion create or
+/// enrichment that may or may not have landed — plus jobs whose recovery passed the
+/// seven-day limit. The app deliberately stops rather than repeating an uncertain
+/// write, so the only way they clear is here.
+///
+/// "Try again" re-reads the page and its markers before deciding anything; it is
+/// not a regenerate. "Dismiss" only stops the retries — it never touches the Notion
+/// page, the Slack thread or the Todoist tasks, so nothing is silently unmade.
+private struct BriefingReviewList: View {
+    let items: [BriefingFallbackJob]
+    let resume: (String) -> Void
+    let dismiss: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("^[\(items.count) briefing](inflect: true) need review", systemImage: "exclamationmark.triangle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+            ForEach(items) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.meeting.title).font(.callout.weight(.medium)).lineLimit(1)
+                    Text(item.meeting.startDate, format: .dateTime.weekday().day().month().hour().minute())
+                        .font(.caption2).foregroundStyle(.tertiary)
+                    if let reason = item.lastError {
+                        Text(reason).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        // Checking the recorded page before acting is the whole point
+                        // of parking these, so make it one click away.
+                        if let url = item.pageURL, let link = URL(string: url) {
+                            Link("Open the briefing", destination: link).font(.caption)
+                        } else {
+                            Text("No page was recorded for this job.").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        Button("Try again") { resume(item.id) }
+                        Button("Dismiss") { dismiss(item.id) }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(8)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
+            Text("Check the linked page before retrying: an uncertain write may already have succeeded. Dismissing stops the retries only — it leaves Notion, Slack and Todoist untouched.")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-15
 
-**Status:** Initial fallback implementation built and tested on 2026-09-16 on `codex/local-briefing-fallback-design`. Native generation, Shortcuts Cloud Pro and independent Teams MCP checks pass. The feature remains off by default and has not been deployed. Shared scheduled-runner coordination, normal Slack/Todoist delivery and representative briefing evaluation remain open; this is not yet the full production acceptance milestone.
+**Status:** Fallback implementation built and tested on `codex/local-briefing-fallback-design`; extended 2026-09-16 with the cross-runner lease, Slack/Todoist delivery parity, full-depth retrieval and the review queue (293 tests pass). Native generation, Shortcuts Cloud Pro and independent Teams MCP checks pass. **The feature remains off by default and has not been deployed.** The scheduled runner does not yet honour the lease, migration 004 has not been applied, and representative briefing evaluation is still open — this is not yet the production acceptance milestone.
 
 ## First runtime verification — 2026-09-15
 
@@ -88,13 +88,91 @@ TEST_RUNNER_BRIEFING_APPLE_SMOKE=1 xcodebuild \
   DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= test
 ```
 
-### Remaining before daily use
+### Implemented since — 2026-09-16 (items 1, 2, 3, 5)
 
-1. **Shared ownership with the scheduled CoWork runner.** App-side serialization and a final Notion query do not provide an atomic lock across external runners. No shared lease or scheduled-skill change has been implemented. Concurrent creators can still race. Establish the coordination protocol before enabling fallback in daily use.
-2. **Delivery/task parity.** The actual private main skill currently uses Slack and Todoist, not the older iMessage/Reminders path. This initial fallback saves the note and uses the app's local completion banner; it creates no external messages or tasks. Recovery also appends only to Notion. Implement separate idempotent delivery/task reconciliation before claiming normal workflow parity.
-3. **Retrieval depth and metadata.** Prior notes currently use a bounded title match, not the main skill's customer/domain mapping, completed-meeting classification, action-ID extraction or full prior-brief retrieval. Calendar links and partner/stage metadata are not written by the fallback. Long evidence is truncated with source IDs and coverage retained, not yet reduced through a hierarchical extraction pass.
-4. **Operational evaluation.** Test varied real briefings for omissions and factual grounding, reset metadata, deployed signed-app execution, lock/sleep behaviour and source/shortcut failure modes. Synthetic adapter checks do not establish these. Native generation is token-bounded but does not yet have an independent watchdog. The Shortcuts CLI has a 90-second timeout; terminating it cannot guarantee cancellation inside the Shortcuts service, so configured shortcuts must perform generation only.
-5. **Review workflow.** Ambiguous/uncertain writes and seven-day recovery expiry are exposed as “need review” with reasons in the ledger. A dedicated inspection/retry UI is not implemented; do not delete uncertain entries and re-run without checking their recorded pages and markers.
+Four of the five items below have been built on this branch. **293 tests pass**
+(was 260). The feature remains **off by default and undeployed**, and no live
+Notion write, Slack message or Todoist task was created while building this —
+every check ran against fakes.
+
+1. **Cross-runner lease — app side done, scheduled side outstanding.**
+   [`BriefingCoordinationLease.swift`](../../MeetingReminder/Services/BriefingCoordinationLease.swift)
+   adds an advisory lease in a `Briefing Lock` rich-text column on the
+   occurrence's Calendar Events row (migration `004-add-briefing-lock-column`),
+   keyed by the same composite Apple Event ID the sync upserts on. Notion has no
+   compare-and-swap, so the protocol is claim → settle → re-read → treat a
+   changed value as a lost race. That narrows the window from a whole generation
+   run (30–90s) to the settle delay. A missing row, ambiguous twin rows, a
+   missing column or an unreachable Notion all degrade to `.unavailable`, on
+   which the briefing proceeds under the pre-existing check-then-act guard. A
+   foreign or expired lease is never overwritten, and release only clears our
+   own. **This does not by itself close the race** — see "Still open" below.
+2. **Delivery/task parity — done.**
+   [`BriefingDeliveryService.swift`](../../MeetingReminder/Services/BriefingDeliveryService.swift)
+   posts to `#daily-breifings` and creates Todoist tasks in "Daily Briefing"
+   directly, using the Keychain tokens the headless skill already relies on
+   (`slackBotToken`, `todoistApiToken`; Todoist `/api/v1` with the `{"results":…}`
+   wrapper, not the dead `/rest/v2`). Slack posts once per occurrence — the
+   recorded `ts` is the idempotency key — and the enrichment update is a
+   **threaded reply**, so recovery can never read as a second new-meeting alert.
+   Todoist creates are guarded by the ledger *and* a live `#AI-XXXXXX` query,
+   since Co Work may have created the same task from the same prior brief, and
+   carry `X-Request-Id`. Nothing completes, reschedules or deletes a task. Only
+   carried-forward `- [ ]` items become tasks; the model's suggested preparation
+   is not agreed work and is never assigned.
+3. **Retrieval depth and metadata — done.**
+   [`BriefingPartnerResolver.swift`](../../MeetingReminder/Services/BriefingPartnerResolver.swift)
+   implements the skill's Step 4 ladder (Tier 1 Partner → Tier 2 Customer →
+   Tier 3 convener; email-domain rules before title keywords; dot-anchored
+   subdomain matching; `@altra.cloud` excluded; attendee count as tie-break).
+   Retrieval now walks the Step 6 ladder (partner title → attendee domain →
+   meeting title), pulls the last three prior briefings for the partner, and
+   carries their unticked `- [ ]` items forward **verbatim with their existing
+   `#AI` keys** — re-hashing would mint new IDs and orphan the Todoist tasks.
+   The `#AI-XXXXXX` derivation is pinned by fixed md5 vectors cross-checked
+   against the skill's definition; if that test fails, dedup against Co Work has
+   silently broken rather than merely changed. Pages now carry `Customer /
+   Partner`, `Stage` and the `Prior Meetings` relation.
+   *Two deliberate divergences:* `MeetingEvent` carries no organiser, so a tie
+   the attendee count cannot break resolves to blank-with-inference rather than
+   guessing; and an **inferred** partner is not written to the select column
+   (the option may not exist, which would fail the whole create) — it goes to
+   source coverage for review.
+5. **Review workflow — done.** Parked jobs appear in Settings → Intraday
+   Pre-Call Briefings with their reason and a link to the recorded page.
+   "Try again" restores the phase the job was parked from, so the run re-enters
+   **marker reconciliation, not regeneration** — the uncertain write may well
+   have landed. "Dismiss" only stops the retries; it never touches the Notion
+   page, the Slack thread or the Todoist tasks.
+
+### Still open before daily use
+
+1. **The scheduled runner must honour the lease.** The other half of the
+   protocol is not in this repo and has not been applied. Before enabling
+   fallback in daily use, the Co Work briefing routine must, for each target
+   occurrence, (a) read `Briefing Lock` on the Calendar Events row, (b) skip the
+   occurrence if it holds an unexpired lease whose owner is not `co-work`, and
+   (c) otherwise write `co-work|<run id>|<ISO8601 expiry>` before creating the
+   briefing page, clearing it afterwards. The format is a flat `owner|id|expiry`
+   string precisely so this is a few lines of the routine's existing Notion
+   work. **Until that lands the race is narrowed, not eliminated** — the app
+   defers to the runner, but the runner does not defer to the app. The routine
+   is external (`trig_01CUbUGc4yywHDdgUJTapsLb`); changing it is a deliberate,
+   separate act, not a side effect of this branch.
+2. **Migration 004 has not been applied.** It runs on the next Calendar → Notion
+   sync. Until the `Briefing Lock` column exists, every claim degrades to
+   `.unavailable` — safe, but no better than before.
+3. **Operational evaluation (unchanged from the original item 4).** Real
+   briefings have not been tested for omissions or factual grounding; nor have
+   reset metadata, deployed signed-app execution, lock/sleep behaviour, or
+   source/shortcut failure modes. Every check so far is synthetic or mocked.
+   Native generation is token-bounded but still has no independent watchdog, and
+   the Shortcuts CLI's 90-second timeout cannot guarantee cancellation inside
+   the Shortcuts service, so configured shortcuts must perform generation only.
+4. **Not implemented on this path:** the skill's Step 8B *Suggestions* row for an
+   inferred partner (coverage records the inference; nothing proposes a rule),
+   the Step 10 Notion *Run Log* row, and the attendee web-search enrichment for
+   first-time contacts.
 
 ## Proposed architecture
 

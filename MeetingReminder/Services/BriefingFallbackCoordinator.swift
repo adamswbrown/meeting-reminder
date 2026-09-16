@@ -88,7 +88,7 @@ final class BriefingFallbackCoordinator: ObservableObject {
                 try checkpoint(job); return "Fallback expired before generation."
             }
             if job.createdAt < Date().addingTimeInterval(-7 * 86400) {
-                job.phase = .needsReview; job.lastError = "Recovery paused after seven days."
+                job.reviewFromPhase = job.phase; job.phase = .needsReview; job.lastError = "Recovery paused after seven days."
                 try checkpoint(job); return "Briefing recovery needs review."
             }
             let notion = try makeNotion(logPath)
@@ -101,7 +101,7 @@ final class BriefingFallbackCoordinator: ObservableObject {
                     job.nextAttempt = Date().addingTimeInterval(900); try checkpoint(job)
                     return "Recovered fallback page; enrichment queued."
                 }
-                job.phase = .needsReview; job.lastError = "Uncertain fallback write; no marker found."
+                job.reviewFromPhase = .creating; job.phase = .needsReview; job.lastError = "Uncertain fallback write; no marker found."
                 try checkpoint(job); return "Fallback write needs review."
             }
             if job.phase == .enriching {
@@ -109,7 +109,7 @@ final class BriefingFallbackCoordinator: ObservableObject {
                     job.phase = .complete; try checkpoint(job)
                     return "Recovered completed enrichment."
                 }
-                job.phase = .needsReview; job.lastError = "Uncertain enrichment append; no marker found."
+                job.reviewFromPhase = .enriching; job.phase = .needsReview; job.lastError = "Uncertain enrichment append; no marker found."
                 try checkpoint(job); return "Enrichment write needs review."
             }
             guard let exists = occurrenceExists(job.meeting) else {
@@ -214,6 +214,45 @@ final class BriefingFallbackCoordinator: ObservableObject {
             return message
         }
         return nil
+    }
+
+    /// Jobs parked for human review, newest first.
+    var reviewJobs: [BriefingFallbackJob] {
+        jobs.filter { $0.phase == .needsReview }.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Puts a parked job back in the queue in the phase it was parked from, so the
+    /// next run re-reads the page and its markers before deciding anything. This is
+    /// deliberately NOT a "regenerate": the original write may have landed, and
+    /// repeating it is the one outcome the whole ledger exists to prevent.
+    func resumeReview(_ id: String) {
+        guard let index = jobs.firstIndex(where: { $0.id == id && $0.phase == .needsReview }) else { return }
+        var updated = jobs
+        // A job parked by the seven-day expiry has no uncertain write to reconcile
+        // and would immediately re-expire, so restart its clock as well.
+        updated[index].phase = updated[index].reviewFromPhase ?? .pending
+        updated[index].reviewFromPhase = nil
+        updated[index].attempts = 0
+        updated[index].nextAttempt = Date()
+        updated[index].createdAt = Date()
+        updated[index].lastError = nil
+        persist(updated, failure: "Could not resume the review item; fallback paused.")
+    }
+
+    /// Closes a parked job without touching anything remote. The Notion page and any
+    /// Slack/Todoist delivery stay exactly as they are — this only stops the app
+    /// retrying, and records why.
+    func dismissReview(_ id: String) {
+        guard let index = jobs.firstIndex(where: { $0.id == id && $0.phase == .needsReview }) else { return }
+        var updated = jobs
+        updated[index].phase = .cancelled
+        updated[index].lastError = "Dismissed after review; no further automatic action."
+        persist(updated, failure: "Could not dismiss the review item; fallback paused.")
+    }
+
+    private func persist(_ updated: [BriefingFallbackJob], failure: String) {
+        do { try store.save(updated); jobs = updated; refreshStatus() }
+        catch { status = failure; loadError = status }
     }
 
     private func canWrite(_ id: String) -> Bool {
