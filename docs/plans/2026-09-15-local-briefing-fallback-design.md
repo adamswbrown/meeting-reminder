@@ -2,7 +2,37 @@
 
 **Date:** 2026-09-15
 
-**Status:** Design recorded; implementation and model evaluation deferred until Adam has upgraded to macOS 27 and the required development tools are available.
+**Status:** macOS 27 and Xcode 27 verified on 2026-09-15. Local generation and command-line Shortcuts PCC probes pass. Production fallback integration and evaluation on real briefings remain pending.
+
+## First runtime verification — 2026-09-15
+
+The upgrade prerequisite is complete:
+
+- macOS **27.0**, build **26A428**; Xcode **27.0**, build **27A266a**.
+- A compiled Swift probe reports `SystemLanguageModel.default.availability = available` and **`contextSize = 8192`** on this machine. It counted a six-token synthetic prompt and returned the requested `READY` response.
+- The `fm` CLI initially required its machine-wide license agreement. Adam accepted it; `fm available` now reports **System model available**. CLI help lists only the system model, so PCC testing uses Shortcuts.
+- Created a separate personal shortcut, **Meeting Briefing PCC Probe**. Its prompt is Shortcut Input, it returns the model Response using Stop and Output, and Follow Up and Broad World Knowledge are off. The existing Use Model shortcut was inspected but not modified or executed.
+- Both **Cloud** and **Cloud Pro** are present in the installed action. Cloud returned `PCC_READY` for a fixed smoke test and `INPUT_READY` for a prompt passed through `shortcuts run --input-path ... --output-path ...`.
+
+Synthetic context probes through command-line Shortcuts:
+
+| Selected model | Input characters / UTF-8 bytes | Result | Elapsed time |
+|---|---:|---|---:|
+| Cloud | 32,000 | All three facts and combined unit total correct | 4.09 s |
+| Cloud | 96,000 | All three facts and combined unit total correct | 9.98 s |
+| Cloud Pro | 96,000 | All three facts and combined unit total correct | 3.23 s |
+
+These runs used synthetic records only. They retrieved a code near the beginning, an owner near the middle, a deadline near the end, and summed unit counts across those records. Each run exited successfully and returned parseable JSON without a follow-up dialog. **These sizes are characters, not cloud tokens.** This demonstrates successful processing of these particular inputs; it does not establish a maximum context window, repeatability, relative model speed or real briefing quality. The repetitive filler is easier than diverse Notion and Teams evidence.
+
+The shortcut is currently configured to **Cloud Pro**. The Python probe records a supplied model label; it does not set or independently verify the model, so verify the editor selection before each comparison. Runtime success here is from a command-line process in the signed-in desktop session, not yet from a deployed Meeting Reminder process or while locked/asleep.
+
+Reproducible probes and evidence:
+
+- [Swift availability/context probe](../../scripts/probe-foundation-model.swift) — compiled successfully with Xcode 27. The initial equivalent probe performed the successful generation above.
+- [Shortcuts synthetic context probe](../../scripts/probe-shortcuts-context.py) — accepts shortcut name, selected-model label, character size, timeout and report path; saves only synthetic results. For example, run `python3 scripts/probe-shortcuts-context.py --model-label 'Cloud Pro' --chars 96000 --report /tmp/pcc-probe.json` from this branch after verifying the shortcut selection.
+- [Cloud 32,000-character report](../experiments/2026-09-15-foundation-models/cloud-32000.json), [Cloud 96,000-character report](../experiments/2026-09-15-foundation-models/cloud-96000.json), [Cloud Pro 96,000-character report](../experiments/2026-09-15-foundation-models/cloud-pro-96000.json).
+
+Next implementation work is independent source retrieval, main-path exhaustion detection, durable page/job identity and the optional Shortcuts runner. No live Notion/Teams context was sent to a model, no briefing delivery was triggered and no production fallback setting was enabled during these probes.
 
 ## Outcome
 
@@ -131,7 +161,7 @@ Select context by meeting relevance and recency, and paginate source reads as ne
 
 ### Token limits and budget
 
-Context size is a primary design constraint. Apple's WWDC26 example reports **8,192 tokens** from `SystemLanguageModel.contextSize`, while some Apple documentation still describes **4,096 tokens**. Neither establishes the capacity on Adam's machine before the upgrade. Read the installed model's capacity at runtime and support a smaller budget; do not assume every macOS 27 configuration has 8K available.
+Context size is a primary design constraint. Apple's WWDC26 example reports **8,192 tokens** from `SystemLanguageModel.contextSize`, while some Apple documentation still describes **4,096 tokens**. The runtime probe above now confirms **8,192** on Adam's machine. Continue reading capacity at runtime and support a smaller budget; do not assume every macOS 27 configuration has 8K available.
 
 This is the total session context, not a daily token allowance or an input-only limit. Instructions, prompts, tool definitions and arguments/results, generated type schemas and guide descriptions, previous session turns, and the response all consume space.
 
@@ -209,11 +239,11 @@ The scheduled runner and app must share the same identity and quality rules: an 
 
 ## Implementation sequence after the upgrade
 
-1. Verify macOS/Xcode/SDK versions, actual local model availability, runtime capacity and background execution. Keep older macOS behaviour available through appropriate availability checks.
+1. **Initial checks complete:** macOS/Xcode/SDK versions, local model availability and 8K capacity, plus command-line generation. Still verify execution from the deployed app and relevant lock/sleep states. Keep older macOS behaviour available through appropriate availability checks.
 2. Inventory the main runner's error/reset signals, actual briefing rules and independently usable Notion/Teams connections. Prove source retrieval works while model access is limited.
 3. Introduce durable job state, stable page mapping and separate persistence/delivery outcomes; reconcile partial main runs.
 4. Implement measured context budgets, bounded long-source extraction and fresh-session synthesis; complete source coverage reporting, full-brief persistence and normal delivery.
-5. Prototype the PCC shortcut, measure its usable input budget and background reliability, then add confirmed-limit routing and cooldown handling with the optional shortcut before local generation.
+5. **Initial PCC shortcut prototype passes** the synthetic probes above. Establish a conservative budget on representative material and verify app/background reliability, then add confirmed-limit routing and cooldown handling with the optional shortcut before local generation.
 6. Add recovery enrichment, preservation of user edits and shared deduplication with the scheduled runner.
 7. Evaluate on representative meetings, then enable through an explicit fallback setting.
 
