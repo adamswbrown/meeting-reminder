@@ -19,6 +19,7 @@ final class BriefingFallbackCoordinator: ObservableObject {
     private let gather: (MeetingEvent, BriefingNotionRepository) async -> BriefingContext
     private let generate: (BriefingContext, String) async throws -> (BriefingDraft, String, BriefingContext)
     private let recover: (String, String) async -> BriefingProcessResult
+    private let delivery: BriefingDeliveryService
     private var loadError: String?
     var enabled: Bool { defaults.bool(forKey: Keys.enabled) }
     var coolingDown: Bool {
@@ -36,9 +37,10 @@ final class BriefingFallbackCoordinator: ObservableObject {
          },
          recover: @escaping (String, String) async -> BriefingProcessResult = {
              await BriefingProcess.claude(path: $0, prompt: $1, generationOnly: true)
-         }) {
+         },
+         delivery: BriefingDeliveryService = BriefingDeliveryService()) {
         self.store = store; self.defaults = defaults; self.occurrenceExists = occurrenceExists; self.makeNotion = makeNotion
-        self.gather = gather; self.generate = generate; self.recover = recover
+        self.gather = gather; self.generate = generate; self.recover = recover; self.delivery = delivery
         do { jobs = try store.load(); refreshStatus() }
         catch { loadError = "Fallback queue could not be read; review its state file before retrying."; status = loadError! }
     }
@@ -154,7 +156,15 @@ final class BriefingFallbackCoordinator: ObservableObject {
                 // The page now exists, so it is its own dedup key; holding the lease
                 // any longer would only block the scheduled runner's own reconciliation.
                 await notion.releaseLease(job.meeting, jobID: job.id)
-                return "Fallback saved to Notion (\(provider)); enrichment queued."
+                // Delivery comes AFTER the durable save so a failed post never costs
+                // the briefing, and is checkpointed so a crash can't repeat it.
+                var record = job.delivery ?? .init()
+                record = await delivery.announce(job: job, context: usedContext, record: record)
+                record = await delivery.syncActions(job: job, context: usedContext, record: record)
+                job.delivery = record
+                try checkpoint(job)
+                let delivered = record.slackTS == nil ? "not announced" : "announced"
+                return "Fallback saved to Notion (\(provider)); \(delivered); enrichment queued."
             }
             if job.phase == .saved {
                 if coolingDown {
@@ -178,6 +188,13 @@ final class BriefingFallbackCoordinator: ObservableObject {
                 job.phase = .enriching; try checkpoint(job)
                 try await notion.enrich(job, draft: draft, context: context)
                 job.phase = .complete; job.lastError = nil
+                try checkpoint(job)
+                // Reconcile delivery against the refreshed context: a threaded reply
+                // (never a new alert) and only genuinely-new action items.
+                var record = job.delivery ?? .init()
+                record = await delivery.syncActions(job: job, context: context, record: record)
+                record = await delivery.announceEnrichment(job: job, record: record)
+                job.delivery = record
                 try checkpoint(job)
                 defaults.removeObject(forKey: Keys.providerRetryAfter)
                 return "Claude enriched the existing Notion briefing."
@@ -212,6 +229,8 @@ final class BriefingFallbackCoordinator: ObservableObject {
         if updated[index].phase == .cancelled { merged.phase = .cancelled }
         if [.saved, .complete, .cancelled].contains(merged.phase) {
             merged.context = nil; merged.draft = nil // source text need not live in the queue after delivery
+            // `delivery` deliberately survives: it is the idempotency key that stops
+            // a recovered job reposting to Slack or recreating Todoist tasks.
         }
         updated[index] = merged
         updated.removeAll { !$0.isActive && $0.phase != .needsReview && $0.createdAt < Date().addingTimeInterval(-30 * 86400) }

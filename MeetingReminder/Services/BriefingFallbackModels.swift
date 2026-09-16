@@ -106,6 +106,9 @@ struct BriefingFallbackJob: Codable, Identifiable {
     var draft: BriefingDraft?
     var provider: String?
     var context: BriefingContext?
+    /// What has already been delivered for this occurrence. Optional so ledgers
+    /// written before delivery existed still decode.
+    var delivery: BriefingDeliveryRecord?
     var attempts = 0
     var nextAttempt = Date()
     var lastError: String?

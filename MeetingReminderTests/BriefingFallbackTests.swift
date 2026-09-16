@@ -545,3 +545,162 @@ final class BriefingPartnerResolverTests: XCTestCase {
         XCTAssertEqual(items.first?.text, "Send the revised SOW")
     }
 }
+
+// MARK: - Slack + Todoist delivery parity (item 2)
+
+/// Records every outbound request and replays canned responses by URL, so a test
+/// can assert exactly how many posts and creates a sequence produced.
+final class FakeBriefingHTTP: BriefingHTTPClient, @unchecked Sendable {
+    var responses: [String: (Int, Any)] = [:]
+    private(set) var requests: [(url: String, body: [String: Any])] = []
+    var failAll = false
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        if failAll { throw URLError(.notConnectedToInternet) }
+        let url = request.url!.absoluteString
+        let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        requests.append((url, body))
+        // Exact URL first, then the longest matching fragment. Dictionary order is
+        // undefined, so a "first contains" match would make the Todoist list and
+        // create endpoints ambiguous and silently return the wrong body.
+        let match = responses[url]
+            ?? responses.filter { url.contains($0.key) }.max { $0.key.count < $1.key.count }?.value
+            ?? (200, [String: Any]())
+        return (try JSONSerialization.data(withJSONObject: match.1),
+                HTTPURLResponse(url: request.url!, statusCode: match.0, httpVersion: nil, headerFields: nil)!)
+    }
+    func posts(to fragment: String) -> Int { requests.filter { $0.url.contains(fragment) }.count }
+}
+
+final class BriefingDeliveryTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+    private func job() -> BriefingFallbackJob {
+        var job = BriefingFallbackJob(meeting: MeetingEvent(
+            id: "local-id", title: "Contoso review", startDate: start, endDate: start.addingTimeInterval(1800),
+            calendar: "Test", externalID: "ics-uid", isRecurring: false))
+        job.pageURL = "https://notion.so/brief"
+        job.provider = "Apple on-device"
+        job.draft = .init(summary: "Renewal is at risk. Second sentence.", preparation: ["Read the SOW"])
+        return job
+    }
+    private func context(actions: [BriefingOpenAction] = []) -> BriefingContext {
+        var context = BriefingContext(meeting: job().meeting, evidence: [], coverage: [])
+        context.metadata = BriefingMetadata(partner: "Contoso", openActions: actions)
+        return context
+    }
+    private func service(_ http: FakeBriefingHTTP) -> BriefingDeliveryService {
+        BriefingDeliveryService(http: http, slackToken: { "xoxb-test" }, todoistToken: { "todoist-test" })
+    }
+
+    func testSlackIsAnnouncedExactlyOnceEvenWhenTheJobIsRetried() async {
+        let http = FakeBriefingHTTP()
+        http.responses["chat.postMessage"] = (200, ["ok": true, "ts": "1700000000.1"])
+        let delivery = service(http)
+        var record = await delivery.announce(job: job(), context: context(), record: .init())
+        XCTAssertEqual(record.slackTS, "1700000000.1")
+        // A recovered job re-enters delivery; it must not post a second alert.
+        record = await delivery.announce(job: job(), context: context(), record: record)
+        XCTAssertEqual(http.posts(to: "chat.postMessage"), 1)
+        XCTAssertTrue(record.errors.isEmpty)
+    }
+
+    func testSlackFailureIsRecordedWithoutClaimingDelivery() async {
+        let http = FakeBriefingHTTP()
+        http.responses["chat.postMessage"] = (200, ["ok": false, "error": "channel_not_found"])
+        let record = await service(http).announce(job: job(), context: context(), record: .init())
+        XCTAssertNil(record.slackTS, "A rejected post must stay retryable, not be marked delivered")
+        XCTAssertTrue(record.errors.first?.contains("channel_not_found") == true)
+    }
+
+    func testEnrichmentRepliesInThreadAndNeverStartsANewAlert() async {
+        let http = FakeBriefingHTTP()
+        http.responses["chat.postMessage"] = (200, ["ok": true, "ts": "1700000000.1"])
+        let delivery = service(http)
+        var record = await delivery.announce(job: job(), context: context(), record: .init())
+        record = await delivery.announceEnrichment(job: job(), record: record)
+        XCTAssertEqual(http.posts(to: "chat.postMessage"), 2)
+        XCTAssertEqual(http.requests.last?.body["thread_ts"] as? String, "1700000000.1",
+                       "The enrichment update must be threaded under the original alert")
+
+        // With no original alert there is nothing to reply to; posting would read
+        // as a brand-new briefing for an already-briefed meeting.
+        let orphan = FakeBriefingHTTP()
+        _ = await service(orphan).announceEnrichment(job: job(), record: .init())
+        XCTAssertEqual(orphan.posts(to: "chat.postMessage"), 0)
+    }
+
+    func testTodoistCreatesOnlyUnseenActionsAndRecordsTheirIDs() async {
+        let http = FakeBriefingHTTP()
+        http.responses["https://api.todoist.com/api/v1/projects"] = (200, ["results": [["id": "p1", "name": "Daily Briefing"]]])
+        // One of the two items already exists in the project, created by Co Work.
+        http.responses["https://api.todoist.com/api/v1/tasks?project_id=p1"] =
+            (200, ["results": [["id": "t-old", "description": "ID: #AI-aaaaaa"]]])
+        http.responses["https://api.todoist.com/api/v1/tasks"] = (200, ["id": "t-new"])
+        let actions = [BriefingOpenAction(text: "Old item", actionID: "#AI-aaaaaa"),
+                       BriefingOpenAction(text: "New item", actionID: "#AI-bbbbbb")]
+        let record = await service(http).syncActions(job: job(), context: context(actions: actions), record: .init())
+        XCTAssertEqual(record.todoistTaskIDs, ["#AI-bbbbbb": "t-new"])
+        let creates = http.requests.filter { $0.url.hasSuffix("api/v1/tasks") }
+        XCTAssertEqual(creates.count, 1, "An action Co Work already created must not be duplicated")
+        XCTAssertEqual(creates.first?.body["content"] as? String, "[Contoso] New item")
+        XCTAssertTrue((creates.first?.body["description"] as? String)?.contains("ID: #AI-bbbbbb") == true,
+                      "Co Work's reconciliation reads the join key out of the description")
+    }
+
+    func testAlreadyCreatedActionsAreSkippedOnEnrichmentReconciliation() async {
+        let http = FakeBriefingHTTP()
+        http.responses["https://api.todoist.com/api/v1/projects"] = (200, ["results": [["id": "p1", "name": "Daily Briefing"]]])
+        http.responses["https://api.todoist.com/api/v1/tasks?project_id=p1"] = (200, ["results": [[String: Any]]()])
+        let actions = [BriefingOpenAction(text: "Item", actionID: "#AI-aaaaaa")]
+        var record = BriefingDeliveryRecord()
+        record.todoistTaskIDs["#AI-aaaaaa"] = "t-1"
+        let after = await service(http).syncActions(job: job(), context: context(actions: actions), record: record)
+        XCTAssertEqual(after.todoistTaskIDs, ["#AI-aaaaaa": "t-1"])
+        XCTAssertEqual(http.requests.count, 0, "A ledger hit should short-circuit before any network call")
+    }
+
+    func testSuggestedPreparationNeverBecomesATask() async {
+        let http = FakeBriefingHTTP()
+        http.responses["https://api.todoist.com/api/v1/projects"] = (200, ["results": [["id": "p1", "name": "Daily Briefing"]]])
+        http.responses["https://api.todoist.com/api/v1/tasks?project_id=p1"] = (200, ["results": [[String: Any]]()])
+        // The draft carries preparation items but no carried-forward open actions.
+        let record = await service(http).syncActions(job: job(), context: context(), record: .init())
+        XCTAssertTrue(record.todoistTaskIDs.isEmpty)
+        XCTAssertEqual(http.requests.count, 0, "Model suggestions are not agreed work and must never be assigned")
+    }
+
+    func testMissingProjectAndNetworkFailureDegradeToRecordedErrors() async {
+        let noProject = FakeBriefingHTTP()
+        noProject.responses["https://api.todoist.com/api/v1/projects"] = (200, ["results": [["id": "p1", "name": "Something Else"]]])
+        let actions = [BriefingOpenAction(text: "Item", actionID: "#AI-aaaaaa")]
+        let missing = await service(noProject).syncActions(job: job(), context: context(actions: actions), record: .init())
+        XCTAssertTrue(missing.todoistTaskIDs.isEmpty)
+        XCTAssertTrue(missing.errors.first?.contains("not found") == true)
+
+        let offline = FakeBriefingHTTP(); offline.failAll = true
+        let failed = await service(offline).syncActions(job: job(), context: context(actions: actions), record: .init())
+        XCTAssertTrue(failed.errors.first?.contains("unreachable") == true)
+    }
+
+    func testMissingTokensAreReportedRatherThanCrashingTheRun() async {
+        let http = FakeBriefingHTTP()
+        let delivery = BriefingDeliveryService(http: http, slackToken: { nil }, todoistToken: { "" })
+        let announced = await delivery.announce(job: job(), context: context(), record: .init())
+        XCTAssertNil(announced.slackTS)
+        XCTAssertTrue(announced.errors.first?.contains("Slack bot token missing") == true)
+        let synced = await delivery.syncActions(
+            job: job(), context: context(actions: [.init(text: "x", actionID: "#AI-aaaaaa")]), record: .init())
+        XCTAssertTrue(synced.errors.first?.contains("Todoist token missing") == true)
+        XCTAssertEqual(http.requests.count, 0)
+    }
+
+    func testAlertTextCarriesPartnerOpenItemsAndTheFallbackCaveat() {
+        let text = BriefingDeliveryService.alertText(
+            job: job(), context: context(actions: [.init(text: "Send SOW", actionID: "#AI-f23cd7")]))
+        XCTAssertTrue(text.contains("Contoso review (Contoso)"))
+        XCTAssertTrue(text.contains("Send SOW (#AI-f23cd7)"))
+        XCTAssertTrue(text.contains("https://notion.so/brief"))
+        XCTAssertTrue(text.contains("enriched automatically"), "The reader must know this is not the full briefing")
+        XCTAssertTrue(text.contains("Renewal is at risk."), "The prep cue should be the briefing's opening sentence")
+    }
+}
