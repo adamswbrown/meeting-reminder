@@ -216,6 +216,40 @@ enum CalendarSyncNotionQueries {
         return ExistingEventsResult(byAppleID: map, duplicates: dupes)
     }
 
+    /// Looks up a single row by its Apple Event ID, server-side.
+    ///
+    /// The upsert normally resolves against the run-start snapshot, but that
+    /// snapshot ages: by the time a create is attempted, another writer may
+    /// have added the row. This is the pre-create check that makes the CREATE
+    /// path idempotent — one extra query, and only on the rare create path.
+    ///
+    /// Returns the canonical (non-archived, first-seen) page ID, or nil when
+    /// Notion genuinely has no row for this ID.
+    static func findPageID(client: CalendarSyncNotionClient,
+                           appleID: String) async throws -> String? {
+        guard !appleID.isEmpty else { return nil }
+        let resp = try await client.post(
+            path: "/data_sources/\(CalendarSyncConstants.calendarEventsDataSourceID)/query",
+            body: [
+                "filter": [
+                    "property": "Apple Event ID",
+                    "rich_text": ["equals": appleID],
+                ],
+                "page_size": 2,
+            ])
+        let results = resp["results"] as? [[String: Any]] ?? []
+        var fallback: String?
+        for row in results {
+            guard let id = row["id"] as? String else { continue }
+            if (row["archived"] as? Bool) ?? false {
+                if fallback == nil { fallback = id }
+            } else {
+                return id
+            }
+        }
+        return fallback
+    }
+
     private static func relationCount(_ any: Any?) -> Int {
         guard let dict = any as? [String: Any],
               let arr = dict["relation"] as? [[String: Any]] else { return 0 }
@@ -498,6 +532,10 @@ final class CalendarSyncUpserter {
         let now = Date()
         var touched: Set<String> = []
         touched.reserveCapacity(rows.count + presentIDs.count)
+        // Rows this run has already written. `existing` is a snapshot taken at
+        // run start and never updated, so without this a repeated Apple Event
+        // ID would fall through to CREATE a second time.
+        var runRegistry = CalendarSyncRunRegistry()
         // Events dropped by the Skip List or the skip-free/OOO filter still
         // exist on the calendar — treat them as "present" so a newly-added
         // skip rule doesn't cause their Notion rows to be mass-archived.
@@ -593,26 +631,73 @@ final class CalendarSyncUpserter {
                         }
                     }
                     resultPageID = existingRow.pageID
+                    runRegistry.register(appleID: appleID, pageID: existingRow.pageID)
                     needsMN = !existingRow.hasMeetingNotesLink
                     needsPCB = !existingRow.hasPreCallBriefingLink
-                } else {
+                } else if let priorPageID = runRegistry.pageID(for: appleID) {
+                    // This run already wrote a row for this Apple Event ID —
+                    // the same event reached us twice (e.g. shared across two
+                    // opted-in calendars, whose composite ID is identical).
+                    // PATCH the row we made rather than minting its twin.
                     if dryRun {
-                        logger.info("DRY CREATE \(appleID)")
+                        logger.info("DRY UPDATE (run-duplicate) \(appleID) :: \(priorPageID)")
                     } else {
-                        let resp = try await client.post(path: "/pages", body: [
-                            "parent": [
-                                "type": "data_source_id",
-                                "data_source_id": CalendarSyncConstants.calendarEventsDataSourceID,
-                            ],
-                            "properties": props,
-                        ])
-                        resultPageID = resp["id"] as? String
+                        var body: [String: Any] = ["properties": props]
+                        body["archived"] = false
+                        _ = try await client.patch(path: "/pages/\(priorPageID)", body: body)
                     }
-                    counts.created += 1
-                    // Newly-created rows have no relations yet, so both
-                    // columns are open for an auto-link write.
-                    needsMN = true
-                    needsPCB = true
+                    logger.warn("duplicate appleID within run: \(appleID) → reused \(priorPageID)")
+                    counts.updated += 1
+                    resultPageID = priorPageID
+                    // Relations were already considered when the row was first
+                    // written this run; don't queue a second auto-link pass.
+                    needsMN = false
+                    needsPCB = false
+                } else {
+                    // Last line of defence before minting a row: ask Notion
+                    // directly whether this Apple Event ID already exists.
+                    // `existing` can be stale — it was captured at run start,
+                    // and another writer (a second app instance, an overlapping
+                    // run) may have created the row since. A created page is
+                    // queryable within ~2s, so this check is reliable.
+                    let adoptedPageID = dryRun
+                        ? nil
+                        : try await CalendarSyncNotionQueries.findPageID(client: client,
+                                                                         appleID: appleID)
+                    if let adoptedPageID {
+                        logger.warn("adopted pre-existing row for \(appleID) :: \(adoptedPageID) — snapshot was stale")
+                        var body: [String: Any] = ["properties": props]
+                        body["archived"] = false
+                        _ = try await client.patch(path: "/pages/\(adoptedPageID)", body: body)
+                        counts.updated += 1
+                        resultPageID = adoptedPageID
+                        runRegistry.register(appleID: appleID, pageID: adoptedPageID)
+                        // The adopted row may already carry relations; let the
+                        // auto-link pass re-check rather than assume.
+                        needsMN = true
+                        needsPCB = true
+                    } else {
+                        if dryRun {
+                            logger.info("DRY CREATE \(appleID)")
+                        } else {
+                            let resp = try await client.post(path: "/pages", body: [
+                                "parent": [
+                                    "type": "data_source_id",
+                                    "data_source_id": CalendarSyncConstants.calendarEventsDataSourceID,
+                                ],
+                                "properties": props,
+                            ])
+                            resultPageID = resp["id"] as? String
+                            if let resultPageID {
+                                runRegistry.register(appleID: appleID, pageID: resultPageID)
+                            }
+                        }
+                        counts.created += 1
+                        // Newly-created rows have no relations yet, so both
+                        // columns are open for an auto-link write.
+                        needsMN = true
+                        needsPCB = true
+                    }
                 }
                 // Series masters are not auto-linkable — meeting notes are
                 // written per-occurrence, not per-series.

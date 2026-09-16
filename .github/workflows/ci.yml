@@ -1,0 +1,85 @@
+name: CI
+
+# Build and test on every push to main and every pull request.
+#
+# Until this existed the only workflow was Release, which fires on a tag.
+# That meant code reached main entirely unverified: everything between
+# v3.4.1 and v3.5.0 was never compiled by CI, and v3.5.0 shipped only
+# because the build and the suite were run by hand beforehand.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push to the same ref supersedes an in-flight run.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    env:
+      SCHEME: MeetingReminder
+      PROJECT: MeetingReminder.xcodeproj
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Mirrors release.yml. Do NOT pin an older Xcode — the code uses Swift
+      # 6.x region-based concurrency that Xcode 15.4 rejects with
+      # "reference to captured var 'self'".
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Debug + test first: fastest path to a real failure signal.
+      #
+      # Signing is overridden to ad-hoc. The Debug config pins a specific
+      # "Apple Development: ..." certificate for team NZ87XY99SR, which exists
+      # only on Adam's machine — a runner without it fails the build before a
+      # single test runs. Ad-hoc (`-`) is enough to launch the test host.
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            test
+
+      # Release differs from Debug in optimisation and dead-code stripping, so
+      # it can fail where Debug passes. The release pipeline builds Release, so
+      # prove it compiles before a tag depends on it. Signing is skipped —
+      # this job has no certificate and does not need one.
+      - name: Build (Release)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build

@@ -2,11 +2,62 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
-## [Unreleased]
+## [3.5.0] - 2026-09-15
 
-_Becomes 3.5.0 when tagged — see docs/RELEASING.md; the tag drives MARKETING_VERSION._
+### Fixed
+- **Calendar→Notion sync could create duplicate rows for the same Apple Event ID.**
+  The upsert resolved create-vs-update against `existing`, a snapshot of Notion taken
+  once at run start and never updated, so a repeated Apple Event ID fell through to
+  CREATE a second time. Two layers now close this: a run-scoped registry
+  (`CalendarSyncRunRegistry`) absorbs a repeat within a run — e.g. one event shared by
+  two opted-in calendars, whose composite ID is calendar-independent — and a pre-create
+  lookup (`CalendarSyncNotionQueries.findPageID`) asks Notion directly before minting a
+  row, so a stale snapshot adopts the existing row instead of twinning it. Both paths
+  log a warning. Steady-state cost is nil: the lookup only runs on the create path.
+- **The Notion duplicate-page guard reset on every relaunch.** `NotionService.createdEventIDs`
+  was in-memory only, so a restart forgot every page the app had created and a second page
+  could be minted for the same event. Created notes now persist to the `meetingNoteLinks`
+  UserDefaults dictionary and the guard is restored in `init`.
+
+### Added
+- **Menu bar display modes** — Settings → General now offers Full, Icon Only, and
+  Hidden modes. Hidden mode leaves reminders and background services running; reopening
+  the app or opening `meetingreminder://settings` restores an icon-only item and Settings.
+- **Open (or create) a meeting's Notion note straight from the pre-call brief panel.**
+  Reaching the note previously meant hunting for it by hand, and when Notion's own
+  notetaker bound a recording to the wrong calendar event the correct note became
+  effectively invisible — nothing in the app pointed at it. The panel now resolves the
+  note in descending order of authority:
+
+  1. a page this app created for the event (recorded locally, no network),
+  2. the Calendar Events row's `Meeting Notes` relation — by page ID, so it survives the
+     note being renamed,
+  3. an unambiguous title + day match in Meeting Notes, reusing `RelationLinker`'s exact
+     case-insensitive rule so the panel and the sync can never disagree about which page
+     belongs to a meeting,
+  4. failing all three, create the page and open it.
+
+  Creating also writes the `Meeting Notes` relation back onto the Calendar Events row
+  (patched on the Calendar Events side, so Notion mirrors the inverse). That is
+  best-effort and detached — an unlinked note still beats no note. Several notes matching
+  one meeting is reported rather than guessed; opening the wrong meeting's notes is worse
+  than opening none.
+
+  The action row moved out of `briefBody` into a shared footer so it renders in **every**
+  panel state — previously a meeting with no matched brief showed no controls at all.
+
+  Matching logic lives in the new `MeetingNoteMatcher`, free of `URLSession` and EventKit,
+  with 20 unit tests covering the exact-title precision step (the "Sync" vs "Sync with Bob"
+  near-miss), Europe/London-vs-UTC day boundaries, the recurring-occurrence key suffix, and
+  relation extraction.
 
 ### Removed
+- **`availability-page/` — the Next.js availability/booking site now lives in its own
+  private repo** ([`adamswbrown/availability-page`](https://github.com/adamswbrown/availability-page)).
+  It shared no code with the Mac app and only ever deployed to Vercel, so it was pure
+  clutter in a Swift repo. Vercel now builds from that repo's root; `book.askadam.cloud`
+  is unaffected. The Mac-side half (`AvailabilityPushService`, `BookingPollService`) is
+  unchanged and stays here — only the Supabase schema is contractual between the two.
 - **White Glove Jira automation in the intraday pre-call briefing** — the app no longer
   detects White Glove meetings or touches Jira. The White Glove engagement process is
   being retired as a *process*, so the automation that supported it goes with it. A WG

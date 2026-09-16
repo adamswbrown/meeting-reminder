@@ -32,7 +32,7 @@ service.
               │          │                         │
         ┌─────┴──────────┴─────┐         ┌─────────┴───────────┐
         │  Next.js booking page│         │      Mac app        │
-        │  (availability-page/)│         │  (BookingPollService│
+        │ (availability-page   │         │  (BookingPollService│
         └──────────────────────┘         │  EventKit + Mail.app)│
                                          └─────────────────────┘
 ```
@@ -44,7 +44,7 @@ The Mac app is the single write-back actor that turns intent into a real event.
 
 | Half | Where | What it does |
 |------|-------|--------------|
-| **Web (intent)** | `availability-page/` — `lib/eventTypes.ts`, `lib/bookingSlots.ts`, `lib/bookingApi.ts`, `app/book/[slug]/page.tsx`, `components/BookingForm.tsx` | Reads event types + free/busy + already-booked slots, generates slots, `INSERT`s a `pending` row via the anon key |
+| **Web (intent)** | [`adamswbrown/availability-page`](https://github.com/adamswbrown/availability-page) — `lib/eventTypes.ts`, `lib/bookingSlots.ts`, `lib/bookingApi.ts`, `app/book/[slug]/page.tsx`, `components/BookingForm.tsx` | Reads event types + free/busy + already-booked slots, generates slots, `INSERT`s a `pending` row via the anon key |
 | **Mac (confirm)** | `MeetingReminder/Services/BookingPollService.swift` + `BookingSupport.swift` | Polls `booking_requests` for `status=pending`, checks live EventKit, creates the `EKEvent`, flips the row to `confirmed`, sends a confirmation email + `.ics` |
 
 **The loop:**
