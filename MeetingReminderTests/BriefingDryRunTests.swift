@@ -88,6 +88,15 @@ final class BriefingDryRunTests: XCTestCase {
         out += tasks.map { "  • [\(used.metadata?.partner ?? "")] \($0.text) — ID: \($0.actionID)" }
         out += ["", "END OF DRY RUN — no Notion page, Slack message or Todoist task was created.", ""]
 
+        // The exact bytes handed to the Shortcut, so the contract can be inspected
+        // rather than inferred from the code. NOTE: for a real meeting this contains
+        // real content — attendee addresses, Notion page text and Teams transcripts.
+        // It is the same payload the cloud route sends to Apple; treat the file
+        // accordingly and delete it when you are done.
+        let shortcutInput = BriefingDraft.instructions + "\n" + used.prompt(evidenceCharacters: 24000)
+        try shortcutInput.write(toFile: "/tmp/pcc-shortcut-input.txt", atomically: true, encoding: .utf8)
+        out += ["", "Shortcut input written to /tmp/pcc-shortcut-input.txt (\(shortcutInput.utf8.count) bytes)"]
+
         let text = out.joined(separator: "\n")
         print(text)
         try text.write(toFile: "/tmp/pcc-dry-run.txt", atomically: true, encoding: .utf8)
