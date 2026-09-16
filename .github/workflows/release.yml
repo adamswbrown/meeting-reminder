@@ -16,7 +16,10 @@ on:
 
 jobs:
   release:
-    runs-on: macos-15
+    # macos-26 (Xcode 26.6 / macOS 26.5 SDK). macos-15 tops out at Xcode 26.3,
+    # whose macOS 26.2 SDK lacks SystemLanguageModel.tokenCount/.contextSize
+    # (macOS 26.4+), used by the Apple Intelligence briefing fallback.
+    runs-on: macos-26
     timeout-minutes: 30
     permissions:
       contents: write   # required for softprops/action-gh-release to create the release
