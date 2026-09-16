@@ -87,6 +87,7 @@
 		31108343CD9E486C8D82D419 /* BriefingNotionRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56D4252A3BBD47ECB6A6C6B2 /* BriefingNotionRepository.swift */; };
 		A6CAE64F288242CEBDD01AEA /* BriefingFallbackProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FF71472A8E4FC3A6AFE7EE /* BriefingFallbackProviders.swift */; };
 		F67A5794F4F948FFBA052090 /* BriefingFallbackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F2A25001EAA47E8955A6A7B /* BriefingFallbackCoordinator.swift */; };
+		52C8C1616EC0443CA1C980FF /* BriefingPartnerResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18CFEAD44BE143088C51C20D /* BriefingPartnerResolver.swift */; };
 		A966495A0D5144E9BD59913F /* BriefingCoordinationLease.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F116FA4CAD4CBAA6E301ED /* BriefingCoordinationLease.swift */; };
 		D36BE3ADD2B24F12831B2054 /* BriefingFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D1C553BDEC1443CA92CE178 /* BriefingFallbackTests.swift */; };
 		CD03B21351D5456EBA28D2DC /* briefing-teams-context.py in Resources */ = {isa = PBXBuildFile; fileRef = BF8CCFB997B044D5A2FB6B78 /* briefing-teams-context.py */; };
@@ -187,6 +188,7 @@
 		56D4252A3BBD47ECB6A6C6B2 /* BriefingNotionRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingNotionRepository.swift"; sourceTree = "<group>"; };
 		96FF71472A8E4FC3A6AFE7EE /* BriefingFallbackProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingFallbackProviders.swift"; sourceTree = "<group>"; };
 		7F2A25001EAA47E8955A6A7B /* BriefingFallbackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingFallbackCoordinator.swift"; sourceTree = "<group>"; };
+		18CFEAD44BE143088C51C20D /* BriefingPartnerResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingPartnerResolver.swift"; sourceTree = "<group>"; };
 		43F116FA4CAD4CBAA6E301ED /* BriefingCoordinationLease.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingCoordinationLease.swift"; sourceTree = "<group>"; };
 		3D1C553BDEC1443CA92CE178 /* BriefingFallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BriefingFallbackTests.swift"; sourceTree = "<group>"; };
 		BF8CCFB997B044D5A2FB6B78 /* briefing-teams-context.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = "briefing-teams-context.py"; sourceTree = "<group>"; };
@@ -248,6 +250,7 @@
 			isa = PBXGroup;
 			children = (
 				7F2A25001EAA47E8955A6A7B /* BriefingFallbackCoordinator.swift */,
+				18CFEAD44BE143088C51C20D /* BriefingPartnerResolver.swift */,
 				43F116FA4CAD4CBAA6E301ED /* BriefingCoordinationLease.swift */,
 				96FF71472A8E4FC3A6AFE7EE /* BriefingFallbackProviders.swift */,
 				56D4252A3BBD47ECB6A6C6B2 /* BriefingNotionRepository.swift */,
@@ -445,6 +448,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F67A5794F4F948FFBA052090 /* BriefingFallbackCoordinator.swift in Sources */,
+				52C8C1616EC0443CA1C980FF /* BriefingPartnerResolver.swift in Sources */,
 				A966495A0D5144E9BD59913F /* BriefingCoordinationLease.swift in Sources */,
 				A6CAE64F288242CEBDD01AEA /* BriefingFallbackProviders.swift in Sources */,
 				31108343CD9E486C8D82D419 /* BriefingNotionRepository.swift in Sources */,

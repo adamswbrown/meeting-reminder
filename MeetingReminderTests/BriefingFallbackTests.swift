@@ -439,3 +439,109 @@ final class BriefingCoordinationLeaseTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Retrieval depth: partner ladder, stage, action IDs (item 3)
+
+final class BriefingPartnerResolverTests: XCTestCase {
+    private func rule(_ value: String, _ type: BriefingMappingRule.MatchType, _ partner: String,
+                      isPartner: Bool = false, active: Bool = true) -> BriefingMappingRule {
+        .init(matchValue: value, matchType: type, customerPartner: partner, isPartner: isPartner, active: active)
+    }
+
+    func testEmailExtractionIgnoresDisplayOnlyAttendees() {
+        let found = BriefingPartnerResolver.emails(in: ["Jane Doe <Jane.Doe@Contoso.com>", "Bob With No Email", "x@altra.cloud"])
+        XCTAssertEqual(found, ["jane.doe@contoso.com", "x@altra.cloud"])
+    }
+
+    func testSubdomainsMatchTheirRuleButSiblingsDoNot() {
+        let contoso = rule("contoso.com", .emailDomain, "Contoso")
+        XCTAssertTrue(contoso.matchesDomain("emea.contoso.com"))
+        XCTAssertTrue(contoso.matchesDomain("CONTOSO.COM"))
+        XCTAssertFalse(contoso.matchesDomain("notcontoso.com"), "Suffix matching must be dot-anchored")
+    }
+
+    func testPartnerTierWinsOverCustomerTier() {
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["a@partnerco.com", "b@customerco.com", "me@altra.cloud"],
+            title: "Review",
+            rules: [rule("partnerco.com", .emailDomain, "PartnerCo", isPartner: true),
+                    rule("customerco.com", .emailDomain, "CustomerCo")])
+        XCTAssertEqual(resolution.partner, "PartnerCo")
+        XCTAssertFalse(resolution.byInference)
+    }
+
+    func testAttendeeCountBreaksATierTieAndAGenuineTieStaysBlank() {
+        let rules = [rule("a.com", .emailDomain, "Alpha"), rule("b.com", .emailDomain, "Beta")]
+        let weighted = BriefingPartnerResolver.resolve(
+            attendees: ["x@a.com", "y@a.com", "z@b.com"], title: "Review", rules: rules)
+        XCTAssertEqual(weighted.partner, "Alpha", "The better-represented org should win the tier")
+
+        let tied = BriefingPartnerResolver.resolve(
+            attendees: ["x@a.com", "z@b.com"], title: "Review", rules: rules)
+        XCTAssertNil(tied.partner, "An unbreakable tie must stay blank rather than guess a partner")
+        XCTAssertTrue(tied.rationale.contains("tied"))
+    }
+
+    func testConvenerOnlyAppliesWhenNoRuleMatchedAndIsFlaggedAsInference() {
+        let convened = BriefingPartnerResolver.resolve(
+            attendees: ["someone@microsoft.com", "me@altra.cloud"], title: "Sync", rules: [])
+        XCTAssertEqual(convened.partner, "Microsoft")
+        XCTAssertTrue(convened.byInference, "An inferred partner must be marked for review, not passed off as a rule")
+
+        let ruled = BriefingPartnerResolver.resolve(
+            attendees: ["someone@microsoft.com", "buyer@contoso.com"], title: "Sync",
+            rules: [rule("contoso.com", .emailDomain, "Contoso")])
+        XCTAssertEqual(ruled.partner, "Contoso", "A real Tier 2 rule outranks the convener fallback")
+    }
+
+    func testInactiveRulesAreIgnoredAndInternalMeetingsResolveToAltra() {
+        let ignored = BriefingPartnerResolver.resolve(
+            attendees: ["x@contoso.com"], title: "Review",
+            rules: [rule("contoso.com", .emailDomain, "Contoso", active: false)])
+        XCTAssertNil(ignored.partner)
+
+        let internalOnly = BriefingPartnerResolver.resolve(
+            attendees: ["a@altra.cloud", "b@altra.cloud"], title: "Standup", rules: [])
+        XCTAssertEqual(internalOnly.partner, "Altra")
+        XCTAssertTrue(internalOnly.byInference)
+
+        // Attendees with no parseable email at all must not become "Altra".
+        let nameOnly = BriefingPartnerResolver.resolve(attendees: ["Jane Doe"], title: "Chat", rules: [])
+        XCTAssertNil(nameOnly.partner)
+    }
+
+    func testGoogleAttendeeIsFlaggedAsColab() {
+        XCTAssertTrue(BriefingPartnerResolver.resolve(attendees: ["r@google.com"], title: "Sync", rules: []).isGoogleColab)
+        XCTAssertFalse(BriefingPartnerResolver.resolve(attendees: ["r@contoso.com"], title: "Sync", rules: []).isGoogleColab)
+    }
+
+    func testStageInference() {
+        XCTAssertEqual(BriefingPartnerResolver.stage(forTitle: "Contoso Kick-off"), "New Partner Kickoff")
+        XCTAssertEqual(BriefingPartnerResolver.stage(forTitle: "Assessment walkthrough"), "Scoping")
+        XCTAssertEqual(BriefingPartnerResolver.stage(forTitle: "Product demo"), "Discovery")
+        XCTAssertNil(BriefingPartnerResolver.stage(forTitle: "Weekly catch-up"))
+    }
+
+    func testActionIDMatchesTheSkillsMD5Definition() {
+        // Fixed vectors computed from the skill's own definition: first 6 hex of
+        // md5("<partner>|<lowercased, whitespace-collapsed, trailing-punctuation-stripped>").
+        // These are the join key Co Work's Todoist reconciliation reads — if this
+        // assertion ever fails, dedup has silently broken, not merely changed.
+        XCTAssertEqual(BriefingPartnerResolver.actionID(partner: "Contoso", item: "Send  the  revised SOW."), "#AI-f23cd7")
+        XCTAssertEqual(BriefingPartnerResolver.actionID(partner: "Contoso", item: "send the revised sow"), "#AI-f23cd7")
+        XCTAssertEqual(BriefingPartnerResolver.actionID(partner: nil, item: "Follow up"), "#AI-325e75")
+    }
+
+    func testOnlyUntickedActionItemsAreCarriedForward() {
+        let items = BriefingPartnerResolver.openActionItems(in: """
+        ## Action Items (from last call)
+        - [ ] Send the revised SOW (#AI-f23cd7)
+        - [x] Book the kickoff (#AI-aaaaaa)
+        - [ ] An item with no hash
+        - [ ]  (#AI-bbbbbb)
+        Some prose (#AI-cccccc)
+        """)
+        XCTAssertEqual(items.map(\.id), ["#AI-f23cd7"], "Ticked, hashless and empty items must all be excluded")
+        XCTAssertEqual(items.first?.text, "Send the revised SOW")
+    }
+}

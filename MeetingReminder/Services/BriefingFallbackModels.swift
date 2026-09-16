@@ -52,10 +52,34 @@ struct BriefingEvidence: Codable, Equatable {
     var url: String?
 }
 
+/// An unticked `- [ ]` action carried forward from a prior briefing, with the
+/// `#AI-XXXXXX` join key Co Work's Todoist reconciliation matches on.
+struct BriefingOpenAction: Codable, Equatable {
+    var text: String
+    var actionID: String
+}
+
+/// Classification and prior-history results, kept in one optional value so an
+/// older ledger written before this existed still decodes (Swift's synthesised
+/// Decodable ignores property defaults, but skips a missing optional).
+struct BriefingMetadata: Codable, Equatable {
+    var partner: String?
+    var stage: String?
+    /// Google Colab rule: always brief, flag prominently.
+    var isKeyMeeting = false
+    /// True when the partner came from the convener/internal fallback rather than
+    /// a mapping rule — surfaced for review instead of being passed off as a rule.
+    var partnerByInference = false
+    var openActions: [BriefingOpenAction] = []
+    /// Meeting Notes page IDs backing the `Prior Meetings` relation.
+    var priorPageIDs: [String] = []
+}
+
 struct BriefingContext: Codable {
     var meeting: MeetingEvent
     var evidence: [BriefingEvidence]
     var coverage: [String]
+    var metadata: BriefingMetadata?
 
     func prompt(evidenceCharacters: Int = 14000) -> String {
         // Each reduction preserves identity and source IDs. Exact native token counting

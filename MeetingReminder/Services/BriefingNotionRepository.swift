@@ -38,33 +38,142 @@ struct BriefingNotionRepository {
         }
     }
 
+    /// Reads the shared Customer / Partner mapping rules. Read-only: the fallback
+    /// classifies against these but never proposes or edits a rule (the skill's
+    /// Step 8B Suggestions write is not implemented on this path).
+    func mappingRules() async throws -> [BriefingMappingRule] {
+        try await queryAll(CalendarSyncConstants.mappingRulesDataSourceID, body: [:]).compactMap { row in
+            let properties = row["properties"] as? [String: Any] ?? [:]
+            let titleParts = (properties["Match Value"] as? [String: Any])?["title"] as? [[String: Any]] ?? []
+            let value = titleParts.map { $0["plain_text"] as? String ?? (($0["text"] as? [String: Any])?["content"] as? String ?? "") }.joined()
+            guard !value.isEmpty,
+                  let typeName = ((properties["Match Type"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String,
+                  let type = BriefingMappingRule.MatchType(rawValue: typeName),
+                  let partner = ((properties["Customer / Partner"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String,
+                  !partner.isEmpty else { return nil }
+            return BriefingMappingRule(
+                matchValue: value, matchType: type, customerPartner: partner,
+                isPartner: (properties["Is Partner"] as? [String: Any])?["checkbox"] as? Bool ?? false,
+                // An absent Active checkbox means the column is missing, not that
+                // the rule is off — treat it as live, matching the skill.
+                active: (properties["Active"] as? [String: Any])?["checkbox"] as? Bool ?? true)
+        }
+    }
+
+    /// Full-depth retrieval: classify the meeting, then target prior history at the
+    /// resolved partner rather than the meeting title alone. Mirrors the skill's
+    /// Step 4 (ladder), Step 6 (history ladder + prior briefs) and the `#AI-XXXXXX`
+    /// carry-forward, so a fallback briefing joins the same rows the main runner
+    /// would have used. Every source is individually fault-tolerant: a failure
+    /// degrades to a coverage note, never an empty briefing.
     func context(for meeting: MeetingEvent) async -> BriefingContext {
         var context = BriefingContext(meeting: meeting, evidence: [],
             coverage: ["Calendar: EventKit snapshot; attendee email coverage may be incomplete."])
+        var metadata = BriefingMetadata()
+
+        var rules: [BriefingMappingRule] = []
+        do { rules = try await mappingRules() }
+        catch { context.coverage.append("Mapping Rules unavailable; partner resolved without them.") }
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: meeting.attendees ?? [], title: meeting.title, rules: rules)
+        metadata.partner = resolution.partner
+        metadata.partnerByInference = resolution.byInference
+        metadata.isKeyMeeting = resolution.isGoogleColab
+        metadata.stage = BriefingPartnerResolver.stage(forTitle: meeting.title)
+        context.coverage.append("Customer / Partner: \(resolution.rationale)")
+        if resolution.byInference {
+            context.coverage.append("Partner was inferred, not rule-matched; consider adding a Mapping Rule.")
+        }
+        if resolution.isGoogleColab { context.coverage.append("Google Colab attendee present — treat as a Key Meeting.") }
+
         if let notes = meeting.notes, !notes.isEmpty {
             context.evidence.append(.init(id: "invite", source: "Meeting invitation", text: String(notes.prefix(6000))))
             if notes.count > 6000 { context.coverage.append("Invitation truncated at 6000 characters.") }
         }
-        do {
-            let before = min(meeting.startDate, Date())
-            let query: [String: Any] = ["page_size": 3,
-                "sorts": [["property": CalendarSyncConstants.meetingNotesDateProperty, "direction": "descending"]],
-                "filter": ["and": [
-                    ["property": CalendarSyncConstants.meetingNotesTitleProperty, "title": ["contains": meeting.title]],
-                    ["property": CalendarSyncConstants.meetingNotesDateProperty, "date": ["before": Self.iso(before)]],
-                    ["property": CalendarSyncConstants.meetingNotesDateProperty, "date": ["on_or_after": Self.iso(before.addingTimeInterval(-90 * 86400))]]]]]
-            let response = try await client.post(path: "/data_sources/\(CalendarSyncConstants.meetingNotesDataSourceID)/query", body: query)
-            let rows = response["results"] as? [[String: Any]] ?? []
-            context.coverage.append(rows.isEmpty ? "Notion notes: no title matches in the previous 90 days."
-                : "Notion notes: most recent \(rows.count) title matches in 90 days; customer/domain matching is not available in this fallback.")
-            if response["has_more"] as? Bool == true { context.coverage.append("Older matching notes omitted.") }
-            for (index, row) in rows.enumerated() {
-                guard let id = row["id"] as? String else { continue }
-                let text = try await pageText(id, maxCharacters: 8000)
-                context.evidence.append(.init(id: "notes-\(index + 1)", source: "Prior meeting notes (\(id))",
-                    text: text, url: row["url"] as? String ?? "https://www.notion.so/\(id.replacingOccurrences(of: "-", with: ""))"))
+        if let link = meeting.videoLink?.absoluteString {
+            context.evidence.append(.init(id: "join-link", source: "Meeting join link", text: link, url: link))
+        }
+
+        // Step 6 history ladder — stop at the first filter that returns anything.
+        let before = min(meeting.startDate, Date())
+        let window = Self.iso(before.addingTimeInterval(-90 * 86400))
+        var priorRows: [[String: Any]] = []
+        var usedFilter = "none"
+        var ladder: [(String, [String: Any])] = []
+        if let partner = resolution.partner {
+            ladder.append(("partner title match", ["property": CalendarSyncConstants.meetingNotesTitleProperty,
+                                                   "title": ["contains": partner]]))
+        }
+        if let domain = resolution.primaryDomain {
+            ladder.append(("attendee domain match", ["property": "Attendees Email", "rich_text": ["contains": domain]]))
+        }
+        ladder.append(("meeting title match", ["property": CalendarSyncConstants.meetingNotesTitleProperty,
+                                               "title": ["contains": meeting.title]]))
+        for (label, filter) in ladder {
+            do {
+                let query: [String: Any] = ["page_size": 3,
+                    "sorts": [["property": CalendarSyncConstants.meetingNotesDateProperty, "direction": "descending"]],
+                    "filter": ["and": [filter,
+                        ["property": CalendarSyncConstants.meetingNotesDateProperty, "date": ["before": Self.iso(before)]],
+                        ["property": CalendarSyncConstants.meetingNotesDateProperty, "date": ["on_or_after": window]]]]]
+                let response = try await client.post(
+                    path: "/data_sources/\(CalendarSyncConstants.meetingNotesDataSourceID)/query", body: query)
+                let rows = response["results"] as? [[String: Any]] ?? []
+                if !rows.isEmpty { priorRows = rows; usedFilter = label; break }
+            } catch {
+                context.coverage.append("Notion notes (\(label)) query failed; do not infer no prior actions.")
             }
-        } catch { context.coverage.append("Notion prior notes unavailable or incomplete; do not infer no prior actions.") }
+        }
+        context.coverage.append(priorRows.isEmpty
+            ? "Notion notes: no matches in the previous 90 days across partner, domain and title filters."
+            : "Notion notes: \(priorRows.count) most recent via \(usedFilter), previous 90 days.")
+        for (index, row) in priorRows.enumerated() {
+            guard let id = row["id"] as? String else { continue }
+            metadata.priorPageIDs.append(id)
+            let properties = row["properties"] as? [String: Any] ?? [:]
+            let status = ((properties["Status"] as? [String: Any])?["select"] as? [String: Any])?["name"] as? String
+            let text = (try? await pageText(id, maxCharacters: 8000)) ?? "[unreadable]"
+            context.evidence.append(.init(
+                id: "notes-\(index + 1)",
+                source: "Prior meeting notes (\(status ?? "status unknown"))",
+                text: text,
+                url: row["url"] as? String ?? "https://www.notion.so/\(id.replacingOccurrences(of: "-", with: ""))"))
+        }
+
+        // Prior briefings for the same partner — the source of open `- [ ]` items.
+        if let partner = resolution.partner {
+            do {
+                let response = try await client.post(
+                    path: "/data_sources/\(CalendarSyncConstants.preCallBriefingsDataSourceID)/query",
+                    body: ["page_size": 3,
+                           "sorts": [["property": CalendarSyncConstants.preCallBriefingsDateProperty, "direction": "descending"]],
+                           "filter": ["and": [
+                               ["property": "Customer / Partner", "select": ["equals": partner]],
+                               ["property": CalendarSyncConstants.preCallBriefingsDateProperty,
+                                "date": ["before": Self.iso(before)]]]]])
+                let rows = response["results"] as? [[String: Any]] ?? []
+                context.coverage.append("Prior briefings: \(rows.count) for \(partner).")
+                var seen = Set<String>()
+                for (index, row) in rows.enumerated() {
+                    guard let id = row["id"] as? String else { continue }
+                    let text = (try? await pageText(id, maxCharacters: 8000)) ?? ""
+                    context.evidence.append(.init(id: "brief-\(index + 1)", source: "Prior pre-call briefing",
+                        text: text, url: row["url"] as? String))
+                    for item in BriefingPartnerResolver.openActionItems(in: text) where seen.insert(item.id).inserted {
+                        metadata.openActions.append(.init(text: item.text, actionID: item.id))
+                    }
+                }
+                if !metadata.openActions.isEmpty {
+                    context.coverage.append("\(metadata.openActions.count) open action item(s) carried forward.")
+                }
+            } catch {
+                context.coverage.append("Prior briefings unavailable; open actions may be incomplete.")
+            }
+        } else {
+            context.coverage.append("No partner resolved; prior briefings and open actions were not retrieved.")
+        }
+
+        context.metadata = metadata
         return context
     }
 
@@ -106,11 +215,23 @@ struct BriefingNotionRepository {
             }
             return existing
         }
-        let properties: [String: Any] = [
+        var properties: [String: Any] = [
             CalendarSyncConstants.preCallBriefingsTitleProperty: ["title": Self.rich(job.meeting.title)],
             CalendarSyncConstants.preCallBriefingsDateProperty: ["date": ["start": Self.iso(job.meeting.startDate)]],
             "Briefing Status": ["select": ["name": "Auto"]],
             "Attendees": ["rich_text": Self.rich((job.meeting.attendees ?? []).joined(separator: ", "))]]
+        // Step 7 metadata. Select values must already exist as options, so only
+        // write ones the mapping rules themselves supplied; an inferred-but-unknown
+        // partner would otherwise fail the whole create.
+        if let metadata = context.metadata {
+            if let partner = metadata.partner, !metadata.partnerByInference {
+                properties["Customer / Partner"] = ["select": ["name": partner]]
+            }
+            if let stage = metadata.stage { properties["Stage"] = ["select": ["name": stage]] }
+            if !metadata.priorPageIDs.isEmpty {
+                properties["Prior Meetings"] = ["relation": metadata.priorPageIDs.map { ["id": $0] }]
+            }
+        }
         let response = try await client.post(path: "/pages", body: [
             "parent": ["type": "data_source_id", "data_source_id": CalendarSyncConstants.preCallBriefingsDataSourceID],
             "properties": properties, "children": [section]])
@@ -179,15 +300,28 @@ struct BriefingNotionRepository {
     }
 
     static func section(marker: String, heading: String, draft: BriefingDraft, context: BriefingContext) -> [String: Any] {
-        var blocks = [block("paragraph", heading), block("paragraph", draft.summary),
-                      block("paragraph", "Suggested preparation (not assigned tasks)")]
+        var blocks = [block("paragraph", heading)]
+        if context.metadata?.isKeyMeeting == true {
+            blocks.append(block("paragraph", "🔬 Google Colab — Key Meeting."))
+        }
+        blocks.append(block("paragraph", draft.summary))
+        // Open items are carried forward verbatim with their existing #AI join key —
+        // re-hashing here would mint a new ID and orphan the Todoist task.
+        if let open = context.metadata?.openActions, !open.isEmpty {
+            blocks.append(block("paragraph", "Action Items (from last call)"))
+            blocks += open.map { block("to_do", "\($0.text) (\($0.actionID))") }
+        }
+        blocks.append(block("paragraph", "Suggested preparation (not assigned tasks)"))
         blocks += draft.preparation.map { block("bulleted_list_item", $0) }
         blocks.append(block("paragraph", "Source coverage: " + context.coverage.joined(separator: " ")))
         blocks += context.evidence.map { block("paragraph", "[\($0.id)] \($0.source)\($0.url.map { " — \($0)" } ?? "")") }
         return ["object": "block", "type": "toggle", "toggle": ["rich_text": rich(marker), "children": blocks]]
     }
     private static func block(_ type: String, _ text: String) -> [String: Any] {
-        ["object": "block", "type": type, type: ["rich_text": rich(text)]]
+        var payload: [String: Any] = ["rich_text": rich(text)]
+        // A carried-forward action is by definition still open.
+        if type == "to_do" { payload["checked"] = false }
+        return ["object": "block", "type": type, type: payload]
     }
     static func rich(_ text: String) -> [[String: Any]] {
         [["type": "text", "text": ["content": String(text.prefix(1900))]]]
