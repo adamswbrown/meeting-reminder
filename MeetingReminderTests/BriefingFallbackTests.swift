@@ -961,3 +961,88 @@ final class BriefingHistoryTargetingTests: XCTestCase {
         XCTAssertEqual(actions.first?.text, "Coach Lee ahead of his presentation")
     }
 }
+
+// MARK: - Convener-domain masking (CNX dry run, 2026-09-16)
+
+final class BriefingConvenerMaskingTests: XCTestCase {
+    private func rule(_ value: String, _ type: BriefingMappingRule.MatchType, _ partner: String,
+                      isPartner: Bool = false) -> BriefingMappingRule {
+        .init(matchValue: value, matchType: type, customerPartner: partner, isPartner: isPartner, active: true)
+    }
+
+    /// The live rules: `microsoft.com -> Microsoft` (Email Domain, Tier 2) and
+    /// `cnx fy27 -> Concentrix` (Title Keyword, Tier 2). Concentrix attend on
+    /// v-*@microsoft.com vendor accounts, so there is no Concentrix domain to
+    /// match. Strict email-first buried the CNX rule and briefed it as Microsoft.
+    func testTitleKeywordBeatsAConvenerOnlyEmailMatch() {
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["lisalaber@microsoft.com", "v-aphilemon@microsoft.com", "v-drizk@microsoft.com",
+                        "luke.lloyd@altra.cloud"],
+            title: "CNX Fy27 Office Hours",
+            rules: [rule("microsoft.com", .emailDomain, "Microsoft"),
+                    rule("cnx fy27", .titleKeyword, "Concentrix")])
+        XCTAssertEqual(resolution.partner, "Concentrix")
+        XCTAssertTrue(resolution.rationale.contains("preferred over"))
+        XCTAssertFalse(resolution.byInference, "A real rule matched; this is not an inference")
+    }
+
+    /// The override is narrow: a NON-convener email match is real evidence about
+    /// who the meeting is with, and must still outrank a title keyword.
+    func testRealPartnerDomainStillBeatsATitleKeyword() {
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["gourav.tandon@sourcecodecontrol.com", "lisalaber@microsoft.com"],
+            title: "CNX Fy27 Office Hours",
+            rules: [rule("sourcecodecontrol.com", .emailDomain, "Source Code Control", isPartner: true),
+                    rule("cnx fy27", .titleKeyword, "Concentrix")])
+        XCTAssertEqual(resolution.partner, "Source Code Control")
+        XCTAssertEqual(resolution.partnerDomains, ["sourcecodecontrol.com"])
+    }
+
+    /// A genuine Microsoft meeting with no competing title rule stays Microsoft.
+    func testConvenerMatchSurvivesWhenNoTitleRuleCompetes() {
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["lisalaber@microsoft.com", "luke.lloyd@altra.cloud"],
+            title: "Microsoft quarterly review",
+            rules: [rule("microsoft.com", .emailDomain, "Microsoft")])
+        XCTAssertEqual(resolution.partner, "Microsoft")
+        XCTAssertEqual(resolution.partnerDomains, ["microsoft.com"])
+        XCTAssertFalse(resolution.rationale.contains("preferred over"))
+    }
+
+    /// A title rule naming the same partner is not an "override" — no special case.
+    func testTitleRuleAgreeingWithTheConvenerIsNotTreatedAsAnOverride() {
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["lisalaber@microsoft.com"], title: "Microsoft sync",
+            rules: [rule("microsoft.com", .emailDomain, "Microsoft"),
+                    rule("microsoft sync", .titleKeyword, "Microsoft")])
+        XCTAssertEqual(resolution.partner, "Microsoft")
+        XCTAssertEqual(resolution.partnerDomains, ["microsoft.com"],
+                       "Agreement should keep the domain, which history targeting needs")
+    }
+
+    /// Mixed convener + real partner domains are not "convener-only".
+    func testMixedDomainMatchIsNotTreatedAsConvenerOnly() {
+        let resolution = BriefingPartnerResolver.resolve(
+            attendees: ["a@microsoft.com", "b@contoso.com"], title: "CNX Fy27 Office Hours",
+            rules: [rule("microsoft.com", .emailDomain, "Shared"),
+                    rule("contoso.com", .emailDomain, "Shared"),
+                    rule("cnx fy27", .titleKeyword, "Concentrix")])
+        XCTAssertEqual(resolution.partner, "Shared")
+        XCTAssertEqual(resolution.partnerDomains, ["contoso.com", "microsoft.com"])
+    }
+
+    /// Ties are still reported rather than guessed, on both rule kinds.
+    func testTiesStillResolveToBlankForReview() {
+        let emailTie = BriefingPartnerResolver.resolve(
+            attendees: ["x@a.com", "y@b.com"], title: "Review",
+            rules: [rule("a.com", .emailDomain, "Alpha"), rule("b.com", .emailDomain, "Beta")])
+        XCTAssertNil(emailTie.partner)
+        XCTAssertTrue(emailTie.rationale.contains("tied"))
+
+        let titleTie = BriefingPartnerResolver.resolve(
+            attendees: ["x@unmapped.com"], title: "Alpha and Beta sync",
+            rules: [rule("alpha", .titleKeyword, "Alpha"), rule("beta", .titleKeyword, "Beta")])
+        XCTAssertNil(titleTie.partner)
+        XCTAssertTrue(titleTie.rationale.contains("tied"))
+    }
+}

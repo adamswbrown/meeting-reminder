@@ -105,6 +105,9 @@ struct BriefingNotionRepository {
         let window = Self.iso(before.addingTimeInterval(-90 * 86400))
         var priorRows: [[String: Any]] = []
         var usedFilter = "none"
+        // Shared across notes and briefings: the same commitment often appears in
+        // both, and must carry forward once under one hash.
+        var seenActionIDs = Set<String>()
         var ladder: [(String, [String: Any])] = []
         if let partner = resolution.partner {
             ladder.append(("partner title match", ["property": CalendarSyncConstants.meetingNotesTitleProperty,
@@ -151,6 +154,14 @@ struct BriefingNotionRepository {
                 source: "Prior meeting notes (\(status.isEmpty ? "status unknown" : status))",
                 text: text,
                 url: row["url"] as? String ?? "https://www.notion.so/\(id.replacingOccurrences(of: "-", with: ""))"))
+            // Co Work's Step 3B appends "## Action Items (extracted)" with
+            // `- [ ] … (#AI-…)` straight into Meeting Notes, so notes are a
+            // first-class source. Briefings alone miss any commitment made in a
+            // one-off or first-time meeting.
+            for item in BriefingPartnerResolver.openActionItems(in: text)
+            where seenActionIDs.insert(item.id).inserted {
+                metadata.openActions.append(.init(text: item.text, actionID: item.id))
+            }
         }
 
         // Prior briefings for the same partner — the source of open `- [ ]` items.
@@ -166,24 +177,24 @@ struct BriefingNotionRepository {
                                 "date": ["before": Self.iso(before)]]]]])
                 let rows = response["results"] as? [[String: Any]] ?? []
                 context.coverage.append("Prior briefings: \(rows.count) for \(partner).")
-                var seen = Set<String>()
                 for (index, row) in rows.enumerated() {
                     guard let id = row["id"] as? String else { continue }
                     let text = (try? await pageText(id, maxCharacters: 8000)) ?? ""
                     context.evidence.append(.init(id: "brief-\(index + 1)", source: "Prior pre-call briefing",
                         text: text, url: row["url"] as? String))
-                    for item in BriefingPartnerResolver.openActionItems(in: text) where seen.insert(item.id).inserted {
+                    for item in BriefingPartnerResolver.openActionItems(in: text)
+                    where seenActionIDs.insert(item.id).inserted {
                         metadata.openActions.append(.init(text: item.text, actionID: item.id))
                     }
-                }
-                if !metadata.openActions.isEmpty {
-                    context.coverage.append("\(metadata.openActions.count) open action item(s) carried forward.")
                 }
             } catch {
                 context.coverage.append("Prior briefings unavailable; open actions may be incomplete.")
             }
         } else {
-            context.coverage.append("No partner resolved; prior briefings and open actions were not retrieved.")
+            context.coverage.append("No partner resolved; prior briefings were not retrieved.")
+        }
+        if !metadata.openActions.isEmpty {
+            context.coverage.append("\(metadata.openActions.count) open action item(s) carried forward from prior notes and briefings.")
         }
 
         context.metadata = metadata

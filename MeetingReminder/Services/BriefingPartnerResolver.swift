@@ -84,8 +84,50 @@ enum BriefingPartnerResolver {
         return domain.isEmpty ? nil : domain
     }
 
+    /// Outcome of applying the tier ladder to one kind of rule.
+    private enum Winner {
+        case won(partner: String, tier: Int, isPartner: Bool, domains: [String])
+        case tie([String], tier: Int)
+        case none
+    }
+
+    /// Applies Tier 1 (Partner) then Tier 2 (Customer) over one set of candidate
+    /// rules, weighting each candidate by how many attendees back it.
+    private static func apply(_ candidates: [BriefingMappingRule], isEmailDomain: Bool,
+                              external: [String]) -> Winner {
+        for (tier, isPartner) in [(1, true), (2, false)] {
+            let tierRules = candidates.filter { $0.isPartner == isPartner }
+            guard !tierRules.isEmpty else { continue }
+            let weighted = Dictionary(grouping: tierRules, by: \.customerPartner).mapValues { group in
+                group.reduce(0) { total, rule in
+                    total + (isEmailDomain ? external.filter { rule.matchesDomain($0) }.count : 1)
+                }
+            }
+            let best = weighted.values.max() ?? 0
+            let winners = weighted.filter { $0.value == best }.keys.sorted()
+            guard winners.count == 1, let partner = winners.first else {
+                return .tie(winners, tier: tier)
+            }
+            let domains = isEmailDomain
+                ? Set(tierRules.filter { $0.customerPartner == partner }
+                    .flatMap { rule in external.filter { rule.matchesDomain($0) } }).sorted()
+                : []
+            return .won(partner: partner, tier: tier, isPartner: isPartner, domains: domains)
+        }
+        return .none
+    }
+
     /// The Step 4 precedence ladder. Domains are counted so the tie-break can
     /// prefer the most-represented org, and `@altra.cloud` never competes.
+    ///
+    /// One deliberate divergence from the skill's "email domain rules first, then
+    /// title keywords": when the only thing an email rule matched is a **convener**
+    /// domain, a matching title keyword wins instead. Concentrix and other partners
+    /// attend Microsoft-convened calls on `v-*@microsoft.com` vendor accounts, so
+    /// there is no partner domain to match and `microsoft.com` is present on nearly
+    /// every external meeting — strict email-first resolves "CNX Fy27 Office Hours"
+    /// to Microsoft and buries the `cnx fy27 -> Concentrix` rule. A convener
+    /// attendee says who convened, not who the meeting is with.
     static func resolve(attendees: [String], title: String, rules: [BriefingMappingRule]) -> BriefingPartnerResolution {
         let addresses = emails(in: attendees)
         let external = addresses.compactMap(domain(of:)).filter { $0 != CalendarSyncConstants.internalDomain }
@@ -99,40 +141,45 @@ enum BriefingPartnerResolver {
         }?.key
 
         let live = rules.filter(\.active)
-        // Tier 1 then Tier 2, over email-domain rules, then the same over title
-        // keywords. Weight each candidate by how many attendees back it.
-        for (matchKind, candidates) in [
-            ("email domain", live.filter { rule in external.contains { rule.matchesDomain($0) } }),
-            ("title keyword", live.filter { $0.matchesTitle(title) }),
-        ] where !candidates.isEmpty {
-            for (tier, isPartner) in [(1, true), (2, false)] {
-                let tierRules = candidates.filter { $0.isPartner == isPartner }
-                guard !tierRules.isEmpty else { continue }
-                let weighted = Dictionary(grouping: tierRules, by: \.customerPartner).mapValues { group in
-                    group.reduce(0) { total, rule in
-                        total + (matchKind == "email domain"
-                                 ? external.filter { rule.matchesDomain($0) }.count
-                                 : 1)
-                    }
-                }
-                let best = weighted.values.max() ?? 0
-                let winners = weighted.filter { $0.value == best }.keys.sorted()
-                guard winners.count == 1, let partner = winners.first else {
-                    // A tie the attendee count cannot break. The skill would fall
-                    // through to the organiser's domain, which we do not have.
-                    result.rationale = "Tier \(tier) \(matchKind) rules tied between \(winners.joined(separator: ", ")); left blank for review."
-                    return result
-                }
-                result.partner = partner
-                if matchKind == "email domain" {
-                    // Remember which domains won, so prior-history queries target the
-                    // partner rather than whoever brought the most attendees.
-                    result.partnerDomains = Set(tierRules.filter { $0.customerPartner == partner }
-                        .flatMap { rule in external.filter { rule.matchesDomain($0) } }).sorted()
-                }
-                result.rationale = "Tier \(tier) (\(isPartner ? "Partner" : "Customer")) \(matchKind) rule matched \(partner)."
+        let byEmail = apply(live.filter { rule in external.contains { rule.matchesDomain($0) } },
+                            isEmailDomain: true, external: external)
+        let byTitle = apply(live.filter { $0.matchesTitle(title) }, isEmailDomain: false, external: external)
+
+        func accept(_ partner: String, tier: Int, isPartner: Bool, domains: [String], why: String) {
+            result.partner = partner
+            result.partnerDomains = domains
+            result.rationale = "Tier \(tier) (\(isPartner ? "Partner" : "Customer")) \(why) matched \(partner)."
+        }
+
+        switch byEmail {
+        case .won(let partner, let tier, let isPartner, let domains):
+            // Convener-only email match loses to a more specific title keyword.
+            if domains.allSatisfy({ conveners.keys.contains($0) }),
+               case .won(let tPartner, let tTier, let tIsPartner, _) = byTitle, tPartner != partner {
+                accept(tPartner, tier: tTier, isPartner: tIsPartner, domains: [],
+                       why: "title keyword rule (preferred over the \(partner) convener-domain match)")
                 return result
             }
+            accept(partner, tier: tier, isPartner: isPartner, domains: domains, why: "email domain rule")
+            return result
+        case .tie(let winners, let tier):
+            // A tie the attendee count cannot break. The skill would fall through to
+            // the organiser's domain, which MeetingEvent does not carry.
+            result.rationale = "Tier \(tier) email domain rules tied between \(winners.joined(separator: ", ")); left blank for review."
+            return result
+        case .none:
+            break
+        }
+
+        switch byTitle {
+        case .won(let partner, let tier, let isPartner, _):
+            accept(partner, tier: tier, isPartner: isPartner, domains: [], why: "title keyword rule")
+            return result
+        case .tie(let winners, let tier):
+            result.rationale = "Tier \(tier) title keyword rules tied between \(winners.joined(separator: ", ")); left blank for review."
+            return result
+        case .none:
+            break
         }
 
         // Tier 3 — convener, only when no Tier 1/2 rule matched at all.
