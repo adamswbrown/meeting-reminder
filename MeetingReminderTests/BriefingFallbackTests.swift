@@ -1046,3 +1046,44 @@ final class BriefingConvenerMaskingTests: XCTestCase {
         XCTAssertTrue(titleTie.rationale.contains("tied"))
     }
 }
+
+// MARK: - Per-user delivery overrides
+
+final class BriefingDeliveryOverrideTests: XCTestCase {
+    private func defaults() -> UserDefaults { UserDefaults(suiteName: UUID().uuidString)! }
+
+    /// These were compile-time constants pointing at one Slack workspace and one
+    /// Todoist project — a bug for any other user. Unset must still resolve to the
+    /// original values so an existing install is byte-identical.
+    func testUnsetOverridesResolveToTheOriginalConstants() {
+        let d = defaults()
+        XCTAssertEqual(BriefingDeliveryService.resolve(BriefingDeliveryService.slackChannelOverrideKey,
+                                                       fallback: BriefingDeliveryService.defaultSlackChannel,
+                                                       defaults: d), "C0BMEG01M1N")
+        XCTAssertEqual(BriefingDeliveryService.resolve(BriefingDeliveryService.todoistProjectOverrideKey,
+                                                       fallback: BriefingDeliveryService.defaultTodoistProject,
+                                                       defaults: d), "Daily Briefing")
+    }
+
+    func testOverridesWinAndBlankOrWhitespaceDoesNot() {
+        let d = defaults()
+        d.set("C0ABCDEF123", forKey: BriefingDeliveryService.slackChannelOverrideKey)
+        XCTAssertEqual(BriefingDeliveryService.resolve(BriefingDeliveryService.slackChannelOverrideKey,
+                                                       fallback: "fallback", defaults: d), "C0ABCDEF123")
+        // A cleared text field must not resolve to an empty channel, which would
+        // make every post fail with channel_not_found.
+        for blank in ["", "   ", "\n"] {
+            d.set(blank, forKey: BriefingDeliveryService.slackChannelOverrideKey)
+            XCTAssertEqual(BriefingDeliveryService.resolve(BriefingDeliveryService.slackChannelOverrideKey,
+                                                           fallback: "fallback", defaults: d), "fallback")
+        }
+    }
+
+    func testOverridesAreTrimmed() {
+        let d = defaults()
+        d.set("  Team Briefings \n", forKey: BriefingDeliveryService.todoistProjectOverrideKey)
+        XCTAssertEqual(BriefingDeliveryService.resolve(BriefingDeliveryService.todoistProjectOverrideKey,
+                                                       fallback: "Daily Briefing", defaults: d), "Team Briefings",
+                       "A pasted value with stray whitespace must still match the project by name")
+    }
+}

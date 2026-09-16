@@ -68,6 +68,9 @@ struct SettingsView: View {
             notionTab
                 .tabItem { Label("Notion", systemImage: "square.and.pencil") }
 
+            BriefingSettingsView(preCallBriefTrigger: preCallBriefTrigger)
+                .tabItem { Label("Briefings", systemImage: "text.bubble") }
+
             integrationsTab
                 .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
         }
@@ -1097,54 +1100,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
-            Section {
-                Toggle("Auto-brief new meetings during the day (09:00–17:00)",
-                       isOn: Binding(get: { preCallBriefTrigger.isEnabled },
-                                     set: { preCallBriefTrigger.isEnabled = $0 }))
-                if #available(macOS 26.4, *) {
-                    Toggle("Use Apple Intelligence when Claude reaches its usage limit", isOn: $briefingFallbackEnabled)
-                        .disabled(!preCallBriefTrigger.isEnabled)
-                    if briefingFallbackEnabled {
-                        TextField("Optional Cloud shortcut name", text: $briefingFallbackShortcut)
-                            .textFieldStyle(.roundedBorder)
-                        Text("Leave blank for on-device only. A named shortcut receives meeting context and must return the Use Model response without sending messages or changing notes.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        LabeledContent("Fallback queue", value: preCallBriefTrigger.fallbackStatus)
-                        if !preCallBriefTrigger.fallbackReviewItems.isEmpty {
-                            BriefingReviewList(
-                                items: preCallBriefTrigger.fallbackReviewItems,
-                                resume: preCallBriefTrigger.resumeFallbackReview,
-                                dismiss: preCallBriefTrigger.dismissFallbackReview)
-                        }
-                    }
-                }
-                if !preCallBriefTrigger.lastResult.isEmpty {
-                    LabeledContent("Last run") {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(preCallBriefTrigger.lastResult)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.trailing)
-                            if let at = preCallBriefTrigger.lastRunAt {
-                                Text(at, style: .relative).font(.caption2).foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                }
-                if preCallBriefTrigger.isRunning {
-                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Briefing…").font(.caption) }
-                }
-            } header: {
-                Text("Intraday Pre-Call Briefings")
-            } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("New meetings trigger the local Claude briefing agent. The normal agent writes Notion briefings and handles Slack and Todoist delivery. Requires the claude CLI and the private intraday skill.")
-                    Text("Fallback saves a source-labelled Notion briefing using direct Notion reads and the configured teams-chat MCP. Cloud via Shortcuts is optional; on-device generation is the final route. Claude recovery adds an enrichment section to that same page. Fallback and recovery do not send Slack messages or create Todoist tasks.")
-                    Text("Retries survive app restarts and run while the app is open. Uncertain Notion writes pause for review. The separate scheduled cloud briefing task must be coordinated before enabling fallback in daily use; it does not yet share this app's queue.")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
 
             Section {
                 TextField("Notion view URL or UUID",
@@ -1344,7 +1299,7 @@ enum OverlayBackground: String, CaseIterable, Identifiable {
 /// "Try again" re-reads the page and its markers before deciding anything; it is
 /// not a regenerate. "Dismiss" only stops the retries — it never touches the Notion
 /// page, the Slack thread or the Todoist tasks, so nothing is silently unmade.
-private struct BriefingReviewList: View {
+struct BriefingReviewList: View {
     let items: [BriefingFallbackJob]
     let resume: (String) -> Void
     let dismiss: (String) -> Void

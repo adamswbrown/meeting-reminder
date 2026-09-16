@@ -16,6 +16,7 @@
 		A1000007 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000007 /* OverlayWindow.swift */; };
 		A1000008 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000008 /* OverlayView.swift */; };
 		A1000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000009 /* SettingsView.swift */; };
+		A10000C0 /* BriefingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000C0 /* BriefingSettingsView.swift */; };
 		A100000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000A /* Assets.xcassets */; };
 		A1000060 /* Meeting Busy.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B1000060 /* Meeting Busy.shortcut */; };
 		A1000061 /* Meeting Free.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B1000061 /* Meeting Free.shortcut */; };
@@ -115,6 +116,7 @@
 		B1000007 /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		B1000008 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
 		B1000009 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10000C0 /* BriefingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingSettingsView.swift; sourceTree = "<group>"; };
 		B100000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B1000060 /* Meeting Busy.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Meeting Busy.shortcut"; sourceTree = "<group>"; };
 		B1000061 /* Meeting Free.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Meeting Free.shortcut"; sourceTree = "<group>"; };
@@ -307,6 +309,7 @@
 				B1000007 /* OverlayWindow.swift */,
 				B1000008 /* OverlayView.swift */,
 				B1000009 /* SettingsView.swift */,
+				B10000C0 /* BriefingSettingsView.swift */,
 				B100000E /* OnboardingView.swift */,
 				B1000014 /* ContextPanelView.swift */,
 				B1000015 /* ChecklistView.swift */,
@@ -471,6 +474,7 @@
 				A1000007 /* OverlayWindow.swift in Sources */,
 				A1000008 /* OverlayView.swift in Sources */,
 				A1000009 /* SettingsView.swift in Sources */,
+				A10000C0 /* BriefingSettingsView.swift in Sources */,
 				A100000B /* OnboardingView.swift in Sources */,
 				A100000C /* AlertTier.swift in Sources */,
 				A1000090 /* SnoozeUntilThreshold.swift in Sources */,

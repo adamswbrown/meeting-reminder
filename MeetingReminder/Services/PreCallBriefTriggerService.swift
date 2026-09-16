@@ -195,6 +195,26 @@ final class PreCallBriefTriggerService: ObservableObject {
     /// Resolved on every use so a CLI reinstall (or a Settings override) takes effect
     /// without relaunching the app. Falls back to the historic default purely so the
     /// launch-failure message names a concrete path.
+    /// Settings surfaces the resolved paths (not just the override) so a stale or
+    /// moved binary is visible. A blank override still resolves to something, and a
+    /// wrong one fails silently — which is how the CLI moving to ~/.npm-global/bin
+    /// stopped intraday briefings for four days without any UI signal.
+    var resolvedCLIPath: String { cliPath }
+    var resolvedSkillPath: String { skillPath }
+
+    /// When Claude is being left alone after a confirmed usage limit, and a way to
+    /// override that. Nil when there is no active cooldown.
+    var fallbackCooldownUntil: Date? {
+        guard let until = UserDefaults.standard.object(
+            forKey: BriefingFallbackCoordinator.Keys.providerRetryAfter) as? Date,
+              until > Date() else { return nil }
+        return until
+    }
+    func clearFallbackCooldown() {
+        UserDefaults.standard.removeObject(forKey: BriefingFallbackCoordinator.Keys.providerRetryAfter)
+        objectWillChange.send()
+    }
+
     private var cliPath: String {
         ClaudeCLILocator.resolve(override: UserDefaults.standard.string(forKey: Keys.cliPath),
                                  home: NSHomeDirectory()) ?? "/usr/local/bin/claude"

@@ -32,12 +32,32 @@ protocol BriefingHTTPClient {
 extension URLSession: BriefingHTTPClient {}
 
 struct BriefingDeliveryService {
-    /// #daily-breifings in the Askadam workspace — the same channel both briefing
-    /// runners post to. The misspelling is the real channel name.
-    static let slackChannel = "C0BMEG01M1N"
-    static let todoistProjectName = "Daily Briefing"
     static let slackTokenKey = "slackBotToken"
     static let todoistTokenKey = "todoistApiToken"
+
+    // UserDefaults override keys. Empty or unset resolves to the default below, so
+    // an existing install is byte-identical until someone sets one.
+    static let slackChannelOverrideKey = "briefingSlackChannelID"
+    static let todoistProjectOverrideKey = "briefingTodoistProject"
+
+    /// #daily-breifings in the Askadam workspace — the same channel both briefing
+    /// runners post to. The misspelling is the real channel name.
+    static let defaultSlackChannel = "C0BMEG01M1N"
+    static let defaultTodoistProject = "Daily Briefing"
+
+    /// Resolved per-user, mirroring `CalendarSyncConstants`: these were compile-time
+    /// constants pointing at one workspace, which is a bug for anyone else.
+    static var slackChannel: String {
+        resolve(slackChannelOverrideKey, fallback: defaultSlackChannel)
+    }
+    static var todoistProjectName: String {
+        resolve(todoistProjectOverrideKey, fallback: defaultTodoistProject)
+    }
+
+    static func resolve(_ key: String, fallback: String, defaults: UserDefaults = .standard) -> String {
+        let value = (defaults.string(forKey: key) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? fallback : value
+    }
 
     var http: BriefingHTTPClient = URLSession.shared
     var slackToken: () -> String? = { KeychainHelper.read(key: BriefingDeliveryService.slackTokenKey) }
@@ -144,6 +164,41 @@ struct BriefingDeliveryService {
         guard let lastSpace = clipped.lastIndex(of: " ") else { return clipped + "…" }
         return clipped[clipped.startIndex..<lastSpace]
             .trimmingCharacters(in: CharacterSet(charactersIn: " ,;:-")) + "…"
+    }
+
+    // MARK: - Connection checks (read-only)
+
+    /// `auth.test` — validates the token and names the workspace. Sends nothing.
+    func verifySlack() async -> String {
+        guard let token = slackToken(), !token.isEmpty else { return "No Slack token saved." }
+        var request = URLRequest(url: URL(string: "https://slack.com/api/auth.test")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 20
+        do {
+            let (data, _) = try await http.data(for: request)
+            let body = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            guard body["ok"] as? Bool == true else {
+                return "✗ Slack: \(body["error"] as? String ?? "rejected the token")"
+            }
+            let team = body["team"] as? String ?? "workspace"
+            return "✓ Slack: \(team), posting to \(Self.slackChannel)"
+        } catch {
+            return "✗ Slack: could not reach the API."
+        }
+    }
+
+    /// Resolves the configured project by name. Creates nothing.
+    func verifyTodoist() async -> String {
+        guard let token = todoistToken(), !token.isEmpty else { return "No Todoist token saved." }
+        do {
+            guard let id = try await todoistProjectID(token: token) else {
+                return "✗ Todoist: no project named “\(Self.todoistProjectName)”."
+            }
+            return "✓ Todoist: “\(Self.todoistProjectName)” found (\(id))"
+        } catch {
+            return "✗ Todoist: could not reach the API."
+        }
     }
 
     // MARK: - Todoist
