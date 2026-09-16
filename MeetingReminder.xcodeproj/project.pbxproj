@@ -42,6 +42,7 @@
 		A1000071 /* BookingPollService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000071 /* BookingPollService.swift */; };
 		A1000072 /* GraphMailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000072 /* GraphMailService.swift */; };
 		A1000050 /* BusyLightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000050 /* BusyLightService.swift */; };
+		A10000C1 /* ShortcutsCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000C1 /* ShortcutsCatalog.swift */; };
 		A1000091 /* PreCallBriefTriggerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000091 /* PreCallBriefTriggerService.swift */; };
 		A10000F1 /* FoundationModelsBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F1 /* FoundationModelsBriefService.swift */; };
 		A10000F2 /* NotionPriorNotesReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F2 /* NotionPriorNotesReader.swift */; };
@@ -145,6 +146,7 @@
 		B1000071 /* BookingPollService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingPollService.swift; sourceTree = "<group>"; };
 		B1000072 /* GraphMailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphMailService.swift; sourceTree = "<group>"; };
 		B1000050 /* BusyLightService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightService.swift; sourceTree = "<group>"; };
+		B10000C1 /* ShortcutsCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsCatalog.swift; sourceTree = "<group>"; };
 		B1000091 /* PreCallBriefTriggerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefTriggerService.swift; sourceTree = "<group>"; };
 		B10000F1 /* FoundationModelsBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationModelsBriefService.swift; sourceTree = "<group>"; };
 		B10000F2 /* NotionPriorNotesReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReader.swift; sourceTree = "<group>"; };
@@ -280,6 +282,7 @@
 				B1000071 /* BookingPollService.swift */,
 				B1000072 /* GraphMailService.swift */,
 				B1000050 /* BusyLightService.swift */,
+				B10000C1 /* ShortcutsCatalog.swift */,
 				B1000091 /* PreCallBriefTriggerService.swift */,
 				B10000F1 /* FoundationModelsBriefService.swift */,
 				B10000F2 /* NotionPriorNotesReader.swift */,
@@ -497,6 +500,7 @@
 				A1000071 /* BookingPollService.swift in Sources */,
 				A1000072 /* GraphMailService.swift in Sources */,
 				A1000050 /* BusyLightService.swift in Sources */,
+				A10000C1 /* ShortcutsCatalog.swift in Sources */,
 				A1000091 /* PreCallBriefTriggerService.swift in Sources */,
 				A10000F1 /* FoundationModelsBriefService.swift in Sources */,
 				A10000F2 /* NotionPriorNotesReader.swift in Sources */,

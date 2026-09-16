@@ -18,6 +18,16 @@ struct BriefingSettingsView: View {
     @AppStorage(BriefingDeliveryService.slackChannelOverrideKey) private var slackChannel = ""
     @AppStorage(BriefingDeliveryService.todoistProjectOverrideKey) private var todoistProject = ""
 
+    /// On-device vs cloud is UI state derived from the stored shortcut name, not a
+    /// second persisted source of truth: the service contract is simply "empty
+    /// shortcut means on-device", and duplicating that into another key invites the
+    /// two disagreeing.
+    private enum Engine: String, CaseIterable { case onDevice, cloud }
+    @State private var engine: Engine = .onDevice
+    @State private var shortcuts: [String] = []
+    @State private var shortcutsError: String?
+    @State private var loadingShortcuts = false
+
     @State private var slackTokenDraft = ""
     @State private var todoistTokenDraft = ""
     @State private var slackTestResult = ""
@@ -35,6 +45,8 @@ struct BriefingSettingsView: View {
         .onAppear {
             slackTokenDraft = KeychainHelper.read(key: BriefingDeliveryService.slackTokenKey) ?? ""
             todoistTokenDraft = KeychainHelper.read(key: BriefingDeliveryService.todoistTokenKey) ?? ""
+            engine = fallbackShortcut.isEmpty ? .onDevice : .cloud
+            if engine == .cloud { Task { await loadShortcuts() } }
         }
     }
 
@@ -125,10 +137,30 @@ struct BriefingSettingsView: View {
                 Toggle("Use Apple Intelligence when Claude reaches its usage limit", isOn: $fallbackEnabled)
                     .disabled(!preCallBriefTrigger.isEnabled)
                 if fallbackEnabled {
-                    LabeledContent("Cloud shortcut") {
-                        TextField("on-device only", text: $fallbackShortcut)
-                            .textFieldStyle(.roundedBorder).frame(maxWidth: 320)
+                    Picker("Generate with", selection: $engine) {
+                        Text("On-device model").tag(Engine.onDevice)
+                        Text("Apple cloud (via a Shortcut)").tag(Engine.cloud)
                     }
+                    .pickerStyle(.radioGroup)
+                    .onChange(of: engine) { _, new in
+                        // On-device is expressed as "no shortcut", so switching away
+                        // must clear it or the cloud route would still run.
+                        if new == .onDevice { fallbackShortcut = "" }
+                        else if shortcuts.isEmpty { Task { await loadShortcuts() } }
+                    }
+
+                    if engine == .cloud {
+                        shortcutPicker
+                        if fallbackShortcut.isEmpty {
+                            Label("Pick a Shortcut — until you do, briefings stay on-device.",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                        if let shortcutsError {
+                            Text(shortcutsError).font(.caption).foregroundStyle(.red)
+                        }
+                    }
+
                     LabeledContent("Queue", value: preCallBriefTrigger.fallbackStatus)
                     if let until = preCallBriefTrigger.fallbackCooldownUntil {
                         LabeledContent("Retrying Claude") {
@@ -146,8 +178,50 @@ struct BriefingSettingsView: View {
         } header: {
             Text("Apple Intelligence fallback")
         } footer: {
-            Text("Only a confirmed usage or credit limit hands over to Apple Intelligence — a rate limit, an authentication failure or a timeout does not, so a transient blip cannot replace a good briefing with a thin one. Leave the shortcut blank to stay entirely on-device. The shortcut must take Shortcut Input, generate only, and return its response via Stop and Output; the app cannot tell which model it uses.")
+            Text("Only a confirmed usage or credit limit hands over to Apple Intelligence — a rate limit, an authentication failure or a timeout does not, so a transient blip cannot replace a good briefing with a thin one.\n\nOn-device keeps everything on this Mac but has a much smaller context window. The cloud route sends the meeting context to Apple through a Shortcut you choose; that Shortcut must take Shortcut Input, generate only, and return its response via Stop and Output. The app cannot tell which model a Shortcut uses, so if you change the model inside it nothing here will say so.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var shortcutPicker: some View {
+        HStack {
+            if shortcuts.isEmpty {
+                Text(loadingShortcuts ? "Looking for Shortcuts…"
+                     : "No Shortcuts found. Create one in Shortcuts.app, then refresh.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Picker("Shortcut", selection: $fallbackShortcut) {
+                    Text("Choose…").tag("")
+                    ForEach(shortcuts, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.menu)
+            }
+            Spacer()
+            Button {
+                Task { await loadShortcuts() }
+            } label: {
+                if loadingShortcuts { ProgressView().controlSize(.small).scaleEffect(0.7) }
+                else { Image(systemName: "arrow.clockwise") }
+            }
+            .buttonStyle(.borderless)
+            .disabled(loadingShortcuts)
+        }
+    }
+
+    private func loadShortcuts() async {
+        loadingShortcuts = true
+        defer { loadingShortcuts = false }
+        switch await ShortcutsCatalog.list() {
+        case .success(let names):
+            shortcuts = names
+            shortcutsError = nil
+            // A Shortcut that has been renamed or deleted would otherwise sit in the
+            // picker as a selection that silently fails at briefing time.
+            if !fallbackShortcut.isEmpty, !names.contains(fallbackShortcut) {
+                shortcutsError = "“\(fallbackShortcut)” no longer exists — pick another."
+            }
+        case .failure(let message):
+            shortcutsError = "Could not list Shortcuts: \(message)"
         }
     }
 
