@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-15
 
-**Status:** macOS 27 and Xcode 27 verified on 2026-09-15. Local generation and command-line Shortcuts PCC probes pass. Production fallback integration and evaluation on real briefings remain pending.
+**Status:** Initial fallback implementation built and tested on 2026-09-16 on `codex/local-briefing-fallback-design`. Native generation, Shortcuts Cloud Pro and independent Teams MCP checks pass. The feature remains off by default and has not been deployed. Shared scheduled-runner coordination, normal Slack/Todoist delivery and representative briefing evaluation remain open; this is not yet the full production acceptance milestone.
 
 ## First runtime verification — 2026-09-15
 
@@ -32,7 +32,7 @@ Reproducible probes and evidence:
 - [Shortcuts synthetic context probe](../../scripts/probe-shortcuts-context.py) — accepts shortcut name, selected-model label, character size, timeout and report path; saves only synthetic results. For example, run `python3 scripts/probe-shortcuts-context.py --model-label 'Cloud Pro' --chars 96000 --report /tmp/pcc-probe.json` from this branch after verifying the shortcut selection.
 - [Cloud 32,000-character report](../experiments/2026-09-15-foundation-models/cloud-32000.json), [Cloud 96,000-character report](../experiments/2026-09-15-foundation-models/cloud-96000.json), [Cloud Pro 96,000-character report](../experiments/2026-09-15-foundation-models/cloud-pro-96000.json).
 
-Next implementation work is independent source retrieval, main-path exhaustion detection, durable page/job identity and the optional Shortcuts runner. No live Notion/Teams context was sent to a model, no briefing delivery was triggered and no production fallback setting was enabled during these probes.
+The 2026-09-16 implementation below adds independent retrieval, exhaustion detection, durable page/job identity and the optional Shortcuts runner. No live Notion/Teams context was sent to a model, no briefing delivery was triggered and no production fallback setting was enabled during these probes.
 
 ## Outcome
 
@@ -57,16 +57,44 @@ Example: a meeting arrives while the main model is limited. The app gathers avai
 
 The first implementation should cover the app's intraday briefing path. The scheduled main briefing runner must recognize fallback pages as eligible for enrichment; extending automatic fallback generation to that runner is a separate integration step. Do not silently change the external scheduled task as part of this documentation work.
 
-## Current implementation
+## Current implementation — 2026-09-16
 
-Relevant code:
+The former Slack-only on-device experiment has been replaced with an opt-in Notion fallback. Its old `intradayUseOnDeviceModel` preference and marker file no longer select a separate path.
 
-- [`FoundationModelsBriefService.swift`](../../MeetingReminder/Services/FoundationModelsBriefService.swift): uses `SystemLanguageModel`, requests a short brief, action items and a Slack line with guided generation. It assumes a 4,096-token window and caps prior notes at 1,500 characters.
-- [`NotionPriorNotesReader.swift`](../../MeetingReminder/Services/NotionPriorNotesReader.swift): already reads prior notes directly through the app's Notion integration. It currently returns `nil` for both missing notes and retrieval errors, which is insufficient for reporting source coverage.
-- [`PreCallBriefTriggerService.swift`](../../MeetingReminder/Services/PreCallBriefTriggerService.swift): normally launches the main CLI briefing workflow. An experimental opt-in route uses the local model, but posts only its Slack line. It does not save the generated full brief or action items. It also marks the event fired after an unsuccessful local attempt, so its current completion tracking cannot be reused unchanged.
-- [`INTRADAY-BRIEFINGS.md`](../INTRADAY-BRIEFINGS.md): describes the existing main runner, scheduled counterpart and shared Notion state. The private executable briefing ruleset must be inspected during implementation to establish the actual current delivery and task destinations.
+- [`BriefingProcess.swift`](../../MeetingReminder/Services/BriefingProcess.swift): bounded subprocess runner; parses Claude's JSON result envelope. Recognised provider quota/credit errors trigger fallback; source-tool 429s, authentication failures, malformed envelopes and timeouts do not. Recovery runs Claude without tools, skills or MCP servers; the app owns all writes.
+- [`BriefingFallbackProviders.swift`](../../MeetingReminder/Services/BriefingFallbackProviders.swift): optional named shortcut, then on-device generation. Native generation measures instructions, output schema and prompt against the runtime context size, reserves 1,200 output tokens plus 512 tokens of margin, and reduces evidence in fresh sessions. Shortcuts uses a 24,000-character evidence budget, explicitly not a claimed PCC token limit. Output is bounded and validated before persistence.
+- [`briefing-teams-context.py`](../../MeetingReminder/Resources/briefing-teams-context.py): one fixed read-only MCP `context_for_meeting` call over stdio using the existing `teams-chat` entry in `~/.claude.json` and that project's installed Python/MCP environment. No model chooses or invokes tools. Cached-result freshness warnings are retained. This adapter currently expects the installed `uv run --directory <project>` configuration and its `.venv/bin/python`.
+- [`BriefingNotionRepository.swift`](../../MeetingReminder/Services/BriefingNotionRepository.swift): direct Notion integration; active skip rules, recent title-matched notes, bounded nested block reads and source coverage. It checks for an existing title/start match, refuses ambiguity, and saves to the usual Briefings data source. Fallback and enrichment each occupy a labelled toggle with an occurrence marker. Enrichment only appends to the recorded page; it never replaces user content or changes task checkboxes. Mutation requests are not automatically retried by the HTTP client.
+- [`BriefingFallbackCoordinator.swift`](../../MeetingReminder/Services/BriefingFallbackCoordinator.swift) and [`BriefingFallbackModels.swift`](../../MeetingReminder/Services/BriefingFallbackModels.swift): atomic private ledger in `~/Library/Application Support/MeetingReminder/briefing-fallback.json`. Job identity includes external calendar UID (local ID if absent) and exact start. Checkpoints precede remote writes. Restart recovery looks for markers; an uncertain write without a marker pauses for review rather than repeating the write. Raw retrieved context is removed from the ledger after a successful save. Completed state is pruned after 30 days as subsequent checkpoints occur.
+- [`PreCallBriefTriggerService.swift`](../../MeetingReminder/Services/PreCallBriefTriggerService.swift): automatic routing after recognised exhaustion, 15-minute provider cooldown, durable fallback ownership, serial quiet recovery while the app is open. Retry delays grow from five minutes to one hour; recovery pauses after seven days. Pending briefs expire five minutes after their start. Calendar removals/reschedules cancel queued occurrences, and retries query EventKit for the original occurrence even outside the menu bar's rolling window.
+- Settings exposes **Use Apple Intelligence when Claude reaches its usage limit** and an optional shortcut name. Empty name means on-device only. The setting is off by default; the private shortcut must receive Shortcut Input, use the selected model without Follow Up, and return Response via Stop and Output. The app cannot verify which model the named shortcut uses.
 
-This is a starting point, not an existing automatic fallback. There is no verified independent Teams connection, credit-limit classifier or durable enrichment queue in this path.
+### Verified implementation checks
+
+- Xcode 27 Debug build passes. Regression suite: **260 tests passed**, plus two opt-in real-model tests skipped in the ordinary suite.
+- Both opt-in tests were then run successfully with **synthetic data only**, through the production adapter code inside the hosted test app: native briefing in **3.590 s** (reported window **8,192 tokens**) and the currently Cloud Pro **Meeting Briefing PCC Probe** shortcut in **4.247 s**, both with valid bounded outputs. These are single smoke tests, not quality or performance benchmarks.
+- A read-only Teams MCP call using a synthetic meeting title completed successfully. Only status/response length was inspected; the 952-character response was not sent to a model or persisted as an artifact.
+- Mocked tests cover canonical quota errors versus tool failures, JSON validation, recurring identity, durable checkpoints, corruption, backoff, same-page append, duplicate matches, interrupted enrichment and ambiguous-write handling, cancellation, process exit status and timeout. The hosted test app no longer starts production automations.
+- No live Notion writes, Slack messages or Todoist tasks were performed. The installed application, its preferences and the private scheduled/intraday skills were not changed.
+
+To run the synthetic adapter checks explicitly:
+
+```sh
+TEST_RUNNER_BRIEFING_APPLE_SMOKE=1 xcodebuild \
+  -project MeetingReminder.xcodeproj -scheme MeetingReminder \
+  -destination 'platform=macOS' \
+  -only-testing:MeetingReminderTests/BriefingAppleSmokeTests \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGN_STYLE=Manual \
+  DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= test
+```
+
+### Remaining before daily use
+
+1. **Shared ownership with the scheduled CoWork runner.** App-side serialization and a final Notion query do not provide an atomic lock across external runners. No shared lease or scheduled-skill change has been implemented. Concurrent creators can still race. Establish the coordination protocol before enabling fallback in daily use.
+2. **Delivery/task parity.** The actual private main skill currently uses Slack and Todoist, not the older iMessage/Reminders path. This initial fallback saves the note and uses the app's local completion banner; it creates no external messages or tasks. Recovery also appends only to Notion. Implement separate idempotent delivery/task reconciliation before claiming normal workflow parity.
+3. **Retrieval depth and metadata.** Prior notes currently use a bounded title match, not the main skill's customer/domain mapping, completed-meeting classification, action-ID extraction or full prior-brief retrieval. Calendar links and partner/stage metadata are not written by the fallback. Long evidence is truncated with source IDs and coverage retained, not yet reduced through a hierarchical extraction pass.
+4. **Operational evaluation.** Test varied real briefings for omissions and factual grounding, reset metadata, deployed signed-app execution, lock/sleep behaviour and source/shortcut failure modes. Synthetic adapter checks do not establish these. Native generation is token-bounded but does not yet have an independent watchdog. The Shortcuts CLI has a 90-second timeout; terminating it cannot guarantee cancellation inside the Shortcuts service, so configured shortcuts must perform generation only.
+5. **Review workflow.** Ambiguous/uncertain writes and seven-day recovery expiry are exposed as “need review” with reasons in the ledger. A dedicated inspection/retry UI is not implemented; do not delete uncertain entries and re-run without checking their recorded pages and markers.
 
 ## Proposed architecture
 
@@ -282,4 +310,4 @@ This design uses the primary documentation checked on 2026-09-15:
 
 The earlier [August on-device research](2026-08-09-macos-golden-gate-on-device-ai-research.md) records provisional claims and recommends local triage. This document defines a narrower fallback use case where a shorter useful brief is acceptable. Its hardware, context and routing assumptions must be verified from the installed runtime and primary documentation rather than inherited from that research.
 
-Still to establish during implementation: the exact `teams-mcp` connection and authorization path, current task/delivery destinations, reliable main-runner reset metadata, a shared coordination mechanism, Shortcuts PCC's usable input/output budget and unattended reliability, and the quality of Apple's selected models on Adam's actual briefing material.
+The Teams stdio connection and current Slack/Todoist destinations are now established. Still open: reliable main-runner reset metadata, shared coordination, delivery/task reconciliation, Shortcuts PCC's usable budget on representative material and unattended reliability, and briefing quality on Adam's actual material.

@@ -18,8 +18,10 @@ final class CalendarSyncNotionClient {
     private let token: String
     private let session: URLSession
     private let logger: CalendarSyncLogger
+    private let retryWrites: Bool
 
-    init(token: String, logger: CalendarSyncLogger) {
+    init(token: String, logger: CalendarSyncLogger, retryWrites: Bool = true) {
+        self.retryWrites = retryWrites
         self.token = token
         self.logger = logger
         let cfg = URLSessionConfiguration.ephemeral
@@ -41,6 +43,7 @@ final class CalendarSyncNotionClient {
 
     private func request(method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
         let url = URL(string: "https://api.notion.com/v1\(path)")!
+        let mayRetry = retryWrites || method == "GET" || path.hasSuffix("/query")
         var attempt = 0
         var delay: UInt64 = 500_000_000 // 0.5s
 
@@ -57,7 +60,7 @@ final class CalendarSyncNotionClient {
             do {
                 (data, resp) = try await session.data(for: req)
             } catch {
-                if attempt < 3 {
+                if mayRetry && attempt < 3 {
                     logger.warn("network error \(error.localizedDescription), retrying (attempt \(attempt))")
                     try await Task.sleep(nanoseconds: delay)
                     delay *= 2
@@ -74,7 +77,7 @@ final class CalendarSyncNotionClient {
             }
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
             let retriable = [429, 502, 503, 504].contains(http.statusCode)
-            if retriable && attempt < 3 {
+            if mayRetry && retriable && attempt < 3 {
                 logger.warn("notion \(http.statusCode), retrying (attempt \(attempt))")
                 try await Task.sleep(nanoseconds: delay)
                 delay *= 2

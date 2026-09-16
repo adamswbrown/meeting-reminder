@@ -74,6 +74,8 @@ enum NotionPriorNotesReader {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
         if let d = iso.date(from: start) { return d }
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = iso.date(from: start) { return d }
         iso.formatOptions = [.withFullDate]   // date-only ("2026-08-10")
         return iso.date(from: start)
     }

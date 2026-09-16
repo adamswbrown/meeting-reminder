@@ -27,7 +27,8 @@ struct SettingsView: View {
     @ObservedObject var calComSyncService: CalComSyncService
     @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
-    @AppStorage("intradayUseOnDeviceModel") private var intradayUseOnDeviceModel: Bool = false
+    @AppStorage("briefingFallbackEnabled") private var briefingFallbackEnabled = false
+    @AppStorage("briefingFallbackShortcut") private var briefingFallbackShortcut = ""
 
     @State private var launchAtLogin = false
     @State private var enabledCalendarIDs: Set<String> = []
@@ -1100,10 +1101,16 @@ struct SettingsView: View {
                 Toggle("Auto-brief new meetings during the day (09:00–17:00)",
                        isOn: Binding(get: { preCallBriefTrigger.isEnabled },
                                      set: { preCallBriefTrigger.isEnabled = $0 }))
-                if #available(macOS 26.0, *) {
-                    Toggle("Generate on-device (Apple Intelligence, no Claude)",
-                           isOn: $intradayUseOnDeviceModel)
+                if #available(macOS 26.4, *) {
+                    Toggle("Use Apple Intelligence when Claude reaches its usage limit", isOn: $briefingFallbackEnabled)
                         .disabled(!preCallBriefTrigger.isEnabled)
+                    if briefingFallbackEnabled {
+                        TextField("Optional Cloud shortcut name", text: $briefingFallbackShortcut)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Leave blank for on-device only. A named shortcut receives meeting context and must return the Use Model response without sending messages or changing notes.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        LabeledContent("Fallback queue", value: preCallBriefTrigger.fallbackStatus)
+                    }
                 }
                 if !preCallBriefTrigger.lastResult.isEmpty {
                     LabeledContent("Last run") {
@@ -1121,20 +1128,13 @@ struct SettingsView: View {
                 if preCallBriefTrigger.isRunning {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Briefing…").font(.caption) }
                 }
-                HStack {
-                    Button("Grant permissions…") { preCallBriefTrigger.requestPermissions() }
-                    if !preCallBriefTrigger.permissionStatus.isEmpty {
-                        Text(preCallBriefTrigger.permissionStatus)
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
             } header: {
                 Text("Intraday Pre-Call Briefings")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("When a new meeting lands in your calendar during the working day, this runs the pre-call briefing agent for it within ~2 minutes — the local counterpart to the 03:00 cloud task. It follows the same rules and delivers via the local iMessage + Reminders CLIs.")
-                    Text("Requires the `claude` CLI plus the `imessage-tools` + `remctl` CLIs. Click **Grant permissions** to trigger the Reminders + Automation (Messages) prompts — those two panes have no “+” so they can only be added this way. Full Disk Access must be added manually: System Settings → Privacy & Security → Full Disk Access → add MeetingReminder. Off by default.")
-                    Text("Generate on-device (macOS 26+): uses Apple Intelligence's on-device model instead of the `claude` CLI — free, offline, ~5s, and posts a short brief to Slack. It reads the most recent matching Notion Meeting Notes for context but skips the full agent (no Todoist/Jira/skip-list). Falls back to Claude when off.")
+                    Text("New meetings trigger the local Claude briefing agent. The normal agent writes Notion briefings and handles Slack and Todoist delivery. Requires the claude CLI and the private intraday skill.")
+                    Text("Fallback saves a source-labelled Notion briefing using direct Notion reads and the configured teams-chat MCP. Cloud via Shortcuts is optional; on-device generation is the final route. Claude recovery adds an enrichment section to that same page. Fallback and recovery do not send Slack messages or create Todoist tasks.")
+                    Text("Retries survive app restarts and run while the app is open. Uncertain Notion writes pause for review. The separate scheduled cloud briefing task must be coordinated before enabling fallback in daily use; it does not yet share this app's queue.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -113,9 +113,9 @@ struct IntradayBriefGate {
 /// exactly one thing: when a genuinely-new meeting lands in the diary **during the
 /// working day (09:00–17:00, Mon–Fri)**, it fires a headless `claude` run of the
 /// *derived intraday skill* (`automation/pre-call-briefing-intraday.md`) for that
-/// meeting — same briefing rules as Co Work, but delivering via local CLIs
-/// (`imessage-tools` + `remctl`) because the interactively-authenticated MCP servers
-/// are absent in a background spawn.
+/// meeting — the private skill currently delivers through Slack and Todoist.
+/// Confirmed model exhaustion can opt into app-owned Apple Intelligence synthesis
+/// and durable same-page Notion enrichment once the main provider recovers.
 ///
 /// It keys off EventKit (via `CalendarService.$events`), NOT the Notion reactive sync
 /// (which may be disabled), and the skill re-derives everything from the ICS feed, so
@@ -234,6 +234,11 @@ final class PreCallBriefTriggerService: ObservableObject {
     private var skillMissingLatched = false // stop retrying every poll when the skill file is absent
     private var lastRunTime: Date?
     private var debounceTask: Task<Void, Never>?
+    private var fallbackTimer: Task<Void, Never>?
+    private let fallback: BriefingFallbackCoordinator
+    private var fallbackChanges: AnyCancellable?
+    @Published private(set) var fallbackStatus = ""
+
     private var pending: [MeetingEvent] = []    // detected-but-not-yet-briefed, drained serially
 
     /// A meeting that vanished from the diary during the day (cancelled or moved).
@@ -254,6 +259,9 @@ final class PreCallBriefTriggerService: ObservableObject {
 
     init(calendarService: CalendarService) {
         self.calendarService = calendarService
+        self.fallback = BriefingFallbackCoordinator(occurrenceExists: { [weak calendarService] meeting in
+            calendarService?.occurrenceStillExists(meeting)
+        })
         let saved = UserDefaults.standard.stringArray(forKey: Keys.firedIDs) ?? []
         self.firedOrder = saved
         self.firedIDs = Set(saved)
@@ -263,6 +271,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         // A child that closes its stdin before we finish writing must not SIGPIPE-kill
         // the whole app (M4). We handle the write error explicitly instead.
         signal(SIGPIPE, SIG_IGN)
+        fallbackChanges = fallback.$status.sink { [weak self] in self?.fallbackStatus = $0 }
     }
 
     // MARK: Lifecycle
@@ -337,6 +346,8 @@ final class PreCallBriefTriggerService: ObservableObject {
         cancellable?.cancel()
         cancellable = nil
         debounceTask?.cancel()
+        fallbackTimer?.cancel()
+        fallbackTimer = nil
         previousUpcoming = nil   // next real emission re-seeds the diff basis (absorb, don't fire)
         seeded = false
         lastSeenDay = nil
@@ -350,6 +361,13 @@ final class PreCallBriefTriggerService: ObservableObject {
             .sink { [weak self] events in
                 self?.handleEventsChanged(events)
             }
+        fallbackTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.retryFallback()
+            }
+        }
         log("started — watching calendar for intraday new meetings (09:00–17:00)")
     }
 
@@ -408,6 +426,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         // Pair a same-title move into a single reschedule so it doesn't fire both a
         // "cancelled" and a "new meeting" alert (user wants one "moved" post).
         let diff = IntradayDiffClassifier.classify(added: added, removed: removed)
+        fallback.cancel(diff.cancellations + diff.reschedules.map(\.old))
 
         // New meetings → brief queue. Also drop any new meeting whose title matches a
         // still-pending removal at a different time (a reschedule split across emissions):
@@ -455,7 +474,8 @@ final class PreCallBriefTriggerService: ObservableObject {
     /// started grace) + the single-in-flight guard (only ever one `claude` running).
     /// Re-arms itself while either queue is non-empty.
     private func drainPending() async {
-        guard isEnabled, !isRunning, !skillMissingLatched else { return }
+        guard isEnabled, !skillMissingLatched else { return }
+        if isRunning { scheduleDrain(after: minInterval); return }
         let now = Date()
         // Drop already-fired items and those the gate says are too far past their start.
         pending.removeAll { firedIDs.contains($0.id) || gate.decide(meetingStart: $0.startDate, now: now) == .drop }
@@ -525,28 +545,8 @@ final class PreCallBriefTriggerService: ObservableObject {
             title: "🆕 New meeting detected",
             body: "Generating a pre-call briefing for “\(target.title)”…")
 
-        // Experimental: on-device Foundation Models generator (thin slice — Slack only,
-        // no Notion/Todoist/dedup). Off by default; needs macOS 26. Falls back to the
-        // Claude path on older macOS or when the flag is unset.
-        // Enable via EITHER the UserDefaults flag OR a marker file. The marker file avoids
-        // cfprefsd cache races when toggling an already-running app from the CLI:
-        //   touch ~/.meetingreminder-ondevice-brief
-        let markerPath = (NSHomeDirectory() as NSString).appendingPathComponent(".meetingreminder-ondevice-brief")
-        let onDeviceFlag = UserDefaults.standard.bool(forKey: "intradayUseOnDeviceModel")
-            || FileManager.default.fileExists(atPath: markerPath)
-        var macOS26 = false
-        if #available(macOS 26.0, *) { macOS26 = true }
-        log("intraday path check: macOS26=\(macOS26) onDeviceFlag=\(onDeviceFlag)")
-        if #available(macOS 26.0, *), onDeviceFlag {
-            let summary = await Self.runOnDeviceBrief(for: target, logPath: logURL.path)
-            markFired(target.id)
-            recordResult(summary)
-            let ok = summary.contains("imessage=ok")
-            notifications.postInfo(
-                id: notifID,
-                title: ok ? "✅ Pre-call briefing sent (on-device)" : "⚠️ On-device briefing issue",
-                body: "“\(target.title)” — \(summary)", sound: !ok)
-            log("on-device result: \(summary)")
+        if fallback.coolingDown {
+            await runFallback(target, notificationID: notifID)
             return
         }
 
@@ -560,7 +560,13 @@ final class PreCallBriefTriggerService: ObservableObject {
             return
         }
 
-        let output = await Self.runClaude(cliPath: cliPath, promptStdin: filled)
+        let primary = await BriefingProcess.claude(path: cliPath, prompt: filled)
+        if primary.providerExhausted && fallback.enabled {
+            fallback.noteExhaustion()
+            await runFallback(target, notificationID: notifID)
+            return
+        }
+        let output = primary.text.isEmpty ? "Claude run failed (see CLI configuration)." : primary.text
         // Mark fired regardless of outcome — a failed run should not loop; Co Work's
         // schedule is the backstop.
         markFired(target.id)
@@ -576,7 +582,7 @@ final class PreCallBriefTriggerService: ObservableObject {
                                    body: "“\(target.title)” — briefing saved to Notion.")
         } else if created {
             notifications.postInfo(id: notifID, title: "⚠️ Briefing saved, alert not sent",
-                                   body: "“\(target.title)” — iMessage failed; check permissions / the Run Log.", sound: true)
+                                   body: "“\(target.title)” — Slack delivery failed; check the Run Log.", sound: true)
         } else if deliveryFailed || summary.lowercased().contains("fail") {
             notifications.postInfo(id: notifID, title: "⚠️ Briefing generated with issues",
                                    body: "“\(target.title)” — see the log / Notion Run Log.", sound: true)
@@ -679,115 +685,36 @@ final class PreCallBriefTriggerService: ObservableObject {
             .replacingOccurrences(of: "{{APPLE_EVENT_ID}}", with: neutralise(appleID))
     }
 
-    // MARK: On-device generation (experimental thin slice)
-
-    /// Generate a brief with the on-device Foundation Models system model and post the
-    /// one-line alert to Slack. Returns a summary in the same `created=/imessage=` shape
-    /// the Claude path uses so the completion banners keep working.
-    /// Append a single timestamped line to the intraday log from a nonisolated context.
-    nonisolated private static func appendLine(_ path: String, _ message: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(stamp)] \(message)\n"
-        guard let data = line.data(using: .utf8) else { return }
-        let url = URL(fileURLWithPath: path)
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: url)
-        }
-    }
-
-    @available(macOS 26.0, *)
-    nonisolated private static func runOnDeviceBrief(for target: MeetingEvent, logPath: String) async -> String {
-        let priorNotes = await NotionPriorNotesReader.fetch(
-            title: target.title, before: target.startDate, logPath: logPath)
-        appendLine(logPath, "on-device: prior-notes \(priorNotes.map { "found (\($0.count) chars)" } ?? "none — using invite body")")
-        let ctx = IntradayBriefContext.from(target, priorNotes: priorNotes)
+    private func runFallback(_ meeting: MeetingEvent, notificationID: String) async {
         do {
-            let brief = try await FoundationModelsBriefService.generate(ctx)
-            let ok = await SlackPoster().post(brief.slackLine)
-            return "created=1 imessage=\(ok ? "ok" : "failed") (on-device)"
+            try fallback.enqueue(meeting)
+            markFired(meeting.id) // its durable job now owns retries, including across restarts
+            let result = await fallback.runNext(cliPath: cliPath, logPath: logURL.path,
+                preferredJobID: BriefingFallbackJob.occurrenceKey(meeting)) ?? "Fallback queued."
+            recordResult(result)
+            notifications.postInfo(id: notificationID, title: "Meeting briefing fallback", body: result)
         } catch {
-            return "created=0 imessage=none on-device-error: \(error)"
+            recordResult(error.localizedDescription)
+            notifications.postInfo(id: notificationID, title: "Briefing fallback needs attention",
+                                   body: error.localizedDescription, sound: true)
         }
     }
 
-    // MARK: Process (runs off the main actor)
-
-    /// Spawns `claude --print --dangerously-skip-permissions`, feeding the prompt on
-    /// stdin. Returns combined stdout/stderr. Times out after 10 minutes.
-    nonisolated private static func runClaude(cliPath: String, promptStdin: String) async -> String {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: cliPath)
-                process.arguments = ["--print", "--dangerously-skip-permissions"]
-                process.currentDirectoryURL = FileManager.default.temporaryDirectory
-
-                // Inherit env; ensure PATH covers claude, bun (~/.bun/bin) and ~/bin.
-                var env = ProcessInfo.processInfo.environment
-                let home = NSHomeDirectory()
-                let extra = ["/usr/local/bin", "/opt/homebrew/bin", "\(home)/.npm-global/bin", "\(home)/.local/bin", "\(home)/.bun/bin", "\(home)/bin"]
-                let path = env["PATH"] ?? "/usr/bin:/bin"
-                env["PATH"] = (extra + [path]).joined(separator: ":")
-                if env["HOME"] == nil { env["HOME"] = home }
-                process.environment = env
-
-                let stdin = Pipe(), stdout = Pipe()
-                process.standardInput = stdin
-                process.standardOutput = stdout
-                process.standardError = stdout
-
-                // Resume the continuation exactly once, from whichever path finishes first
-                // (normal read, launch failure, or the watchdog). Guarantees `isRunning`
-                // is released even if a claude tool grandchild keeps the stdout pipe open
-                // after the parent is killed and `readDataToEndOfFile` never sees EOF (NEW-5).
-                let resumeLock = NSLock()
-                var didResume = false
-                func finish(_ result: String) {
-                    resumeLock.lock(); defer { resumeLock.unlock() }
-                    guard !didResume else { return }
-                    didResume = true
-                    continuation.resume(returning: result)
-                }
-
-                do {
-                    try process.run()
-                } catch {
-                    finish("FAILED to launch \(cliPath): \(error.localizedDescription)")
-                    return
-                }
-
-                // Feed the prompt on a SEPARATE queue so the read loop below starts
-                // immediately — otherwise a child that emits >64KB before draining stdin
-                // would deadlock writer and reader (M4). SIGPIPE is ignored process-wide
-                // (see init); a closed pipe surfaces as a thrown error we swallow.
-                DispatchQueue.global(qos: .utility).async {
-                    if let data = promptStdin.data(using: .utf8) {
-                        try? stdin.fileHandleForWriting.write(contentsOf: data)
-                    }
-                    try? stdin.fileHandleForWriting.close()
-                }
-
-                // Watchdog: SIGTERM at 10 min, SIGKILL 15s later, and resume regardless so a
-                // wedged read can't hang the queue forever (M3/NEW-5). The read thread may
-                // leak until the OS reaps it, but the feature keeps working.
-                DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(600)) {
-                    guard process.isRunning else { return }
-                    process.terminate()
-                    DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(15)) {
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                        finish("(intraday run timed out after ~10m — process terminated)")
-                    }
-                }
-
-                let data = stdout.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                finish(String(data: data, encoding: .utf8) ?? "")
-            }
+    private func retryFallback() async {
+        guard isEnabled, fallback.enabled, !isRunning else { return }
+        // Calendar changes keep their usual scheduling priority. Recovery is quiet.
+        guard pending.isEmpty && pendingRemovals.isEmpty else { return }
+        isRunning = true
+        defer { isRunning = false }
+        if let result = await fallback.runNext(cliPath: cliPath, logPath: logURL.path) {
+            recordResult(result)
+            log(result)
         }
+    }
+
+    nonisolated private static func runClaude(cliPath: String, promptStdin: String) async -> String {
+        let result = await BriefingProcess.claude(path: cliPath, prompt: promptStdin)
+        return result.text.isEmpty ? "Claude run failed (see CLI configuration)." : result.text
     }
 
     // MARK: Helpers

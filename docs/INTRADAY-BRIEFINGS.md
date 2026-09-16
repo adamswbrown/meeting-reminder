@@ -1,5 +1,7 @@
 # Intraday Pre-Call Briefings
 
+> **2026-09-16 implementation update:** the current private skill uses Slack and Todoist. The Reminders setup instructions below describe the older skill. The new opt-in Apple Intelligence fallback and its remaining rollout requirements are documented in the [fallback implementation plan](plans/2026-09-15-local-briefing-fallback-design.md#current-implementation--2026-09-16). It saves Notion briefings and later appends Claude enrichment to the same page; it does not yet reproduce Slack/Todoist delivery or coordinate with the separate scheduled runner.
+
 The local, working-hours counterpart to the cloud **"Co Work" Daily Pre-Call Briefing**
 task. When a genuinely-new meeting lands on the monitored work calendar **during the day
 (09:00–17:00, Mon–Fri)**, the app fires a headless `claude` run that briefs it within
