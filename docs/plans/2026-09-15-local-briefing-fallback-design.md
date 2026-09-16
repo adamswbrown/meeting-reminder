@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-15
 
-**Status:** Fallback implementation built and tested on `codex/local-briefing-fallback-design`; extended 2026-09-16 with the cross-runner lease, Slack/Todoist delivery parity, full-depth retrieval and the review queue (293 tests pass). Native generation, Shortcuts Cloud Pro and independent Teams MCP checks pass. **The feature remains off by default and has not been deployed.** The scheduled runner does not yet honour the lease, migration 004 has not been applied, and representative briefing evaluation is still open — this is not yet the production acceptance milestone.
+**Status:** Fallback implementation built and tested on `codex/local-briefing-fallback-design`; extended 2026-09-16 with the cross-runner lease, Slack/Todoist delivery parity, full-depth retrieval and the review queue (293 tests pass). Native generation, Shortcuts Cloud Pro and independent Teams MCP checks pass. **The feature remains off by default and has not been deployed.** Migration 004 has not been applied, and representative briefing evaluation is still open — this is not yet the production acceptance milestone.
 
 ## First runtime verification — 2026-09-15
 
@@ -147,18 +147,25 @@ every check ran against fakes.
 
 ### Still open before daily use
 
-1. **The scheduled runner must honour the lease.** The other half of the
-   protocol is not in this repo and has not been applied. Before enabling
-   fallback in daily use, the Co Work briefing routine must, for each target
-   occurrence, (a) read `Briefing Lock` on the Calendar Events row, (b) skip the
-   occurrence if it holds an unexpired lease whose owner is not `co-work`, and
-   (c) otherwise write `co-work|<run id>|<ISO8601 expiry>` before creating the
-   briefing page, clearing it afterwards. The format is a flat `owner|id|expiry`
-   string precisely so this is a few lines of the routine's existing Notion
-   work. **Until that lands the race is narrowed, not eliminated** — the app
-   defers to the runner, but the runner does not defer to the app. The routine
-   is external (`trig_01CUbUGc4yywHDdgUJTapsLb`); changing it is a deliberate,
-   separate act, not a side effect of this branch.
+1. ~~The scheduled runner must honour the lease.~~ **Done 2026-09-16.** All three
+   writers now take the lock:
+   - Co Work cloud routine `trig_01CUbUGc4yywHDdgUJTapsLb` — new **STEP 4A**
+     (11 lines added, nothing removed; cron, model and all 11 connectors
+     verified unchanged, and the updated prompt diffed byte-for-byte against
+     the intended text).
+   - Intraday catcher `automation/pre-call-briefing-intraday.md` — new
+     **STEP 6B**. Gitignored, so it is not part of this branch.
+   - The app — `BriefingCoordinationLease.swift`.
+
+   Owners are `co-work`, `intraday` and `meeting-reminder`. Each reads the lock,
+   defers to a live foreign one, claims with a 10-minute expiry, and clears only
+   its own. **The residual risk is now the opposite of the original one:** if a
+   writer dies holding a lock, the occurrence is skipped by the others until the
+   expiry lapses. Because the routine runs once a day, a lock held across 02:04
+   could cost that meeting its morning briefing. The 10-minute expiry and the
+   "never block on a lock error" rule bound this, but it has not been observed in
+   practice either way.
+
 2. **Migration 004 has not been applied.** It runs on the next Calendar → Notion
    sync. Until the `Briefing Lock` column exists, every claim degrades to
    `.unavailable` — safe, but no better than before.
