@@ -64,6 +64,13 @@ dead-zone where a meeting starting *at* the 09:00 boundary was un-briefable — 
   fires now even outside hours (the only chance to brief before it starts). One that starts
   *at/after* the open waits for the window — so an evening/early-morning booking for a 09:00
   meeting doesn't ping Slack the night before.
+- **Removal boundary:** `decide(kind:)` treats a **removal** (cancel/reschedule notice)
+  differently at that boundary. A brief is still worth sending at the start, so it waits;
+  a removal's whole value is "don't go", which expires at the start — waiting for an open
+  that lands exactly *on* the start would deliver it precisely too late. So a removal whose
+  meeting starts at/before the next open fires immediately (`meetingStart <= open`), while
+  one with real lead time after the open still waits. Live case that prompted this: a 09:00
+  recurring meeting cancelled at 07:39 sat queued until 09:00.
 - **Started grace (C):** the "already-started" drop tolerates 5 minutes, so a boundary
   meeting isn't lost in the detection → 30s debounce → drain race, and a brief for a
   just-started meeting still lands.

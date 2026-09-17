@@ -69,7 +69,19 @@ struct IntradayBriefGate {
         case drop
     }
 
-    func decide(meetingStart: Date, now: Date) -> Decision {
+    /// What the pending item is, which decides how the imminent exemption treats a
+    /// meeting starting *exactly* at the window open.
+    enum Kind {
+        /// A pre-call brief. Still worth sending at the start (the started-grace
+        /// covers it), so it waits for the window.
+        case brief
+        /// A cancellation / reschedule notice. Its whole value is "don't go" — it
+        /// expires at the start, so waiting until an open that lands *on* the start
+        /// would deliver it exactly too late.
+        case removal
+    }
+
+    func decide(meetingStart: Date, now: Date, kind: Kind = .brief) -> Decision {
         // (C) Started beyond the grace window → no longer a pre-call brief.
         if meetingStart <= now.addingTimeInterval(-startedGrace) { return .drop }
         // In working hours → brief now (the caller still applies its min-interval floor).
@@ -77,8 +89,11 @@ struct IntradayBriefGate {
         // Outside hours. (A) A meeting that starts *before* the next window opens can't
         // wait — brief it now. One that starts *at/after* the open waits for the window,
         // so an evening/early-morning booking doesn't fire an antisocial-hours alert.
+        // A removal also can't wait when the open falls exactly *on* the start: the
+        // notice would arrive as the meeting began, which is no notice at all.
         let open = nextWorkingWindowOpen(after: now)
         if meetingStart < open { return .fireNow }
+        if kind == .removal && meetingStart <= open { return .fireNow }
         return .waitUntil(open)
     }
 
@@ -461,7 +476,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         pending.removeAll { firedIDs.contains($0.id) || gate.decide(meetingStart: $0.startDate, now: now) == .drop }
         pendingRemovals.removeAll {
             firedRemovalIDs.contains($0.meeting.id)
-                || gate.decide(meetingStart: $0.meeting.startDate, now: now) == .drop
+                || gate.decide(meetingStart: $0.meeting.startDate, now: now, kind: .removal) == .drop
         }
         guard !pending.isEmpty || !pendingRemovals.isEmpty else { return }
 
@@ -482,7 +497,7 @@ final class PreCallBriefTriggerService: ObservableObject {
             .filter { gate.decide(meetingStart: $0.startDate, now: now) == .fireNow }
             .min { $0.startDate < $1.startDate }
         let firableRemoval = pendingRemovals
-            .filter { gate.decide(meetingStart: $0.meeting.startDate, now: now) == .fireNow }
+            .filter { gate.decide(meetingStart: $0.meeting.startDate, now: now, kind: .removal) == .fireNow }
             .min { $0.meeting.startDate < $1.meeting.startDate }
 
         switch (firableBrief, firableRemoval) {
@@ -498,10 +513,13 @@ final class PreCallBriefTriggerService: ObservableObject {
             pendingRemovals.removeAll { $0.meeting.id == removal.meeting.id }; await runRemoval(removal)
         case (nil, nil):
             // Nothing eligible now — re-arm for the soonest window-open across both queues.
-            let soonest = ([pending.map(\.startDate), pendingRemovals.map(\.meeting.startDate)]
-                .flatMap { $0 })
-                .compactMap { start -> Date? in
-                    if case .waitUntil(let t) = gate.decide(meetingStart: start, now: now) { return t }
+            let waits = pending.map { (start: $0.startDate, kind: IntradayBriefGate.Kind.brief) }
+                + pendingRemovals.map { (start: $0.meeting.startDate, kind: IntradayBriefGate.Kind.removal) }
+            let soonest = waits
+                .compactMap { item -> Date? in
+                    if case .waitUntil(let t) = gate.decide(meetingStart: item.start,
+                                                            now: now,
+                                                            kind: item.kind) { return t }
                     return nil
                 }.min()
             if let soonest { scheduleDrain(after: max(60, soonest.timeIntervalSince(now))) }

@@ -2,6 +2,39 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **A cancelled *recurring* meeting went unreported until the next morning.** Verified live
+  on 2026-09-17: a 09:00 meeting cancelled at 07:39 was dropped from EventKit correctly and
+  immediately (the app's own alerts and menu bar were right), but both downstream notices
+  were late. Two independent causes, both now fixed:
+  - **Calendar→Notion left the row `Active`.** Reactive runs skipped recurring occurrences
+    wholesale, because a *moved* occurrence vanishes from a windowed fetch exactly like a
+    cancelled one and the narrow now→+30d window can't tell them apart — so the row waited
+    for the 06:00 full run, its linked brief still un-cancelled. A reactive run now asks
+    EventKit directly instead of guessing: `CalendarSyncReader.probeOccurrence` uses
+    `calendarItems(withExternalIdentifier:)`, which is not window-bound and returns the
+    series master plus any detached occurrences, each carrying the `occurrenceDate` it
+    *was* scheduled for. Nothing anchored to that day while the series still exists means
+    Exchange wrote an exception — a real cancellation — and the cascade fires within ~2
+    min. A detached item still anchored there (a move), or a lookup returning nothing at
+    all (no evidence either way), still defers to the full run. Positive evidence is
+    required before any write, so the conservative cases stay conservative. A `.canceled`
+    stub anchored to the day counts as gone rather than as a claim, since some Exchange
+    cancellations arrive that way instead of as a bare exception date. The probe is
+    injected into `CalendarSyncUpserter` as a closure, keeping the upserter EventKit-free,
+    and only runs for reactive + recurring orphans — nil cost in steady state.
+  - **The intraday Slack notice sat queued until 09:00.** `IntradayBriefGate` deferred
+    anything starting at/after the next working-window open, so a notice for a 09:00
+    meeting was scheduled for 09:00 — arriving exactly as the meeting would have begun.
+    `decide` now takes a `kind:`. A brief is still worth sending at the start (the
+    started-grace covers it) and keeps waiting; a removal's value is "don't go" and expires
+    at the start, so a removal whose meeting starts at/before the next open fires
+    immediately. A removal with real lead time after the open — detected at 02:00 for a
+    15:00 meeting — still waits for the window, so nothing pings Slack out of hours
+    needlessly.
+
 ## [3.5.0] - 2026-09-15
 
 ### Fixed

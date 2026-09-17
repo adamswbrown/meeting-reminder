@@ -39,10 +39,12 @@ final class CalendarSyncCascadeTests: XCTestCase {
     // MARK: classifyDisappearance
 
     private func decide(manual: Bool, recurring: Bool, reactive: Bool,
-                        cascade: Bool = true, archive: Bool = true) -> CalendarSyncCascade.Disappearance {
+                        cascade: Bool = true, archive: Bool = true,
+                        probe: CalendarSyncCascade.OccurrenceProbe = .unresolved) -> CalendarSyncCascade.Disappearance {
         CalendarSyncCascade.classifyDisappearance(
             hasMeetingNotes: manual, isRecurring: recurring,
-            isReactive: reactive, cascadeEnabled: cascade, archiveEnabled: archive)
+            isReactive: reactive, cascadeEnabled: cascade, archiveEnabled: archive,
+            occurrenceProbe: probe)
     }
 
     func testCleanCancellationCascades() {
@@ -114,5 +116,56 @@ final class CalendarSyncCascadeTests: XCTestCase {
         XCTAssertTrue(CalendarSyncCascade.startChanged(incoming: new, existing: old))
         XCTAssertFalse(CalendarSyncCascade.startChanged(incoming: old, existing: old))
         XCTAssertFalse(CalendarSyncCascade.startChanged(incoming: new, existing: nil))
+    }
+
+    // MARK: Reactive recurring occurrence + EventKit probe
+
+    /// A reactive run with no probe verdict still defers to the daily full run —
+    /// the pre-probe behaviour, preserved.
+    func testReactiveRecurringUnresolvedStillDefers() {
+        let d = decide(manual: false, recurring: true, reactive: true, probe: .unresolved)
+        XCTAssertTrue(d.skip)
+    }
+
+    /// EventKit confirms the series no longer claims that date → cascade now
+    /// instead of waiting for 06:00.
+    func testReactiveRecurringConfirmedGoneCascades() {
+        let d = decide(manual: false, recurring: true, reactive: true, probe: .confirmedGone)
+        XCTAssertFalse(d.skip)
+        XCTAssertEqual(d.syncState, "Orphaned")
+        XCTAssertEqual(d.rowStatus, "Cancelled")
+        XCTAssertTrue(d.cascadeBriefCancelled)
+    }
+
+    /// A confirmed cancellation on a row carrying manual notes is still Stale,
+    /// never Cancelled — the probe doesn't override the manual-work rule.
+    func testReactiveRecurringConfirmedGoneWithNotesStaysStale() {
+        let d = decide(manual: true, recurring: true, reactive: true, probe: .confirmedGone)
+        XCTAssertEqual(d.syncState, "Stale")
+        XCTAssertNil(d.rowStatus)
+        XCTAssertFalse(d.cascadeBriefCancelled)
+    }
+
+    /// A full run ignores the probe entirely (it has the whole window).
+    func testFullRunRecurringCascadesWithoutProbe() {
+        let d = decide(manual: false, recurring: true, reactive: false, probe: .unresolved)
+        XCTAssertEqual(d.rowStatus, "Cancelled")
+    }
+
+    // MARK: splitOccurrenceAppleID
+
+    func testSplitOccurrenceAppleID() {
+        let parts = CalendarSyncCascade.splitOccurrenceAppleID("ABC123_2026-09-17")
+        XCTAssertEqual(parts?.externalID, "ABC123")
+        XCTAssertEqual(parts?.day, "2026-09-17")
+    }
+
+    /// Series masters, non-recurring IDs and the legacy `/RID=` form aren't
+    /// probeable — the caller must treat them as unresolved.
+    func testSplitOccurrenceAppleIDRejectsNonOccurrences() {
+        XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("ABC123"))
+        XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("ABC123/RID=808905600"))
+        XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("_2026-09-17"))
+        XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("ABC123_2026-09"))
     }
 }
