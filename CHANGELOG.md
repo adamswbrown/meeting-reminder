@@ -2,6 +2,42 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [3.5.2] - 2026-09-17
+
+### Fixed
+- **A meeting that was merely *edited* could be marked Cancelled in Notion — and 3.5.1 made
+  it worse.** When an organiser edits a single occurrence of a recurring meeting, Exchange
+  *detaches* it and its `calendarItemExternalIdentifier` changes to `<uid>/RID=<n>`. The
+  generated occurrence's old composite ID therefore orphans while the meeting is perfectly
+  alive under a new ID, leaving two rows in Notion — and the orphan sweep stamped the ghost
+  `Cancelled`, cascading `Meeting Outcome = Cancelled` onto its brief. The daily full run
+  had been doing this since long before the reactive path existed: one live run on
+  2026-09-17 found **52** such ghosts against 14 genuine cancellations.
+
+  3.5.1's probe was supposed to distinguish a move from a cancellation and did not. It used
+  `calendarItems(withExternalIdentifier:)`, which looks like the right API and isn't — a
+  detached occurrence has a *different* external identifier from its master, so the lookup
+  returns the master alone, whose `occurrenceDate` is the series start and never matches.
+  Every vanished occurrence therefore read as "confirmed gone". It produced a false positive
+  on live data within the hour (`D3C55E60…_2026-09-23` marked Cancelled while
+  `D3C55E60…/RID=811848600` sat alongside it, Active).
+
+  The probe now looks for a live **detached sibling** instead, and gates every recurring
+  orphan in *all* modes rather than just reactive ones. Two independent detectors, both of
+  which must come up empty before anything is written: the IDs this run actually saw are
+  scanned for a `<uid>/RID=<n>` whose `n` decodes to the orphan's day (`n` is seconds since
+  2001-01-01 of the occurrence's original start — `…/RID=811848600` ⇒ 2026-09-23T09:30Z),
+  catching every in-window detachment with no EventKit call; and a window-free
+  `event(withIdentifier:)` on the identifier a sibling *would* carry, reconstructed from the
+  row's own start, catching a detachment moved out of window. A row keyed to a detached
+  occurrence's own `/RID=` ID resolves directly by identifier, so a genuinely cancelled
+  detached instance still cascades.
+
+  Verified live: the real cancellation (`CECC1C61…_2026-09-17`) reads confirmed gone, the
+  edited occurrence (`D3C55E60…_2026-09-23`) reads unresolved and is left alone. Seven ghost
+  rows wrongly marked Cancelled were reset, and two briefs wrongly carrying
+  `Meeting Outcome = Cancelled` were cleared.
+
 ## [3.5.1] - 2026-09-17
 
 ### Fixed
