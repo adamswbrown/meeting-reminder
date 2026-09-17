@@ -2,7 +2,7 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
-## [Unreleased]
+## [3.5.1] - 2026-09-17
 
 ### Fixed
 - **A cancelled *recurring* meeting went unreported until the next morning.** Verified live
