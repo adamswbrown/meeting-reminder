@@ -38,8 +38,14 @@ enum CalendarEventMapper {
     static func compositeAppleID(for event: EventLike) -> String {
         let base = event.externalIdentifier
         guard event.eventIsRecurring else { return base }
-        let dateStr = londonDayFormatter.string(from: event.eventStart)
-        return "\(base)_\(dateStr)"
+        return "\(base)_\(londonDayString(for: event.eventStart))"
+    }
+
+    /// `yyyy-MM-dd` in Europe/London — the day component of a composite Apple
+    /// Event ID. Exposed so the occurrence probe can match a candidate
+    /// occurrence date against an existing ID without re-deriving the timezone.
+    static func londonDayString(for date: Date) -> String {
+        londonDayFormatter.string(from: date)
     }
 
     // MARK: - Status

@@ -89,4 +89,42 @@ final class IntradayBriefGateTests: XCTestCase {
                               now:          iso("2026-07-30T10:10:00Z"))
         XCTAssertEqual(d, .drop)
     }
+
+    // MARK: - Removal notices can't wait for an open that lands on the start
+
+    /// The reported case: a 09:00 recurring meeting cancelled at 07:39. As a *brief*
+    /// this waits for the 09:00 open; as a *removal* the notice would then arrive
+    /// exactly as the meeting began, so it fires immediately.
+    func testRemovalAtWindowOpen_firesImmediately() {
+        let d = gate().decide(meetingStart: iso("2026-07-30T09:00:00Z"),
+                              now:          iso("2026-07-30T06:39:00Z"),
+                              kind: .removal)
+        XCTAssertEqual(d, .fireNow)
+    }
+
+    /// Same instant, same meeting, briefed instead of cancelled → unchanged behaviour.
+    func testBriefAtWindowOpen_stillWaits() {
+        let d = gate().decide(meetingStart: iso("2026-07-30T09:00:00Z"),
+                              now:          iso("2026-07-30T06:39:00Z"),
+                              kind: .brief)
+        XCTAssertEqual(d, .waitUntil(iso("2026-07-30T09:00:00Z")))
+    }
+
+    /// A removal for a meeting comfortably after the open still waits — the notice
+    /// lands at 09:00 with hours of lead, so no antisocial-hours Slack.
+    func testRemovalWellAfterWindowOpen_stillWaits() {
+        let d = gate().decide(meetingStart: iso("2026-07-30T15:00:00Z"),
+                              now:          iso("2026-07-30T02:00:00Z"),
+                              kind: .removal)
+        XCTAssertEqual(d, .waitUntil(iso("2026-07-30T09:00:00Z")))
+    }
+
+    /// A removal for a meeting already well past its start is still dropped — the
+    /// grace rule is unchanged by kind.
+    func testRemovalStartedBeyondGrace_dropped() {
+        let d = gate().decide(meetingStart: iso("2026-07-30T10:00:00Z"),
+                              now:          iso("2026-07-30T10:10:00Z"),
+                              kind: .removal)
+        XCTAssertEqual(d, .drop)
+    }
 }

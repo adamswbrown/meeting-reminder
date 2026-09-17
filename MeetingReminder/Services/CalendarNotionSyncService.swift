@@ -494,19 +494,26 @@ final class CalendarSyncUpserter {
     private let archiveOrphans: Bool
     private let cascadeStatus: Bool
     private let isReactive: Bool
+    /// Resolves whether a vanished recurring occurrence is cancelled or merely
+    /// moved. Injected so the upserter stays EventKit-free (and testable);
+    /// `nil` means "can't tell", which keeps reactive runs deferring to the
+    /// daily full run exactly as before.
+    private let occurrenceProbe: ((String) -> CalendarSyncCascade.OccurrenceProbe)?
 
     init(client: CalendarSyncNotionClient,
          logger: CalendarSyncLogger,
          dryRun: Bool,
          archiveOrphans: Bool,
          cascadeStatus: Bool = false,
-         isReactive: Bool = false) {
+         isReactive: Bool = false,
+         occurrenceProbe: ((String) -> CalendarSyncCascade.OccurrenceProbe)? = nil) {
         self.client = client
         self.logger = logger
         self.dryRun = dryRun
         self.archiveOrphans = archiveOrphans
         self.cascadeStatus = cascadeStatus
         self.isReactive = isReactive
+        self.occurrenceProbe = occurrenceProbe
     }
 
     /// Outcome of one run, including the link targets the auto-linker can
@@ -778,12 +785,19 @@ final class CalendarSyncUpserter {
         logger.info("orphans: \(orphanIDs.count) rows in Notion not in source")
         for appleID in orphanIDs {
             guard let row = existing[appleID] else { continue }
+            let isRecurring = CalendarSyncCascade.isRecurringAppleID(appleID)
+            // Only a reactive run needs the probe (a full run has the whole
+            // window and cascades recurring rows unconditionally), and only for
+            // a recurring ID — so this costs nothing in the common case.
+            let probe: CalendarSyncCascade.OccurrenceProbe =
+                (isReactive && isRecurring) ? (occurrenceProbe?(appleID) ?? .unresolved) : .unresolved
             let decision = CalendarSyncCascade.classifyDisappearance(
                 hasMeetingNotes: row.hasMeetingNotesLink,
-                isRecurring: CalendarSyncCascade.isRecurringAppleID(appleID),
+                isRecurring: isRecurring,
                 isReactive: isReactive,
                 cascadeEnabled: cascadeStatus,
-                archiveEnabled: archiveOrphans)
+                archiveEnabled: archiveOrphans,
+                occurrenceProbe: probe)
             if decision.skip { continue }
 
             // Build the row PATCH. Skip when already in target state to avoid
@@ -845,6 +859,48 @@ final class CalendarSyncReader {
     /// render the per-calendar opt-in toggles.
     func availableCalendars() -> [EKCalendar] {
         store.calendars(for: .event)
+    }
+
+    /// Asks EventKit whether a recurring occurrence has genuinely been removed
+    /// from its series, for a row that has vanished from a windowed fetch.
+    ///
+    /// `predicateForEvents` can't answer this: a *moved* occurrence disappears
+    /// from its original date exactly like a cancelled one. But
+    /// `calendarItems(withExternalIdentifier:)` is not window-bound and returns
+    /// the series master plus any detached occurrences, and each carries an
+    /// `occurrenceDate` (the date it *was* scheduled for). So:
+    ///
+    ///   - a detached item anchored to `day` → the occurrence was moved, not
+    ///     cancelled → `.unresolved` (the full run reconciles it)
+    ///   - nothing anchored to `day`, but the series is still there → Exchange
+    ///     wrote an exception for that date → `.confirmedGone`
+    ///   - the lookup returns nothing at all → no evidence either way (deleted
+    ///     series, or a store that doesn't resolve external IDs) →
+    ///     `.unresolved`. Positive evidence is required before cascading.
+    ///
+    /// A `.canceled` stub anchored to `day` counts as gone, not as a claim:
+    /// some Exchange cancellations arrive as a cancelled detached item rather
+    /// than a bare exception date.
+    func probeOccurrence(appleID: String) -> CalendarSyncCascade.OccurrenceProbe {
+        guard let parts = CalendarSyncCascade.splitOccurrenceAppleID(appleID) else {
+            return .unresolved
+        }
+        let events = store.calendarItems(withExternalIdentifier: parts.externalID)
+            .compactMap { $0 as? EKEvent }
+        guard !events.isEmpty else {
+            logger.debug("probe \(appleID): no items for external id — unresolved")
+            return .unresolved
+        }
+        for ev in events {
+            let anchor: Date? = ev.occurrenceDate ?? ev.startDate
+            guard let anchor,
+                  CalendarEventMapper.londonDayString(for: anchor) == parts.day else { continue }
+            if ev.status == .canceled { continue }
+            logger.debug("probe \(appleID): still claimed by an occurrence at \(ev.startDate as Date?) — unresolved")
+            return .unresolved
+        }
+        logger.debug("probe \(appleID): series present, no occurrence on \(parts.day) — confirmed gone")
+        return .confirmedGone
     }
 
     /// Resolves the user-opted-in calendars from `prefEnabledCalendarIDsKey`.
@@ -1257,7 +1313,8 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled,
                                                 cascadeStatus: cascadeStatusEnabled,
-                                                isReactive: mode != .full)
+                                                isReactive: mode != .full,
+                                                occurrenceProbe: { reader.probeOccurrence(appleID: $0) })
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
                                              orphanWindow: (start: windowStart, end: windowEnd),
