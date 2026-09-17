@@ -16,25 +16,66 @@ enum CalendarSyncCascade {
     }
 
     /// True when an Apple Event ID represents a recurring occurrence — it ends
-    /// in `_YYYY-MM-DD` or contains `/RID=`. Recurring occurrences vanish from
-    /// EventKit when *moved* as well as when cancelled, so a reactive run only
-    /// cascades one when `OccurrenceProbe` can tell the two apart.
+    /// in `_YYYY-MM-DD` or contains `/RID=`. Such an ID disappears when the
+    /// occurrence is *edited* as well as when it is cancelled, so it only
+    /// cascades once `OccurrenceProbe` has told the two apart.
     /// Mirrors the intraday skill's Step 5 rule.
     static func isRecurringAppleID(_ id: String) -> Bool {
         if id.contains("/RID=") { return true }
         return id.range(of: "_[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil
     }
 
-    /// What EventKit says about a recurring occurrence that has vanished from a
-    /// windowed fetch. See `CalendarSyncReader.probeOccurrence`.
+    /// Whether a recurring occurrence that vanished from a windowed fetch was
+    /// cancelled or merely detached (edited / moved). See
+    /// `CalendarSyncReader.probeOccurrence` and `hasLiveDetachedSibling`.
     enum OccurrenceProbe: Equatable {
-        /// The series is still there and nothing claims that occurrence date any
-        /// more — EventKit holds an exception for it, i.e. a real cancellation.
+        /// No live detached sibling claims that occurrence date — a cancellation.
         case confirmedGone
-        /// Either something still claims the date (a detached occurrence: a
-        /// *move*, not a cancellation) or the lookup gave no evidence at all.
-        /// Both defer to the daily full run rather than guess.
+        /// A detached occurrence still anchored to that date is alive, so the
+        /// occurrence was edited or moved, not cancelled. Defer to the full run.
         case unresolved
+    }
+
+    /// Decodes a *detached* occurrence's identifier, `<seriesUID>/RID=<n>`,
+    /// where `n` is seconds since the reference date (2001-01-01) of the
+    /// occurrence's **original** start — i.e. its `occurrenceDate`. Verified
+    /// against live Exchange data: `…/RID=811848600` ⇒ 2026-09-23T09:30:00Z.
+    ///
+    /// Tolerates a trailing `_YYYY-MM-DD` (present if such an event ever
+    /// reported itself as recurring, so `compositeAppleID` appended a day).
+    static func detachedOccurrence(fromID id: String) -> (seriesUID: String, originalStart: Date)? {
+        var work = id
+        if let day = work.range(of: "_[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) {
+            work.removeSubrange(day)
+        }
+        guard let marker = work.range(of: "/RID=") else { return nil }
+        let uid = String(work[work.startIndex..<marker.lowerBound])
+        let digits = String(work[marker.upperBound...])
+        guard !uid.isEmpty, !digits.isEmpty, digits.allSatisfy(\.isNumber),
+              let seconds = Double(digits) else { return nil }
+        return (uid, Date(timeIntervalSinceReferenceDate: seconds))
+    }
+
+    /// True when `orphanID` (`<uid>_<YYYY-MM-DD>`) still has a live **detached**
+    /// sibling among `ids` — the IDs this run actually saw on the calendar.
+    ///
+    /// This is the signal that matters. When an organiser edits a single
+    /// occurrence, Exchange detaches it and its external identifier changes to
+    /// the `/RID=` form, so the generated occurrence's original composite ID
+    /// orphans while the meeting is very much alive under a new ID. Both rows
+    /// are visible in Notion (verified 2026-09-17: `D3C55E60…_2026-09-23`
+    /// orphaned alongside a live `D3C55E60…/RID=811848600`), and marking the
+    /// ghost Cancelled is wrong.
+    static func hasLiveDetachedSibling(orphanID: String, among ids: Set<String>) -> Bool {
+        guard let orphan = splitOccurrenceAppleID(orphanID) else { return false }
+        for id in ids {
+            guard let sibling = detachedOccurrence(fromID: id),
+                  sibling.seriesUID == orphan.externalID else { continue }
+            if CalendarEventMapper.londonDayString(for: sibling.originalStart) == orphan.day {
+                return true
+            }
+        }
+        return false
     }
 
     /// Splits a recurring-occurrence Apple Event ID (`<externalID>_<YYYY-MM-DD>`)
@@ -70,7 +111,6 @@ enum CalendarSyncCascade {
     /// Notes populated stays Stale").
     static func classifyDisappearance(hasMeetingNotes: Bool,
                                       isRecurring: Bool,
-                                      isReactive: Bool,
                                       cascadeEnabled: Bool,
                                       archiveEnabled: Bool,
                                       occurrenceProbe: OccurrenceProbe = .unresolved) -> Disappearance {
@@ -78,12 +118,14 @@ enum CalendarSyncCascade {
                                  cascadeBriefCancelled: false, skip: true)
         // Neither behaviour enabled → nothing to do.
         guard cascadeEnabled || archiveEnabled else { return noop }
-        // A moved recurring occurrence vanishes from EventKit without being
-        // cancelled, and the reactive *window* can't tell that from a real
-        // cancellation. Asking EventKit directly can (`probeOccurrence`): with a
-        // confirmed exception we cascade immediately, otherwise defer to the
-        // daily full run.
-        if isReactive && isRecurring && occurrenceProbe != .confirmedGone { return noop }
+        // A recurring occurrence also vanishes when it is merely *detached*
+        // (edited), because detaching changes its external identifier — the old
+        // composite ID orphans while the meeting is alive under a new one. Only
+        // cascade once `probeOccurrence` has ruled a live detached sibling out.
+        // This applies in EVERY mode: the daily full run shared this blind spot
+        // and had been stamping such ghost rows Cancelled since long before the
+        // reactive path existed (e.g. D3C55E60…_2026-09-09 on 2026-08-10).
+        if isRecurring && occurrenceProbe != .confirmedGone { return noop }
 
         // A row carrying manual work (Meeting Notes) is marked Stale, never Cancelled.
         if hasMeetingNotes {

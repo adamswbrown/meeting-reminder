@@ -493,26 +493,23 @@ final class CalendarSyncUpserter {
     private let dryRun: Bool
     private let archiveOrphans: Bool
     private let cascadeStatus: Bool
-    private let isReactive: Bool
     /// Resolves whether a vanished recurring occurrence is cancelled or merely
     /// moved. Injected so the upserter stays EventKit-free (and testable);
     /// `nil` means "can't tell", which keeps reactive runs deferring to the
     /// daily full run exactly as before.
-    private let occurrenceProbe: ((String) -> CalendarSyncCascade.OccurrenceProbe)?
+    private let occurrenceProbe: ((String, Date?, Set<String>) -> CalendarSyncCascade.OccurrenceProbe)?
 
     init(client: CalendarSyncNotionClient,
          logger: CalendarSyncLogger,
          dryRun: Bool,
          archiveOrphans: Bool,
          cascadeStatus: Bool = false,
-         isReactive: Bool = false,
-         occurrenceProbe: ((String) -> CalendarSyncCascade.OccurrenceProbe)? = nil) {
+         occurrenceProbe: ((String, Date?, Set<String>) -> CalendarSyncCascade.OccurrenceProbe)? = nil) {
         self.client = client
         self.logger = logger
         self.dryRun = dryRun
         self.archiveOrphans = archiveOrphans
         self.cascadeStatus = cascadeStatus
-        self.isReactive = isReactive
         self.occurrenceProbe = occurrenceProbe
     }
 
@@ -789,12 +786,14 @@ final class CalendarSyncUpserter {
             // Only a reactive run needs the probe (a full run has the whole
             // window and cascades recurring rows unconditionally), and only for
             // a recurring ID — so this costs nothing in the common case.
-            let probe: CalendarSyncCascade.OccurrenceProbe =
-                (isReactive && isRecurring) ? (occurrenceProbe?(appleID) ?? .unresolved) : .unresolved
+            // Only recurring orphans need the probe, so this costs nothing in
+            // the common case.
+            let probe: CalendarSyncCascade.OccurrenceProbe = isRecurring
+                ? (occurrenceProbe?(appleID, row.eventDate, touched) ?? .unresolved)
+                : .unresolved
             let decision = CalendarSyncCascade.classifyDisappearance(
                 hasMeetingNotes: row.hasMeetingNotesLink,
                 isRecurring: isRecurring,
-                isReactive: isReactive,
                 cascadeEnabled: cascadeStatus,
                 archiveEnabled: archiveOrphans,
                 occurrenceProbe: probe)
@@ -861,45 +860,66 @@ final class CalendarSyncReader {
         store.calendars(for: .event)
     }
 
-    /// Asks EventKit whether a recurring occurrence has genuinely been removed
-    /// from its series, for a row that has vanished from a windowed fetch.
+    /// Decides whether a vanished recurring occurrence was cancelled or merely
+    /// **detached** (the organiser edited that single instance, so Exchange
+    /// split it out and its external identifier became `<uid>/RID=<n>` — the
+    /// old composite ID orphans while the meeting is alive under a new one).
     ///
-    /// `predicateForEvents` can't answer this: a *moved* occurrence disappears
-    /// from its original date exactly like a cancelled one. But
-    /// `calendarItems(withExternalIdentifier:)` is not window-bound and returns
-    /// the series master plus any detached occurrences, and each carries an
-    /// `occurrenceDate` (the date it *was* scheduled for). So:
+    /// Two independent "still alive" detectors; a cascade needs both to come up
+    /// empty:
     ///
-    ///   - a detached item anchored to `day` → the occurrence was moved, not
-    ///     cancelled → `.unresolved` (the full run reconciles it)
-    ///   - nothing anchored to `day`, but the series is still there → Exchange
-    ///     wrote an exception for that date → `.confirmedGone`
-    ///   - the lookup returns nothing at all → no evidence either way (deleted
-    ///     series, or a store that doesn't resolve external IDs) →
-    ///     `.unresolved`. Positive evidence is required before cascading.
+    ///   1. `seenIDs` — the IDs this run actually saw on the calendar. An
+    ///      in-window detachment (the common case) lands here, needing no
+    ///      EventKit call and no assumption about identifier formats.
+    ///   2. A window-free `event(withIdentifier:)` on the identifier a detached
+    ///      sibling *would* carry, reconstructed from the row's own start time.
+    ///      This catches a detachment moved outside the reactive window.
     ///
-    /// A `.canceled` stub anchored to `day` counts as gone, not as a claim:
-    /// some Exchange cancellations arrive as a cancelled detached item rather
-    /// than a bare exception date.
-    func probeOccurrence(appleID: String) -> CalendarSyncCascade.OccurrenceProbe {
+    /// A `.canceled` sibling counts as gone, not as a claim: some Exchange
+    /// cancellations arrive as a cancelled detached item rather than a bare
+    /// exception date.
+    ///
+    /// Residual risk, accepted knowingly: a detachment moved out of window
+    /// whose identifier doesn't decode would be stamped Cancelled early, and
+    /// the 06:00 full run would revive it — the same exposure the full run has
+    /// always had, since it cannot see such a move either.
+    ///
+    /// Do NOT reach for `calendarItems(withExternalIdentifier:)` here. It looks
+    /// like the right API and isn't: a detached occurrence has a *different*
+    /// external identifier from its master, so the lookup returns the master
+    /// alone, whose `occurrenceDate` is the series start and never matches —
+    /// making every vanished occurrence read as cancelled. That shipped in
+    /// v3.5.1 and produced a false positive within the hour.
+    func probeOccurrence(appleID: String,
+                         originalStart: Date?,
+                         seenIDs: Set<String>) -> CalendarSyncCascade.OccurrenceProbe {
+        // A row keyed to a *detached* occurrence's own ID resolves directly and
+        // window-free — no sibling hunting needed. This is how a genuinely
+        // cancelled detached instance still reaches the cascade.
+        if CalendarSyncCascade.detachedOccurrence(fromID: appleID) != nil {
+            if let ev = store.event(withIdentifier: appleID), ev.status != .canceled {
+                logger.debug("probe \(appleID): detached occurrence still live at \(ev.startDate as Date?) — unresolved")
+                return .unresolved
+            }
+            logger.debug("probe \(appleID): detached occurrence no longer resolves — confirmed gone")
+            return .confirmedGone
+        }
         guard let parts = CalendarSyncCascade.splitOccurrenceAppleID(appleID) else {
             return .unresolved
         }
-        let events = store.calendarItems(withExternalIdentifier: parts.externalID)
-            .compactMap { $0 as? EKEvent }
-        guard !events.isEmpty else {
-            logger.debug("probe \(appleID): no items for external id — unresolved")
+        if CalendarSyncCascade.hasLiveDetachedSibling(orphanID: appleID, among: seenIDs) {
+            logger.debug("probe \(appleID): live detached sibling in this run's fetch — unresolved")
             return .unresolved
         }
-        for ev in events {
-            let anchor: Date? = ev.occurrenceDate ?? ev.startDate
-            guard let anchor,
-                  CalendarEventMapper.londonDayString(for: anchor) == parts.day else { continue }
-            if ev.status == .canceled { continue }
-            logger.debug("probe \(appleID): still claimed by an occurrence at \(ev.startDate as Date?) — unresolved")
-            return .unresolved
+        if let originalStart {
+            let rid = Int(originalStart.timeIntervalSinceReferenceDate)
+            let candidate = "\(parts.externalID)/RID=\(rid)"
+            if let ev = store.event(withIdentifier: candidate), ev.status != .canceled {
+                logger.debug("probe \(appleID): detached sibling \(candidate) resolves (now \(ev.startDate as Date?)) — unresolved")
+                return .unresolved
+            }
         }
-        logger.debug("probe \(appleID): series present, no occurrence on \(parts.day) — confirmed gone")
+        logger.debug("probe \(appleID): no live detached sibling on \(parts.day) — confirmed gone")
         return .confirmedGone
     }
 
@@ -1313,8 +1333,11 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled,
                                                 cascadeStatus: cascadeStatusEnabled,
-                                                isReactive: mode != .full,
-                                                occurrenceProbe: { reader.probeOccurrence(appleID: $0) })
+                                                occurrenceProbe: { id, start, seen in
+                                                    reader.probeOccurrence(appleID: id,
+                                                                           originalStart: start,
+                                                                           seenIDs: seen)
+                                                })
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
                                              orphanWindow: (start: windowStart, end: windowEnd),

@@ -38,17 +38,17 @@ final class CalendarSyncCascadeTests: XCTestCase {
 
     // MARK: classifyDisappearance
 
-    private func decide(manual: Bool, recurring: Bool, reactive: Bool,
+    private func decide(manual: Bool, recurring: Bool,
                         cascade: Bool = true, archive: Bool = true,
                         probe: CalendarSyncCascade.OccurrenceProbe = .unresolved) -> CalendarSyncCascade.Disappearance {
         CalendarSyncCascade.classifyDisappearance(
             hasMeetingNotes: manual, isRecurring: recurring,
-            isReactive: reactive, cascadeEnabled: cascade, archiveEnabled: archive,
+            cascadeEnabled: cascade, archiveEnabled: archive,
             occurrenceProbe: probe)
     }
 
     func testCleanCancellationCascades() {
-        let d = decide(manual: false, recurring: false, reactive: false)
+        let d = decide(manual: false, recurring: false)
         XCTAssertEqual(d.syncState, "Orphaned")
         XCTAssertEqual(d.rowStatus, "Cancelled")
         XCTAssertTrue(d.cascadeBriefCancelled)
@@ -61,39 +61,42 @@ final class CalendarSyncCascadeTests: XCTestCase {
     /// Meeting Outcome was never set.
     func testBriefOnlyRowStillCascadesToCancelled() {
         // `hasMeetingNotes` is the only manual-work signal; a brief link is not passed in.
-        let d = decide(manual: false, recurring: false, reactive: true)
+        let d = decide(manual: false, recurring: false)
         XCTAssertEqual(d.syncState, "Orphaned")
         XCTAssertEqual(d.rowStatus, "Cancelled")
         XCTAssertTrue(d.cascadeBriefCancelled)
     }
 
     func testManualRelationsRowGoesStaleNotCancelled() {
-        let d = decide(manual: true, recurring: false, reactive: false)
+        let d = decide(manual: true, recurring: false)
         XCTAssertEqual(d.syncState, "Stale")
         XCTAssertNil(d.rowStatus)              // never mark a manually-worked row Cancelled
         XCTAssertFalse(d.cascadeBriefCancelled)
     }
 
-    func testRecurringSkippedOnReactive() {
-        let d = decide(manual: false, recurring: true, reactive: true)
-        XCTAssertTrue(d.skip)                  // moved recurring occurrence — not a cancellation
+    /// Recurring orphans are gated by the probe in EVERY mode — an edited
+    /// occurrence is alive under a new ID, and stamping the ghost row Cancelled
+    /// is wrong whether a reactive or a full run notices it.
+    func testRecurringSkippedWhenSiblingMayBeAlive() {
+        let d = decide(manual: false, recurring: true, probe: .unresolved)
+        XCTAssertTrue(d.skip)
     }
 
-    func testRecurringSweptOnFullRun() {
-        let d = decide(manual: false, recurring: true, reactive: false)
+    func testRecurringSweptOnceSiblingRuledOut() {
+        let d = decide(manual: false, recurring: true, probe: .confirmedGone)
         XCTAssertFalse(d.skip)
         XCTAssertEqual(d.rowStatus, "Cancelled")
     }
 
     func testCascadeDisabledStillWritesSyncStateWhenArchiveOn() {
-        let d = decide(manual: false, recurring: false, reactive: false, cascade: false, archive: true)
+        let d = decide(manual: false, recurring: false, cascade: false, archive: true)
         XCTAssertEqual(d.syncState, "Orphaned")
         XCTAssertNil(d.rowStatus)              // Status/brief writes are cascade-gated
         XCTAssertFalse(d.cascadeBriefCancelled)
     }
 
     func testBothDisabledSkips() {
-        let d = decide(manual: false, recurring: false, reactive: false, cascade: false, archive: false)
+        let d = decide(manual: false, recurring: false, cascade: false, archive: false)
         XCTAssertTrue(d.skip)
     }
 
@@ -118,19 +121,18 @@ final class CalendarSyncCascadeTests: XCTestCase {
         XCTAssertFalse(CalendarSyncCascade.startChanged(incoming: new, existing: nil))
     }
 
-    // MARK: Reactive recurring occurrence + EventKit probe
+    // MARK: Recurring occurrence + detached-sibling probe
 
-    /// A reactive run with no probe verdict still defers to the daily full run —
-    /// the pre-probe behaviour, preserved.
-    func testReactiveRecurringUnresolvedStillDefers() {
-        let d = decide(manual: false, recurring: true, reactive: true, probe: .unresolved)
+    /// No verdict (or a live detached sibling) → never cascade. Applies in every
+    /// mode: an edited occurrence is alive under a new ID, not cancelled.
+    func testRecurringUnresolvedNeverCascades() {
+        let d = decide(manual: false, recurring: true, probe: .unresolved)
         XCTAssertTrue(d.skip)
     }
 
-    /// EventKit confirms the series no longer claims that date → cascade now
-    /// instead of waiting for 06:00.
-    func testReactiveRecurringConfirmedGoneCascades() {
-        let d = decide(manual: false, recurring: true, reactive: true, probe: .confirmedGone)
+    /// Nothing detached claims the date → a real cancellation, cascade it.
+    func testRecurringConfirmedGoneCascades() {
+        let d = decide(manual: false, recurring: true, probe: .confirmedGone)
         XCTAssertFalse(d.skip)
         XCTAssertEqual(d.syncState, "Orphaned")
         XCTAssertEqual(d.rowStatus, "Cancelled")
@@ -139,16 +141,16 @@ final class CalendarSyncCascadeTests: XCTestCase {
 
     /// A confirmed cancellation on a row carrying manual notes is still Stale,
     /// never Cancelled — the probe doesn't override the manual-work rule.
-    func testReactiveRecurringConfirmedGoneWithNotesStaysStale() {
-        let d = decide(manual: true, recurring: true, reactive: true, probe: .confirmedGone)
+    func testRecurringConfirmedGoneWithNotesStaysStale() {
+        let d = decide(manual: true, recurring: true, probe: .confirmedGone)
         XCTAssertEqual(d.syncState, "Stale")
         XCTAssertNil(d.rowStatus)
         XCTAssertFalse(d.cascadeBriefCancelled)
     }
 
-    /// A full run ignores the probe entirely (it has the whole window).
-    func testFullRunRecurringCascadesWithoutProbe() {
-        let d = decide(manual: false, recurring: true, reactive: false, probe: .unresolved)
+    /// A non-recurring orphan never consults the probe — unchanged behaviour.
+    func testNonRecurringOrphanCascadesWithoutProbe() {
+        let d = decide(manual: false, recurring: false, probe: .unresolved)
         XCTAssertEqual(d.rowStatus, "Cancelled")
     }
 
@@ -167,5 +169,69 @@ final class CalendarSyncCascadeTests: XCTestCase {
         XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("ABC123/RID=808905600"))
         XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("_2026-09-17"))
         XCTAssertNil(CalendarSyncCascade.splitOccurrenceAppleID("ABC123_2026-09"))
+    }
+
+    // MARK: detachedOccurrence / hasLiveDetachedSibling
+    //
+    // Identifiers below are the real ones from the v3.5.1 false positive
+    // (2026-09-17). `/RID=811848600` decodes to 2026-09-23T09:30:00Z — the
+    // occurrence's ORIGINAL start, which is what anchors it to a ghost row.
+
+    private let sccUID = "D3C55E60-BFF4-4271-9B7C-3B2926EB435F"
+
+    func testDetachedOccurrenceDecodesOriginalStart() {
+        let d = CalendarSyncCascade.detachedOccurrence(fromID: "\(sccUID)/RID=811848600")
+        XCTAssertEqual(d?.seriesUID, sccUID)
+        XCTAssertEqual(d?.originalStart, iso("2026-09-23T09:30:00Z"))
+    }
+
+    func testDetachedOccurrenceToleratesTrailingDaySuffix() {
+        let d = CalendarSyncCascade.detachedOccurrence(fromID: "\(sccUID)/RID=811848600_2026-09-23")
+        XCTAssertEqual(d?.originalStart, iso("2026-09-23T09:30:00Z"))
+    }
+
+    func testDetachedOccurrenceRejectsNonDetachedIDs() {
+        XCTAssertNil(CalendarSyncCascade.detachedOccurrence(fromID: sccUID))
+        XCTAssertNil(CalendarSyncCascade.detachedOccurrence(fromID: "\(sccUID)_2026-09-23"))
+        XCTAssertNil(CalendarSyncCascade.detachedOccurrence(fromID: "\(sccUID)/RID="))
+        XCTAssertNil(CalendarSyncCascade.detachedOccurrence(fromID: "\(sccUID)/RID=notanumber"))
+        XCTAssertNil(CalendarSyncCascade.detachedOccurrence(fromID: "/RID=811848600"))
+    }
+
+    /// The exact regression: the ghost row's day is still claimed by a live
+    /// detached sibling, so it must NOT be treated as cancelled.
+    func testLiveDetachedSiblingDetected() {
+        let seen: Set<String> = ["\(sccUID)/RID=811848600", "unrelated-id_2026-09-23"]
+        XCTAssertTrue(CalendarSyncCascade.hasLiveDetachedSibling(
+            orphanID: "\(sccUID)_2026-09-23", among: seen))
+    }
+
+    /// A sibling of the same series anchored to a *different* day says nothing
+    /// about this occurrence.
+    func testDetachedSiblingOnAnotherDayIgnored() {
+        let seen: Set<String> = ["\(sccUID)/RID=811243800"]   // 2026-09-16
+        XCTAssertFalse(CalendarSyncCascade.hasLiveDetachedSibling(
+            orphanID: "\(sccUID)_2026-09-23", among: seen))
+    }
+
+    /// A detached sibling of a *different* series on the same day is not ours.
+    func testDetachedSiblingOfOtherSeriesIgnored() {
+        let seen: Set<String> = ["CECC1C61-18C9-4E33-AD4B-BFA832F3B84D/RID=811848600"]
+        XCTAssertFalse(CalendarSyncCascade.hasLiveDetachedSibling(
+            orphanID: "\(sccUID)_2026-09-23", among: seen))
+    }
+
+    /// The genuine cancellation from the same morning: nothing detached claims
+    /// the day, so the cascade is free to fire.
+    func testGenuineCancellationHasNoSibling() {
+        let seen: Set<String> = ["CECC1C61-18C9-4E33-AD4B-BFA832F3B84D",
+                                 "CECC1C61-18C9-4E33-AD4B-BFA832F3B84D_2026-09-24"]
+        XCTAssertFalse(CalendarSyncCascade.hasLiveDetachedSibling(
+            orphanID: "CECC1C61-18C9-4E33-AD4B-BFA832F3B84D_2026-09-17", among: seen))
+    }
+
+    func testHasLiveDetachedSiblingIgnoresNonOccurrenceOrphans() {
+        XCTAssertFalse(CalendarSyncCascade.hasLiveDetachedSibling(
+            orphanID: sccUID, among: ["\(sccUID)/RID=811848600"]))
     }
 }
