@@ -20,6 +20,11 @@ final class NotionPriorNotesReaderTests: XCTestCase {
         XCTAssertNotNil(NotionPriorNotesReader.startDate(prop))
     }
 
+    func testStartDateAcceptsNotionFractionalSeconds() {
+        XCTAssertEqual(NotionPriorNotesReader.startDate(["date": ["start": "2026-08-10T14:30:00.000+00:00"]]),
+                       iso("2026-08-10T14:30:00Z"))
+    }
+
     func testStartDateNilOnGarbage() {
         XCTAssertNil(NotionPriorNotesReader.startDate(["date": ["start": "nope"]]))
         XCTAssertNil(NotionPriorNotesReader.startDate(nil))

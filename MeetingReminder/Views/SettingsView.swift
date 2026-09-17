@@ -27,7 +27,8 @@ struct SettingsView: View {
     @ObservedObject var calComSyncService: CalComSyncService
     @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
-    @AppStorage("intradayUseOnDeviceModel") private var intradayUseOnDeviceModel: Bool = false
+    @AppStorage("briefingFallbackEnabled") private var briefingFallbackEnabled = false
+    @AppStorage("briefingFallbackShortcut") private var briefingFallbackShortcut = ""
 
     @State private var launchAtLogin = false
     @State private var enabledCalendarIDs: Set<String> = []
@@ -66,6 +67,9 @@ struct SettingsView: View {
 
             notionTab
                 .tabItem { Label("Notion", systemImage: "square.and.pencil") }
+
+            BriefingSettingsView(preCallBriefTrigger: preCallBriefTrigger)
+                .tabItem { Label("Briefings", systemImage: "text.bubble") }
 
             integrationsTab
                 .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
@@ -1096,49 +1100,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
-            Section {
-                Toggle("Auto-brief new meetings during the day (09:00–17:00)",
-                       isOn: Binding(get: { preCallBriefTrigger.isEnabled },
-                                     set: { preCallBriefTrigger.isEnabled = $0 }))
-                if #available(macOS 26.0, *) {
-                    Toggle("Generate on-device (Apple Intelligence, no Claude)",
-                           isOn: $intradayUseOnDeviceModel)
-                        .disabled(!preCallBriefTrigger.isEnabled)
-                }
-                if !preCallBriefTrigger.lastResult.isEmpty {
-                    LabeledContent("Last run") {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(preCallBriefTrigger.lastResult)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.trailing)
-                            if let at = preCallBriefTrigger.lastRunAt {
-                                Text(at, style: .relative).font(.caption2).foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                }
-                if preCallBriefTrigger.isRunning {
-                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Briefing…").font(.caption) }
-                }
-                HStack {
-                    Button("Grant permissions…") { preCallBriefTrigger.requestPermissions() }
-                    if !preCallBriefTrigger.permissionStatus.isEmpty {
-                        Text(preCallBriefTrigger.permissionStatus)
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            } header: {
-                Text("Intraday Pre-Call Briefings")
-            } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("When a new meeting lands in your calendar during the working day, this runs the pre-call briefing agent for it within ~2 minutes — the local counterpart to the 03:00 cloud task. It follows the same rules and delivers via the local iMessage + Reminders CLIs.")
-                    Text("Requires the `claude` CLI plus the `imessage-tools` + `remctl` CLIs. Click **Grant permissions** to trigger the Reminders + Automation (Messages) prompts — those two panes have no “+” so they can only be added this way. Full Disk Access must be added manually: System Settings → Privacy & Security → Full Disk Access → add MeetingReminder. Off by default.")
-                    Text("Generate on-device (macOS 26+): uses Apple Intelligence's on-device model instead of the `claude` CLI — free, offline, ~5s, and posts a short brief to Slack. It reads the most recent matching Notion Meeting Notes for context but skips the full agent (no Todoist/Jira/skip-list). Falls back to Claude when off.")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
 
             Section {
                 TextField("Notion view URL or UUID",
@@ -1323,6 +1284,62 @@ enum OverlayBackground: String, CaseIterable, Identifiable {
                                         Color(red: 0.086, green: 0.106, blue: 0.133).opacity(0.88)],
                                startPoint: .top, endPoint: .bottom)
             )
+        }
+    }
+}
+
+
+/// Briefing fallback entries parked for human review.
+///
+/// These are writes whose outcome the app could not confirm — a Notion create or
+/// enrichment that may or may not have landed — plus jobs whose recovery passed the
+/// seven-day limit. The app deliberately stops rather than repeating an uncertain
+/// write, so the only way they clear is here.
+///
+/// "Try again" re-reads the page and its markers before deciding anything; it is
+/// not a regenerate. "Dismiss" only stops the retries — it never touches the Notion
+/// page, the Slack thread or the Todoist tasks, so nothing is silently unmade.
+struct BriefingReviewList: View {
+    let items: [BriefingFallbackJob]
+    let resume: (String) -> Void
+    let dismiss: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("^[\(items.count) briefing](inflect: true) need review", systemImage: "exclamationmark.triangle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+            ForEach(items) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.meeting.title).font(.callout.weight(.medium)).lineLimit(1)
+                    Text(item.meeting.startDate, format: .dateTime.weekday().day().month().hour().minute())
+                        .font(.caption2).foregroundStyle(.tertiary)
+                    if let reason = item.lastError {
+                        Text(reason).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        // Checking the recorded page before acting is the whole point
+                        // of parking these, so make it one click away.
+                        if let url = item.pageURL, let link = URL(string: url) {
+                            Link("Open the briefing", destination: link).font(.caption)
+                        } else {
+                            Text("No page was recorded for this job.").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        Button("Try again") { resume(item.id) }
+                        Button("Dismiss") { dismiss(item.id) }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(8)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
+            Text("Check the linked page before retrying: an uncertain write may already have succeeded. Dismissing stops the retries only — it leaves Notion, Slack and Todoist untouched.")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -1,0 +1,26 @@
+{
+  "shortcut": "Meeting Briefing PCC Probe",
+  "configured_model_label": "Cloud",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0\nBuildVersion:\t\t26A428",
+  "input_characters": 32000,
+  "input_utf8_bytes": 32000,
+  "cloud_token_count": null,
+  "expected": {
+    "start_code": "CEDAR-482",
+    "middle_owner": "Mira Vale",
+    "end_deadline": "2026-11-19",
+    "total_units": 71
+  },
+  "limitation": "Synthetic recall/synthesis probe; not a maximum-context or briefing-quality benchmark.",
+  "exit_code": 0,
+  "stderr": "",
+  "response": "{\"start_code\": \"CEDAR-482\", \"middle_owner\": \"Mira Vale\", \"end_deadline\": \"2026-11-19\", \"total_units\": 71}",
+  "checks": {
+    "start_code": true,
+    "middle_owner": true,
+    "end_deadline": true,
+    "total_units": true
+  },
+  "passed": true,
+  "elapsed_seconds": 4.09
+}

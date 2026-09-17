@@ -472,6 +472,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var handleURL: ((URL) -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hosted unit tests must not start calendar/Notion/booking automations using
+        // the signed-in user's production preferences and credentials.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil {
+            startServices = nil
+            return
+        }
         // Install global key-equivalent monitors so ⌘Q and ⌘, work from
         // any window (overlays, settings, popovers). LSUIElement apps don't
         // get the standard Edit/App menus, so we create invisible menu items.

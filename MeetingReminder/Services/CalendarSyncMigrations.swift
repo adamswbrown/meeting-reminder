@@ -79,6 +79,18 @@ enum CalendarSyncMigrations {
                 )
             }
         ),
+        Migration(
+            id: "004-add-briefing-lock-column",
+            description: "Add Briefing Lock rich-text column to Calendar Events. Holds the advisory cross-runner briefing lease (owner|jobID|expiry) shared by the Mac app's fallback path and the scheduled Co Work runner.",
+            apply: { client, logger in
+                try await ensureRichTextColumn(
+                    client: client,
+                    logger: logger,
+                    dataSourceID: CalendarSyncConstants.calendarEventsDataSourceID,
+                    propertyName: BriefingNotionRepository.lockProperty
+                )
+            }
+        ),
     ]
 
     // MARK: - Runner
@@ -186,6 +198,24 @@ enum CalendarSyncMigrations {
             ]
         ]
         _ = try await client.patch(path: "/data_sources/\(dataSourceID)", body: patchBody)
+    }
+
+    /// Adds a rich-text property to a data source if it isn't already present.
+    /// Idempotent in the same way as `ensureSelectColumn`: an existing property
+    /// of the same name is treated as already applied, so a lost log entry
+    /// doesn't brick the sync.
+    static func ensureRichTextColumn(client: CalendarSyncNotionClient,
+                                     logger: CalendarSyncLogger,
+                                     dataSourceID: String,
+                                     propertyName: String) async throws {
+        let dsBody = try await getDataSource(client: client, id: dataSourceID)
+        let existingProps = dsBody["properties"] as? [String: Any] ?? [:]
+        if existingProps[propertyName] != nil {
+            logger.debug("migrations: column '\(propertyName)' already exists, skipping schema patch")
+            return
+        }
+        _ = try await client.patch(path: "/data_sources/\(dataSourceID)",
+                                   body: ["properties": [propertyName: ["rich_text": [String: Any]()]]])
     }
 
     /// PATCH-with-empty-body returns the full data source object, including

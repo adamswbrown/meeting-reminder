@@ -84,6 +84,30 @@ final class CalendarService: ObservableObject {
         startAutoRefresh()
     }
 
+    /// Revalidate a persisted briefing occurrence after restart, including meetings
+    /// outside the menu bar's rolling window. Nil means calendar access is unavailable.
+    func occurrenceStillExists(_ meeting: MeetingEvent) -> Bool? {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if #available(macOS 14.0, *) {
+            guard status == .fullAccess else { return nil }
+        } else {
+            guard status == .authorized else { return nil }
+        }
+        let predicate = eventStore.predicateForEvents(withStart: meeting.startDate.addingTimeInterval(-1),
+            end: meeting.endDate.addingTimeInterval(1), calendars: nil)
+        let enabled = Set(UserDefaults.standard.stringArray(forKey: "enabledCalendarIDs") ?? [])
+        return eventStore.events(matching: predicate).contains { event in
+            guard abs(event.startDate.timeIntervalSince(meeting.startDate)) < 1,
+                  CalendarEventInclusion.shouldInclude(isAllDay: event.isAllDay, status: event.status,
+                    myParticipantStatus: event.attendees?.first(where: { $0.isCurrentUser })?.participantStatus,
+                    calendarID: event.calendar.calendarIdentifier, enabledCalendarIDs: enabled) else { return false }
+            if let externalID = meeting.externalID, !externalID.isEmpty {
+                return event.calendarItemExternalIdentifier == externalID
+            }
+            return MeetingEvent(from: event, videoLink: nil).id == meeting.id
+        }
+    }
+
     func fetchEvents() {
         // Ask EventKit to pull any pending remote changes before we query the
         // store. For Google / Exchange / iCloud calendars, a deletion on the

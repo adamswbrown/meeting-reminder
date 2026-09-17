@@ -148,38 +148,11 @@ final class BusyLightService: ObservableObject {
 
     // MARK: - CLI helpers
 
+    /// Delegates to the shared catalog; the briefing settings list Shortcuts too.
     nonisolated private static func runList() async -> ListResult {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
-            process.arguments = ["list"]
-
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: .failure(error.localizedDescription))
-                return
-            }
-            process.waitUntilExit()
-
-            if process.terminationStatus == 0 {
-                let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let raw = String(data: data, encoding: .utf8) ?? ""
-                let names = raw.split(separator: "\n")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                    .sorted { $0.lowercased() < $1.lowercased() }
-                continuation.resume(returning: .success(names))
-            } else {
-                let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let err = String(data: data, encoding: .utf8) ?? "shortcuts list failed (\(process.terminationStatus))"
-                continuation.resume(returning: .failure(err.trimmingCharacters(in: .whitespacesAndNewlines)))
-            }
+        switch await ShortcutsCatalog.list() {
+        case .success(let names): return .success(names)
+        case .failure(let message): return .failure(message)
         }
     }
 

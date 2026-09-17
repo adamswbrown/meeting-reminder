@@ -1,7 +1,7 @@
 import EventKit
 import Foundation
 
-struct MeetingEvent: Identifiable, Equatable {
+struct MeetingEvent: Identifiable, Equatable, Codable {
     let id: String
     let title: String
     let startDate: Date

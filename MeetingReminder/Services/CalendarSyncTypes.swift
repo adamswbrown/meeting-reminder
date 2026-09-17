@@ -20,6 +20,7 @@ enum CalendarSyncConstants {
     static let defaultMigrationsDataSourceID = "7590658a-f038-45c1-b6ca-d50b2421b0c4"
     static let defaultMeetingNotesDataSourceID = "1f2ef850-f293-80ba-a763-000bb894d2c0"
     static let defaultPreCallBriefingsDataSourceID = "656b2eff-7ea3-4730-91fe-104ff647f4e3"
+    static let defaultMappingRulesDataSourceID = "27d0d408-f9e5-4cfa-858c-2472868bb9d9"
 
     // UserDefaults keys holding the per-user data source IDs written by the
     // guided Notion setup wizard. Empty ⇒ use the matching default above.
@@ -28,6 +29,7 @@ enum CalendarSyncConstants {
     static let overrideMigrationsDSKey = "notionMigrationsDataSourceID"
     static let overrideMeetingNotesDSKey = "notionMeetingNotesDataSourceID"
     static let overridePreCallBriefingsDSKey = "notionPreCallBriefingsDataSourceID"
+    static let overrideMappingRulesDSKey = "notionMappingRulesDataSourceID"
 
     /// Returns the UserDefaults override for `key`, or `fallback` when unset/empty.
     private static func resolve(_ key: String, fallback: String) -> String {
@@ -112,6 +114,11 @@ enum CalendarSyncConstants {
     }
     static var preCallBriefingsDataSourceID: String {
         resolve(overridePreCallBriefingsDSKey, fallback: defaultPreCallBriefingsDataSourceID)
+    }
+    /// Mapping Rules — the Customer / Partner ladder shared with the briefing
+    /// skill. Read-only here; the fallback classifies but never edits rules.
+    static var mappingRulesDataSourceID: String {
+        resolve(overrideMappingRulesDSKey, fallback: defaultMappingRulesDataSourceID)
     }
     static let meetingNotesTitleProperty = "Title"
     static let meetingNotesDateProperty = "Start"
