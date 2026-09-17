@@ -2,6 +2,25 @@
 
 All notable changes to Meeting Reminder will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Two copies of the app could run at once, doubling every automation.** Nothing stopped a
+  second instance launching — a dev build started from DerivedData or Xcode, or a deploy
+  whose `killall` raced its own `open`. A second copy is not inert: it runs a *complete*
+  independent stack, so one new meeting produced two reactive syncs, two 06:00 runs, and two
+  headless pre-call briefs (two Notion pages, two Slack posts). Observed live on 2026-09-17:
+  four copies each logging their own debounce to the shared `calendar-notion-sync.log`, one
+  `.EKEventStoreChanged` broadcast arriving at four watchers as identical-millisecond
+  quadruples.
+
+  `SingleInstanceGuard` now runs at the top of `applicationDidFinishLaunching`, before any
+  timer, watcher or observer is registered. **Newest wins**: the copy that has just launched
+  asks every older instance sharing its bundle identifier to quit. Terminating *them* rather
+  than exiting *ourselves* is deliberate — a deploy that races its own `killall` then still
+  settles on exactly one running app, never zero. Termination is graceful so the outgoing
+  copy still closes its panels on `willTerminateNotification`.
+
 ## [3.5.2] - 2026-09-17
 
 ### Fixed

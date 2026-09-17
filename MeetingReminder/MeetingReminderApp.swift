@@ -472,6 +472,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var handleURL: ((URL) -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before anything registers a timer, watcher or observer: make sure we
+        // are the only copy running. A stale second copy duplicates the whole
+        // service stack — two reactive watchers, two 06:00 syncs, two intraday
+        // briefs for one meeting. See SingleInstanceGuard.
+        let displaced = SingleInstanceGuard.terminateOtherInstances()
+        if displaced > 0 {
+            CalendarSyncLogger().info(
+                "single-instance: asked \(displaced) older instance(s) to quit")
+        }
+
         // Install global key-equivalent monitors so ⌘Q and ⌘, work from
         // any window (overlays, settings, popovers). LSUIElement apps don't
         // get the standard Edit/App menus, so we create invisible menu items.
