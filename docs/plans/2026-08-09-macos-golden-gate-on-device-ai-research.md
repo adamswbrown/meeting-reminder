@@ -6,6 +6,14 @@ Parked until Adam has a Golden Gate device to test on.
 **Revisit when:** a Mac running macOS 27 (M3+, ≥12 GB RAM) is available, or Apple
 publishes the AFM 3 on-device context-window figure — whichever comes first.
 
+> ⚠️ **Superseded in part (2026-08-27).** Apple's developer site was unreachable from the
+> session that wrote this (see *Research caveats*); it is reachable now. Three numbers below
+> are wrong: the on-device context window is **8,192**, not 4,096; `tokenCount(for:)` now
+> exists; and PCC's 32K is *not* tight for a multi-meeting brief — a measured, pre-computed
+> six-meeting day is ~730 tokens. **Finding 3 and the "Conclusion" section should be read
+> against** [2026-08-27 PCC morning-brief prompt research](2026-08-27-pcc-morning-brief-prompt-research.md).
+> Findings 1 and 2 (no first-party briefing; `fm` gives inference, not context) still hold.
+
 ## Why this exists
 
 Question asked: does macOS 27 ship a first-party morning-briefing feature, and if not,
