@@ -39,6 +39,18 @@ final class MeetingMonitor: ObservableObject {
     private var checkTimer: Timer?
     private var menuBarTimer: Timer?
 
+    /// App Nap opt-out token. As an `LSUIElement` agent with no windows, this app
+    /// is a prime App Nap candidate — and a napped process has its run-loop timers
+    /// coalesced into multi-minute buckets, which freezes the menu bar countdown
+    /// and delays the pre-meeting overlay. Held for the monitor's whole lifetime.
+    /// `…AllowingIdleSystemSleep` deliberately does *not* keep the Mac awake.
+    private var appNapActivity: NSObjectProtocol?
+
+    /// Re-arms the timers after sleep. Timers don't fire while the machine is
+    /// asleep and can come back throttled; the calendar data is refreshed on wake
+    /// by `CalendarService`, but nothing was rebuilding *these* until now.
+    private var wakeObserver: Any?
+
     // MARK: - State Tracking
 
     private var shownEventIDs: Set<String> = []
@@ -114,21 +126,9 @@ final class MeetingMonitor: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        // Main check timer — checks meetings every 30s
-        checkTimer?.invalidate()
-        checkTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.checkUpcomingMeetings()
-            }
-        }
-
-        // Menu bar update timer — updates text/color every 10s
-        menuBarTimer?.invalidate()
-        menuBarTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateMenuBar()
-            }
-        }
+        beginAppNapExemption()
+        scheduleTimers()
+        observeWake()
 
         // Audio monitoring for meeting end detection
         startAudioMonitoring()
@@ -163,8 +163,79 @@ final class MeetingMonitor: ObservableObject {
         if let observer = workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
+        if let observer = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            wakeObserver = nil
+        }
+        if let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            appNapActivity = nil
+        }
         screenDimmer.restore()
         floatingPromptController.close()
+    }
+
+    // MARK: - Timer Scheduling
+
+    /// Builds the check + menu bar timers and installs them in `.common` run-loop
+    /// mode. `Timer.scheduledTimer` uses `.default`, which stops firing while a
+    /// menu or popover tracking loop is up — so the countdown could freeze for as
+    /// long as the menu bar popover stayed open.
+    private func scheduleTimers() {
+        // Main check timer — checks meetings every 30s
+        checkTimer?.invalidate()
+        let check = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkUpcomingMeetings()
+            }
+        }
+        check.tolerance = 5
+        RunLoop.main.add(check, forMode: .common)
+        checkTimer = check
+
+        // Menu bar update timer — updates text/color every 10s
+        menuBarTimer?.invalidate()
+        let menuBar = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateMenuBar()
+            }
+        }
+        menuBar.tolerance = 1
+        RunLoop.main.add(menuBar, forMode: .common)
+        menuBarTimer = menuBar
+    }
+
+    /// Tell the system this process is doing user-initiated work so it isn't
+    /// napped. Without this, a background agent's timers get coalesced and the
+    /// menu bar can sit on a stale countdown — reading "in 1h" for a meeting
+    /// that's three minutes away — while notification-driven work carries on
+    /// normally, which makes the app look alive when its timers aren't.
+    private func beginAppNapExemption() {
+        guard appNapActivity == nil else { return }
+        appNapActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Meeting countdown and pre-meeting alerts must fire on time"
+        )
+    }
+
+    /// Rebuild the timers and resync the UI on wake. Sleep can leave a repeating
+    /// timer firing late or not at all, and the first thing the user looks at
+    /// after opening the lid is the menu bar countdown.
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.scheduleTimers()
+                self.startAudioMonitoring()
+                self.checkUpcomingMeetings()
+                self.updateMenuBar()
+            }
+        }
     }
 
     // MARK: - User Actions
@@ -570,11 +641,14 @@ final class MeetingMonitor: ObservableObject {
 
     private func startAudioMonitoring() {
         audioCheckTimer?.invalidate()
-        audioCheckTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkAudioState()
             }
         }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        audioCheckTimer = timer
     }
 
     private func checkAudioState() {

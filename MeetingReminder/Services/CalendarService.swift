@@ -219,11 +219,16 @@ final class CalendarService: ObservableObject {
         // also calls `refreshSourcesIfNecessary`, which hints EventKit to
         // pull remote updates — the poll is what kicks that off.
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        // `.common` mode, not the `.default` mode `scheduledTimer` uses: a timer
+        // in `.default` stops firing while a menu/popover tracking loop is up.
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.fetchEvents()
             }
         }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
     }
 
     private func setupNotificationObserver() {
