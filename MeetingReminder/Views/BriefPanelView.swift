@@ -20,6 +20,7 @@ struct BriefPanelView: View {
     @State private var meetingNoteURL: URL?
     @State private var isResolvingNote = false
     @State private var isCreatingNote = false
+    @State private var windowBox = WindowBox()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -73,32 +74,68 @@ struct BriefPanelView: View {
 
     // MARK: - Subviews
 
+    /// Screen-space anchor captured on the first drag tick: (mouse, window origin).
+    /// Screen coordinates rather than the gesture's own translation, which is
+    /// measured inside the window and so collapses to ~zero once the window
+    /// starts moving with the cursor.
+    @State private var dragAnchor: (mouse: CGPoint, origin: CGPoint)?
+
+    private var windowDragGesture: some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { _ in
+                guard let window = windowBox.window else { return }
+                let mouse = NSEvent.mouseLocation
+                guard let anchor = dragAnchor else {
+                    dragAnchor = (mouse, window.frame.origin)
+                    return
+                }
+                window.setFrameOrigin(
+                    CGPoint(
+                        x: anchor.origin.x + (mouse.x - anchor.mouse.x),
+                        y: anchor.origin.y + (mouse.y - anchor.mouse.y)
+                    )
+                )
+            }
+            .onEnded { _ in dragAnchor = nil }
+    }
+
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .foregroundColor(.accentColor)
+            // Title block doubles as the panel's drag region — see WindowDragHandle.
+            // Kept separate from the trailing buttons so the drag NSView can't
+            // swallow their clicks.
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .foregroundColor(.accentColor)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(brief?.title ?? event.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                if let cp = brief?.customerPartner {
-                    Text(cp)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.15))
-                        .foregroundColor(.accentColor)
-                        .cornerRadius(4)
-                } else {
-                    Text("Pre-Call Brief")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(brief?.title ?? event.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    if let cp = brief?.customerPartner {
+                        Text(cp)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.15))
+                            .foregroundColor(.accentColor)
+                            .cornerRadius(4)
+                    } else {
+                        Text("Pre-Call Brief")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
-            }
 
-            Spacer()
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .background(WindowAccessor(box: windowBox))
+            .gesture(windowDragGesture)
+            .help("Drag to move the panel")
 
             if let brief {
                 Button {
@@ -117,8 +154,7 @@ struct BriefPanelView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.trailing, 16)
     }
 
     @ViewBuilder
@@ -792,6 +828,54 @@ struct BriefPickerView: View {
 }
 
 // MARK: - Window controller
+
+// MARK: - Window Dragging
+
+/// Holds a weak reference to the panel's `NSWindow` so the SwiftUI drag
+/// gesture has something to move.
+@MainActor
+final class WindowBox {
+    weak var window: NSWindow?
+}
+
+/// Invisible view whose only job is to hand the enclosing `NSWindow` back to
+/// SwiftUI.
+///
+/// The panel is `.borderless`, so it has no titlebar and
+/// `isMovableByWindowBackground` is the only built-in way to move it — and
+/// that never fires, because AppKit consults `mouseDownCanMoveWindow` on the
+/// view it hit, `NSHostingView` returns `false`, and `NSHostingView` overrides
+/// hit-testing to consult the SwiftUI view tree, so a plain AppKit subview
+/// placed behind the header never receives the mouse-down at all. The drag
+/// therefore has to be driven from the SwiftUI side; this just supplies the
+/// window handle.
+private struct WindowAccessor: NSViewRepresentable {
+    let box: WindowBox
+
+    /// Captures the window in `viewDidMoveToWindow`. Reading `view.window` in
+    /// `makeNSView` is too early — the view isn't in the hierarchy yet, so it
+    /// hands back nil and `updateNSView` never runs again to correct it.
+    final class AccessorView: NSView {
+        let box: WindowBox
+
+        init(box: WindowBox) {
+            self.box = box
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            box.window = window
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView { AccessorView(box: box) }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
 
 @MainActor
 final class BriefPanelWindowController {
