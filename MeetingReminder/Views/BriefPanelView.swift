@@ -80,6 +80,12 @@ struct BriefPanelView: View {
     /// starts moving with the cursor.
     @State private var dragAnchor: (mouse: CGPoint, origin: CGPoint)?
 
+    // TODO(#39): replace this with SwiftUI's WindowDragGesture() on macOS 15+,
+    // keeping this manual path as the 13/14 fallback. AppKit would then perform
+    // the drag, bringing snapping, Spaces/Stage Manager and multi-display
+    // geometry that this version can't reproduce. Needs a real drag test first —
+    // it's unverified inside a .borderless .nonactivatingPanel NSPanel, which is
+    // the exact combination that broke isMovableByWindowBackground on macOS 27.
     private var windowDragGesture: some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { _ in
