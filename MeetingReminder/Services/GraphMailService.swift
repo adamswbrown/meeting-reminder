@@ -18,7 +18,7 @@ import Foundation
 ///   expiry). Entra's 90-day rolling inactivity window means regular use keeps
 ///   it alive indefinitely; a password change / session revoke / Conditional
 ///   Access sign-in-frequency policy can force a reconnect.
-/// - **`needsReauth`**: a `refresh_token` grant that fails with `invalid_grant`
+/// - **`needsReauth`**: a `refresh_token` grant that fails with an expiry-coded `invalid_grant`
 ///   clears the stored token and surfaces as a distinct error so the caller can
 ///   notify the user and fall back.
 @MainActor
@@ -190,14 +190,21 @@ final class GraphMailService: ObservableObject {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
         if let error = json["error"] as? String {
-            // A dead refresh token (revoked, expired, password changed, CA policy)
-            // surfaces as invalid_grant — clear it and demand reconnection.
-            if error == "invalid_grant" {
+            let description = json["error_description"] as? String
+            // A dead refresh token (revoked, expired, password changed) surfaces
+            // as invalid_grant with an expiry AADSTS code — clear it and demand
+            // reconnection. invalid_grant is also returned for recoverable cases
+            // (consent_required, MFA/CA interaction), where the token still works
+            // for Mail.Send, so those keep the token and just fail this send.
+            if Self.isDeadRefreshToken(error: error,
+                                       errorCodes: json["error_codes"] as? [Int],
+                                       description: description) {
                 KeychainHelper.delete(key: Self.refreshTokenKey)
                 isConnected = false
                 throw GraphMailError.needsReauth
             }
-            throw GraphMailError.http(http?.statusCode ?? -1, json["error_description"] as? String ?? error)
+            lastAuthError = description ?? error
+            throw GraphMailError.http(http?.statusCode ?? -1, description ?? error)
         }
 
         guard let access = json["access_token"] as? String else {
@@ -211,6 +218,27 @@ final class GraphMailService: ObservableObject {
         cachedAccessToken = access
         accessTokenExpiry = Date().addingTimeInterval(expiresIn - 60)
         return access
+    }
+
+    /// AADSTS codes meaning the refresh token itself is dead: 70000 (revoked /
+    /// invalid grant), 70008 + 700082 (expired, inactivity), 50173 (grant expired
+    /// after password change), 50132/50133 (session invalidated by password
+    /// expiry/change).
+    nonisolated static let deadRefreshTokenCodes: Set<Int> = [70000, 70008, 700082, 50173, 50132, 50133]
+
+    /// True only for an `invalid_grant` carrying one of the dead-token codes,
+    /// read from `error_codes` or, failing that, the `AADSTSnnnn` prefix in the
+    /// description. An `invalid_grant` with no recognisable code keeps the token.
+    nonisolated static func isDeadRefreshToken(error: String, errorCodes: [Int]?, description: String?) -> Bool {
+        guard error == "invalid_grant" else { return false }
+        var codes = Set(errorCodes ?? [])
+        if codes.isEmpty, let description,
+           let range = description.range(of: #"AADSTS(\d+)"#, options: .regularExpression) {
+            if let code = Int(description[range].dropFirst("AADSTS".count)) {
+                codes.insert(code)
+            }
+        }
+        return !codes.isDisjoint(with: deadRefreshTokenCodes)
     }
 
     // MARK: - Device code helpers

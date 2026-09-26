@@ -346,4 +346,24 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertFalse(BookingPollService.isSupersededByCalCom(calComKey: ""))
         XCTAssertTrue(BookingPollService.isSupersededByCalCom(calComKey: "cal_live_x"))
     }
+
+    func testGraphRefreshExpiryCodesAreDead() {
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [70008], description: nil))
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [50173], description: nil))
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(
+            error: "invalid_grant", errorCodes: nil,
+            description: "AADSTS700082: The refresh token has expired due to inactivity."))
+    }
+
+    func testGraphRecoverableInvalidGrantKeepsToken() {
+        // consent_required for a new scope: the token still works for Mail.Send.
+        XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [65001], description: nil))
+        // MFA / Conditional Access interaction.
+        XCTAssertFalse(GraphMailService.isDeadRefreshToken(
+            error: "invalid_grant", errorCodes: nil,
+            description: "AADSTS50076: Due to a configuration change made by your administrator..."))
+        // No code at all — don't destroy the token on a guess.
+        XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: nil, description: nil))
+        XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "temporarily_unavailable", errorCodes: [70008], description: nil))
+    }
 }
