@@ -337,3 +337,13 @@ final class BookingSupportTests: XCTestCase {
         XCTAssertThrowsError(try BookingEmailSanitizer.sanitize(""))
     }
 }
+
+// MARK: - Booking / Cal.com / availability bug sweep
+
+final class BookingSweepTests: XCTestCase {
+    func testLegacyPollSupersededOnlyByNonEmptyCalComKey() {
+        XCTAssertFalse(BookingPollService.isSupersededByCalCom(calComKey: nil))
+        XCTAssertFalse(BookingPollService.isSupersededByCalCom(calComKey: ""))
+        XCTAssertTrue(BookingPollService.isSupersededByCalCom(calComKey: "cal_live_x"))
+    }
+}
