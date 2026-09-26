@@ -21,6 +21,11 @@ final class ScreenDimmer {
     func startDimming(durationSeconds: TimeInterval = 300) {
         guard isEnabled else { return }
 
+        // Already dimmed (or dimming) since the last restore: keep the
+        // brightness captured then. Re-reading it now would record the dimmed
+        // level as "original", so restore() would ratchet the screen darker.
+        guard originalBrightness == nil else { return }
+
         // Respect Reduce Motion accessibility setting
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             return

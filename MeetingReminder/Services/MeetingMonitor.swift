@@ -59,6 +59,7 @@ final class MeetingMonitor: ObservableObject {
     private var firedAlertTiers: [String: Set<Int>] = [:]  // eventID -> set of tier rawValues
     private var contextSwitchPromptShown: Set<String> = []
     private var dimmingStartedFor: String?
+    private var dimmingDismissedIDs: Set<String> = []
     private var meetingEndedIDs: Set<String> = []
 
     // MARK: - Audio Monitoring (for meeting end detection)
@@ -67,6 +68,9 @@ final class MeetingMonitor: ObservableObject {
     private var audioCheckTimer: Timer?
     private var audioInactiveSince: Date?  // debounce: when audio first went idle
     private let audioDebounceSeconds: TimeInterval = 30  // require 30s of silence
+    /// Arms audio/app-quit end detection only once the joined meeting's own
+    /// call has been seen on the mic — see `CallEndGate`.
+    private var callEndGate = CallEndGate()
 
     // MARK: - Video App Monitoring
 
@@ -245,6 +249,8 @@ final class MeetingMonitor: ObservableObject {
         // this meeting so the screen doesn't stay dim if the user never joins.
         if currentMeetingInProgress == nil {
             screenDimmer.restore()
+            // Remember the dismissal so the next check tick doesn't dim again.
+            if let id = dimmingStartedFor { dimmingDismissedIDs.insert(id) }
             dimmingStartedFor = nil
         }
         shouldShowOverlay = false
@@ -256,8 +262,9 @@ final class MeetingMonitor: ObservableObject {
         guard let event = activeOverlayEvent else { return }
         snoozedEvents[event.id] = Date().addingTimeInterval(TimeInterval(seconds))
         shownEventIDs.remove(event.id)
-        // Reset alert tiers so they can re-fire after snooze
-        firedAlertTiers[event.id] = nil
+        // Keep the banner/chime tiers already fired so the snooze expiring
+        // doesn't replay them; only last-chance can re-fire.
+        firedAlertTiers[event.id] = MeetingMonitorLogic.tiersAfterSnooze(firedAlertTiers[event.id])
         dismiss()
     }
 
@@ -266,6 +273,13 @@ final class MeetingMonitor: ObservableObject {
         // Track that this meeting is now in progress (user joined)
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
+        let joinedAt = Date()
+        callEndGate.begin(
+            micActiveAtJoin: audioWasActive,
+            previousCallMayHoldMic: MeetingMonitorLogic.otherMeetingMayHoldMic(
+                joining: event, in: calendarService.events, now: joinedAt),
+            now: joinedAt
+        )
         audioInactiveSince = nil  // reset debounce for fresh meeting
         MeetingLauncher.open(url)
         dismiss()
@@ -283,6 +297,13 @@ final class MeetingMonitor: ObservableObject {
         shownEventIDs.insert(event.id)
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
+        let joinedAt = Date()
+        callEndGate.begin(
+            micActiveAtJoin: audioWasActive,
+            previousCallMayHoldMic: MeetingMonitorLogic.otherMeetingMayHoldMic(
+                joining: event, in: calendarService.events, now: joinedAt),
+            now: joinedAt
+        )
         audioInactiveSince = nil
         if let url = event.videoLink {
             MeetingLauncher.open(url)
@@ -323,6 +344,9 @@ final class MeetingMonitor: ObservableObject {
 
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
+        // An ad-hoc meeting is usually started for the call already on the
+        // mic, so that audio counts as this meeting's own — arm on it.
+        callEndGate.begin(micActiveAtJoin: false, previousCallMayHoldMic: false, now: now)
         audioInactiveSince = nil
         return event
     }
@@ -387,7 +411,10 @@ final class MeetingMonitor: ObservableObject {
         }
 
         let upcoming = calendarService.events.filter { $0.startDate > now }
-        let inProgress = calendarService.events.first(where: { $0.isInProgress })
+        let inProgress = MeetingMonitorLogic.menuBarInProgress(
+            in: calendarService.events,
+            endedIDs: meetingEndedIDs
+        )
 
         if let current = inProgress {
             // Wrap-up nudge: only when we're actually in a meeting and the
@@ -438,11 +465,20 @@ final class MeetingMonitor: ObservableObject {
             firedAlertTiers = firedAlertTiers.filter { activeIDs.contains($0.key) }
             contextSwitchPromptShown = contextSwitchPromptShown.filter { activeIDs.contains($0) }
             meetingEndedIDs = meetingEndedIDs.filter { activeIDs.contains($0) }
+            dimmingDismissedIDs = dimmingDismissedIDs.filter { activeIDs.contains($0) }
             lastCleanupDate = now
         }
 
-        // Clean up expired snoozes
-        snoozedEvents = snoozedEvents.filter { $0.value > now }
+        // Clean up expired snoozes — but keep one whose meeting has just
+        // started, or the expired-snooze re-fire below could never see it.
+        snoozedEvents = snoozedEvents.filter { id, until in
+            let event = calendarService.events.first(where: { $0.id == id })
+            return MeetingMonitorLogic.shouldKeepSnooze(
+                until: until,
+                timeUntilStart: event.map { $0.startDate.timeIntervalSince(now) },
+                now: now
+            )
+        }
 
         // Check for meetings that just ended (calendar-based fallback)
         checkMeetingEnded()
@@ -488,7 +524,8 @@ final class MeetingMonitor: ObservableObject {
             }
 
             // Screen dimming (start 5 min before)
-            if minutesUntil > 0 && minutesUntil <= 5 && dimmingStartedFor != event.id {
+            if minutesUntil > 0 && minutesUntil <= 5 && dimmingStartedFor != event.id &&
+               !dimmingDismissedIDs.contains(event.id) {
                 dimmingStartedFor = event.id
                 screenDimmer.startDimming(durationSeconds: minutesUntil * 60)
             }
@@ -508,7 +545,7 @@ final class MeetingMonitor: ObservableObject {
             // expired snooze entry still exists for a recently-started, not-yet-
             // joined/ended meeting, re-fire regardless of the normal windows.
             if let snoozeUntil = snoozedEvents[event.id], snoozeUntil <= now,
-               timeUntil <= 0 && timeUntil > -600,
+               timeUntil <= 0 && timeUntil > -MeetingMonitorLogic.snoozeRefireWindow,
                currentMeetingInProgress?.id != event.id,
                !shownEventIDs.contains(event.id) {
                 snoozedEvents[event.id] = nil
@@ -614,7 +651,16 @@ final class MeetingMonitor: ObservableObject {
 
     /// Calendar-based fallback: detect meetings that passed their endDate
     private func checkMeetingEnded() {
-        guard let current = currentMeetingInProgress else { return }
+        guard let snapshot = currentMeetingInProgress else { return }
+
+        // `currentMeetingInProgress` is a snapshot from join time. If the
+        // organiser has since extended or shortened the meeting, judge the end
+        // against the live calendar copy, not the stale endDate. Reassigning is
+        // safe: the coordinator's sinks de-duplicate on id.
+        let current = MeetingMonitorLogic.refreshed(snapshot, from: calendarService.events)
+        if current != snapshot {
+            currentMeetingInProgress = current
+        }
 
         if current.hasEnded {
             handleMeetingEnded(current)
@@ -661,6 +707,15 @@ final class MeetingMonitor: ObservableObject {
         }
 
         guard currentMeetingInProgress != nil else {
+            audioInactiveSince = nil
+            audioWasActive = audioActive
+            return
+        }
+
+        // Back-to-back guard: the previous call's mic going quiet must not end
+        // the meeting just joined. Ignore audio until this call is observed.
+        callEndGate.observe(micActive: audioActive, now: Date())
+        guard callEndGate.isArmed else {
             audioInactiveSince = nil
             audioWasActive = audioActive
             return
@@ -762,7 +817,10 @@ final class MeetingMonitor: ObservableObject {
                     "com.tinyspeck.slackmacgap",  // Slack
                 ]
 
+                // Only once this meeting's call has been seen: quitting the
+                // previous meeting's app must not end a back-to-back join.
                 if videoAppBundleIDs.contains(bundleID),
+                   self.callEndGate.isArmed,
                    let event = self.currentMeetingInProgress {
                     self.handleMeetingEnded(event)
                 }
@@ -792,6 +850,106 @@ final class MeetingMonitor: ObservableObject {
         if UserDefaults.standard.object(forKey: "soundEnabled") == nil ||
            UserDefaults.standard.bool(forKey: "soundEnabled") {
             NSSound.beep()
+        }
+    }
+}
+
+/// Pure decisions extracted from `MeetingMonitor` so they're unit-testable
+/// without timers, EventKit, or Core Audio.
+enum MeetingMonitorLogic {
+    /// The live calendar copy of an in-progress meeting, falling back to the
+    /// join-time snapshot when the event isn't in the list (ad-hoc meetings,
+    /// or a meeting cancelled mid-call).
+    static func refreshed(_ current: MeetingEvent, from live: [MeetingEvent]) -> MeetingEvent {
+        live.first(where: { $0.id == current.id }) ?? current
+    }
+
+    /// Fired tiers to keep when the overlay is snoozed. The banner and chime
+    /// already did their job — clearing them replayed both when the snooze
+    /// expired. Only the last-chance re-fire is released again.
+    static func tiersAfterSnooze(_ fired: Set<Int>?) -> Set<Int>? {
+        fired?.subtracting([AlertTier.lastChance.rawValue])
+    }
+
+    /// The meeting the menu bar should show as "(in progress)". Skips meetings
+    /// already marked ended (audio end, app quit, "Done with meeting"), so a
+    /// long calendar block the user has finished doesn't hide the countdown
+    /// to the next meeting for the rest of its scheduled span.
+    static func menuBarInProgress(in events: [MeetingEvent], endedIDs: Set<String>) -> MeetingEvent? {
+        events.first(where: { $0.isInProgress && !endedIDs.contains($0.id) })
+    }
+
+    /// How long after a meeting's start an expired snooze still re-fires the overlay.
+    static let snoozeRefireWindow: TimeInterval = 600
+
+    /// How long after its calendar end a meeting's call may still be running
+    /// (overrun) and so still own a hot mic.
+    static let overrunAllowance: TimeInterval = 900
+
+    /// Whether a meeting other than `joining` could own a mic that is hot at
+    /// join: one that has started and is in progress, or ended within
+    /// `overrunAllowance`. False means a hot mic is `joining`'s own call.
+    static func otherMeetingMayHoldMic(joining: MeetingEvent, in events: [MeetingEvent], now: Date) -> Bool {
+        events.contains {
+            $0.id != joining.id && $0.startDate <= now && $0.endDate > now.addingTimeInterval(-overrunAllowance)
+        }
+    }
+
+    /// Whether to keep a snooze entry in the per-tick cleanup. Active snoozes
+    /// stay. An expired one stays only while its meeting has started and is
+    /// inside the re-fire window — that's the entry the re-fire branch in
+    /// `checkUpcomingMeetings` consumes. Everything else is dropped.
+    /// `timeUntilStart` is nil when the event is no longer in the calendar.
+    static func shouldKeepSnooze(until: Date, timeUntilStart: TimeInterval?, now: Date) -> Bool {
+        if until > now { return true }
+        guard let timeUntilStart else { return false }
+        return timeUntilStart <= 0 && timeUntilStart > -snoozeRefireWindow
+    }
+}
+
+/// Decides when the audio-silence and video-app-quit signals may end the
+/// current meeting. Joining a back-to-back meeting while the previous call
+/// still holds the mic used to hand that call's hang-up (or app quit) to the
+/// new meeting and end it early.
+///
+/// - Joined from idle: the first mic activity arms it.
+/// - Mic hot at join, but no other meeting could own it
+///   (`previousCallMayHoldMic == false`): the hot mic is this meeting's own
+///   call (e.g. Join clicked on the in-call alert), so it arms at once.
+/// - Mic hot at join and another meeting could own it: waits for the mic to
+///   go quiet and come back (this meeting's call), or for the mic to stay hot
+///   continuously for `continuousActiveArmAfter` (a seamless call switch,
+///   e.g. Teams hold→join, that the 5s poll never sees as quiet).
+///
+/// Residual, accepted: in the last case, if the call being joined was already
+/// live and hangs up before `continuousActiveArmAfter`, that hang-up reads as
+/// the previous call ending and the meeting falls back to its calendar end
+/// time (or "Done with meeting").
+struct CallEndGate {
+    static let continuousActiveArmAfter: TimeInterval = 600
+
+    private(set) var isArmed = false
+    private var waitingForPreviousCallToEnd = false
+    private var continuouslyActiveSince: Date?
+
+    mutating func begin(micActiveAtJoin: Bool, previousCallMayHoldMic: Bool, now: Date) {
+        isArmed = micActiveAtJoin && !previousCallMayHoldMic
+        waitingForPreviousCallToEnd = micActiveAtJoin && previousCallMayHoldMic
+        continuouslyActiveSince = waitingForPreviousCallToEnd ? now : nil
+    }
+
+    mutating func observe(micActive: Bool, now: Date) {
+        guard !isArmed else { return }
+        if waitingForPreviousCallToEnd {
+            if !micActive {
+                waitingForPreviousCallToEnd = false
+                continuouslyActiveSince = nil
+            } else if let since = continuouslyActiveSince,
+                      now.timeIntervalSince(since) >= Self.continuousActiveArmAfter {
+                isArmed = true
+            }
+        } else if micActive {
+            isArmed = true
         }
     }
 }
