@@ -137,8 +137,11 @@ enum FoundationModelsBriefService {
             return try await session.respond(to: ctx.render(), generating: GeneratedBrief.self).content
         } catch let error as LanguageModelSession.GenerationError {
             // Runtime backstop: if the calibrated estimate was wrong, degrade + retry once.
+            // Use a FRESH session — the failed one's transcript still holds the oversized
+            // prompt, so retrying on it would overflow the window again.
             if case .exceededContextWindowSize = error {
-                return try await session.respond(to: ctx.renderMinimal(), generating: GeneratedBrief.self).content
+                let retry = LanguageModelSession(instructions: instructions)
+                return try await retry.respond(to: ctx.renderMinimal(), generating: GeneratedBrief.self).content
             }
             throw error
         }

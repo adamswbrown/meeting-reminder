@@ -156,11 +156,7 @@ enum IntradayDiffClassifier {
         var reschedules: [IntradayCalendarDiff.Reschedule] = []
         var cancellations: [MeetingEvent] = []
         for r in removed {
-            // A move = same title, different start. Same title + same start isn't a
-            // move (ambiguous duplicate) — leave both as separate signals.
-            if let idx = remainingAdded.firstIndex(where: {
-                normalizedTitle($0.title) == normalizedTitle(r.title) && $0.startDate != r.startDate
-            }) {
+            if let idx = remainingAdded.firstIndex(where: { isLikelyMove(removed: r, added: $0) }) {
                 reschedules.append(.init(old: r, new: remainingAdded.remove(at: idx)))
             } else {
                 cancellations.append(r)
@@ -171,9 +167,75 @@ enum IntradayDiffClassifier {
                                     cancellations: cancellations)
     }
 
+    /// Pull out disappearances of meetings that are still queued for a brief (detected
+    /// but never briefed). Nothing was ever announced for them, so a cancellation needs
+    /// neither the brief nor a "cancelled" notice, and a move just needs the brief at
+    /// the new time — its new half becomes a plain new meeting. Returns the withdrawn
+    /// IDs so the caller can drop them from its brief queue.
+    static func withdrawUnbriefed(_ diff: IntradayCalendarDiff,
+                                  pendingBriefIDs: Set<String>) -> (diff: IntradayCalendarDiff, withdrawnIDs: Set<String>) {
+        var out = diff
+        var withdrawn = Set<String>()
+        out.cancellations.removeAll { c in
+            guard pendingBriefIDs.contains(c.id) else { return false }
+            withdrawn.insert(c.id); return true
+        }
+        var rebriefs: [MeetingEvent] = []
+        out.reschedules.removeAll { r in
+            guard pendingBriefIDs.contains(r.old.id) else { return false }
+            withdrawn.insert(r.old.id)
+            rebriefs.append(r.new)
+            return true
+        }
+        out.newMeetings.append(contentsOf: rebriefs)
+        return (out, withdrawn)
+    }
+
+    /// A move = same title, different start, AND the same iCal UID when both sides
+    /// carry one. Title alone isn't enough: two unrelated "Catch-up"s would otherwise
+    /// pair, eating the new meeting's brief. Same title + same start isn't a move
+    /// (ambiguous duplicate) — leave both as separate signals.
+    static func isLikelyMove(removed r: MeetingEvent, added a: MeetingEvent) -> Bool {
+        guard normalizedTitle(a.title) == normalizedTitle(r.title), a.startDate != r.startDate else { return false }
+        guard let ru = seriesUID(r), let au = seriesUID(a) else { return true }   // no UID → title-only fallback
+        return ru == au
+    }
+
+    /// External UID with any detached-occurrence `/RID=<n>` suffix stripped, so an
+    /// edited recurring instance still matches its series. nil when EventKit gave none.
+    static func seriesUID(_ e: MeetingEvent) -> String? {
+        guard let ext = e.externalID, !ext.isEmpty else { return nil }
+        if let r = ext.range(of: "/RID=") { return String(ext[..<r.lowerBound]) }
+        return ext
+    }
+
     /// Case/whitespace-insensitive title key used to pair a move's two halves.
     static func normalizedTitle(_ s: String) -> String {
         s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Decides when one emission's diff is not real diary activity and must be absorbed
+/// silently. Changing the monitored-calendars filter adds/removes whole calendars at
+/// once, and an account re-sync can do the same — without this every one of those
+/// meetings would fire a brief or a "cancelled" Slack post.
+enum IntradayBurstGuard {
+    /// More appearances + disappearances than this in a single emission is treated as
+    /// a bulk reload, not bookings. Genuine intraday changes arrive one or two at a time.
+    static let maxChanges = 6
+
+    static func shouldAbsorb(filterChanged: Bool, addedCount: Int, removedCount: Int,
+                             cap: Int = maxChanges) -> Bool {
+        filterChanged || addedCount + removedCount > cap
+    }
+
+    /// An absorbed burst still has to drop queued (never-briefed) meetings that vanished
+    /// in it — otherwise a meeting from a just-deselected calendar, or one removed in a
+    /// bulk reload, would be briefed later from the stale queue.
+    static func pruneQueue(_ queue: [MeetingEvent],
+                           removedIDs: Set<String>) -> (kept: [MeetingEvent], droppedCount: Int) {
+        let kept = queue.filter { !removedIDs.contains($0.id) }
+        return (kept, queue.count - kept.count)
     }
 }
 
@@ -242,6 +304,7 @@ final class PreCallBriefTriggerService: ObservableObject {
     private var previousUpcoming: [String: MeetingEvent]?
     private var seeded = false               // has the diff basis been established from a real (non-empty) emission?
     private var lastSeenDay: Date?           // start-of-day of the last emission — detects rollover
+    private var lastCalendarFilter: Set<String>?  // `enabledCalendarIDs` at the last emission — detects a filter change
     private var firedIDs: Set<String>       // fast membership test (briefs)
     private var firedOrder: [String]        // insertion order, for bounded FIFO eviction
     private var firedRemovalIDs: Set<String> // fast membership test (removals/reschedules)
@@ -355,6 +418,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         previousUpcoming = nil   // next real emission re-seeds the diff basis (absorb, don't fire)
         seeded = false
         lastSeenDay = nil
+        lastCalendarFilter = nil
         pending.removeAll()
         pendingRemovals.removeAll()
         skillMissingLatched = false
@@ -378,6 +442,12 @@ final class PreCallBriefTriggerService: ObservableObject {
         // Always advance the diff basis (even outside hours) so pre-existing meetings are
         // absorbed and only genuinely-new appearances/disappearances ever fire.
         previousUpcoming = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+
+        // Settings writes the filter then refetches, so the emission that first sees a
+        // new filter is the one carrying the whole-calendar add/remove.
+        let calendarFilter = Set(UserDefaults.standard.stringArray(forKey: "enabledCalendarIDs") ?? [])
+        let filterChanged = lastCalendarFilter != nil && lastCalendarFilter != calendarFilter
+        lastCalendarFilter = calendarFilter
 
         if skillMissingLatched { return }
 
@@ -420,16 +490,37 @@ final class PreCallBriefTriggerService: ObservableObject {
 
         guard !added.isEmpty || !removed.isEmpty else { return }
 
+        // A calendar-filter change or bulk reload isn't diary activity — the basis has
+        // already advanced, so absorbing here just drops this one burst.
+        if IntradayBurstGuard.shouldAbsorb(filterChanged: filterChanged,
+                                           addedCount: added.count, removedCount: removed.count) {
+            log("absorbed \(added.count) new / \(removed.count) removed without firing — \(filterChanged ? "calendar filter changed" : "bulk calendar reload")")
+            let pruned = IntradayBurstGuard.pruneQueue(pending, removedIDs: Set(removed.map(\.id)))
+            if pruned.droppedCount > 0 {
+                pending = pruned.kept
+                log("dropped \(pruned.droppedCount) queued brief(s) whose meeting vanished in the absorbed burst")
+            }
+            return
+        }
+
         // Pair a same-title move into a single reschedule so it doesn't fire both a
         // "cancelled" and a "new meeting" alert (user wants one "moved" post).
-        let diff = IntradayDiffClassifier.classify(added: added, removed: removed)
+        // A meeting cancelled/moved while still queued for its brief is withdrawn from
+        // the queue rather than briefed and then reported as removed.
+        let (diff, withdrawn) = IntradayDiffClassifier.withdrawUnbriefed(
+            IntradayDiffClassifier.classify(added: added, removed: removed),
+            pendingBriefIDs: Set(pending.map(\.id)))
+        if !withdrawn.isEmpty {
+            pending.removeAll { withdrawn.contains($0.id) }
+            log("withdrew \(withdrawn.count) queued brief(s) — meeting removed/moved before it was briefed")
+        }
 
-        // New meetings → brief queue. Also drop any new meeting whose title matches a
-        // still-pending removal at a different time (a reschedule split across emissions):
-        // the removal job will report the move, so don't also brief the new occurrence.
-        let removalTitles = Set(pendingRemovals.map { IntradayDiffClassifier.normalizedTitle($0.meeting.title) })
-        let freshBriefs = diff.newMeetings.filter {
-            !removalTitles.contains(IntradayDiffClassifier.normalizedTitle($0.title))
+        // New meetings → brief queue. Also drop any new meeting that is the other half
+        // of a still-pending removal (a reschedule split across emissions — same title
+        // and UID, different time): the removal job will report the move, so don't also
+        // brief the new occurrence.
+        let freshBriefs = diff.newMeetings.filter { added in
+            !pendingRemovals.contains { IntradayDiffClassifier.isLikelyMove(removed: $0.meeting, added: added) }
         }
         pending.append(contentsOf: freshBriefs)
         pending.sort { $0.startDate < $1.startDate }
@@ -793,7 +884,13 @@ final class PreCallBriefTriggerService: ObservableObject {
                 // wedged read can't hang the queue forever (M3/NEW-5). The read thread may
                 // leak until the OS reaps it, but the feature keeps working.
                 DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(600)) {
-                    guard process.isRunning else { return }
+                    // Parent already exited but the read hasn't finished: a grandchild is
+                    // holding stdout open, so EOF may never come. Nothing to kill — resume
+                    // now (a no-op if the normal path already finished).
+                    guard process.isRunning else {
+                        finish("(intraday run timed out after ~10m — output pipe still held open after exit)")
+                        return
+                    }
                     process.terminate()
                     DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(15)) {
                         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
@@ -855,10 +952,13 @@ final class PreCallBriefTriggerService: ObservableObject {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         if let data = line.data(using: .utf8) {
+            // Throwing APIs only: the legacy seekToEndOfFile()/write(_:) raise an
+            // Objective-C exception on an I/O error (disk full, file yanked), which
+            // Swift can't catch and which crashes the app.
             if let handle = try? FileHandle(forWritingTo: logURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
             } else {
                 try? data.write(to: logURL)
             }

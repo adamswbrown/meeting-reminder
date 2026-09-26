@@ -97,11 +97,21 @@ final class PreCallBriefService: ObservableObject {
 
     // MARK: - Matching
 
+    /// A stored match is only authoritative when the user attached it. An automatic
+    /// match is a guess made at one moment (often before the real brief existed, via the
+    /// ±7-day fallback), so it's never cached — re-matching each time lets the correct
+    /// brief win once it's written.
+    nonisolated static func reusableStoredMatch(_ stored: BriefMatch?) -> BriefMatch? {
+        guard let stored, stored.userAttached else { return nil }
+        return stored
+    }
+
     /// Find the best-matching brief for the event. Returns nil if nothing
     /// scores above threshold. Respects a prior user-attached match if one
-    /// exists (never re-matches over a manual choice).
+    /// exists (never re-matches over a manual choice); automatic matches are
+    /// recomputed on every call and not persisted.
     func match(for event: MeetingEvent) async -> BriefMatch? {
-        if let existing = storedMatch(for: event.id) {
+        if let existing = Self.reusableStoredMatch(storedMatch(for: event.id)) {
             return existing
         }
 
@@ -110,34 +120,26 @@ final class PreCallBriefService: ObservableObject {
         let primaryEnd = event.startDate.addingTimeInterval(12 * 3600)
 
         if let best = await bestMatch(in: primaryStart...primaryEnd, for: event) {
-            let match = BriefMatch(
+            return BriefMatch(
                 pageID: best.pageID,
                 pageURL: best.pageURL.absoluteString,
                 title: best.title,
                 matchedAt: Date(),
                 userAttached: false
             )
-            var stored = loadMatches()
-            stored[event.id] = match
-            saveMatches(stored)
-            return match
         }
 
         // Fallback: widen to ±7 days.
         let wideStart = event.startDate.addingTimeInterval(-7 * 86400)
         let wideEnd = event.startDate.addingTimeInterval(7 * 86400)
         if let best = await bestMatch(in: wideStart...wideEnd, for: event) {
-            let match = BriefMatch(
+            return BriefMatch(
                 pageID: best.pageID,
                 pageURL: best.pageURL.absoluteString,
                 title: best.title,
                 matchedAt: Date(),
                 userAttached: false
             )
-            var stored = loadMatches()
-            stored[event.id] = match
-            saveMatches(stored)
-            return match
         }
 
         return nil

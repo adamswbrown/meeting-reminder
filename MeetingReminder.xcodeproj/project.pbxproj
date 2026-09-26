@@ -78,6 +78,7 @@
 		T2000008 /* IntradayBriefGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000008 /* IntradayBriefGateTests.swift */; };
 		T2000047 /* ClaudeCLILocatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000047 /* ClaudeCLILocatorTests.swift */; };
 		T2000045 /* TokenBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000045 /* TokenBudgetTests.swift */; };
+		BC000002 /* PreCallBriefMatchPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000001 /* PreCallBriefMatchPolicyTests.swift */; };
 		T2000046 /* NotionPriorNotesReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000046 /* NotionPriorNotesReaderTests.swift */; };
 		T2000009 /* CalendarEventInclusionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000009 /* CalendarEventInclusionTests.swift */; };
 		T2000011 /* IntradayDiffClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000011 /* IntradayDiffClassifierTests.swift */; };
@@ -173,6 +174,7 @@
 		T1000008 /* IntradayBriefGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayBriefGateTests.swift; sourceTree = "<group>"; };
 		T1000047 /* ClaudeCLILocatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLILocatorTests.swift; sourceTree = "<group>"; };
 		T1000045 /* TokenBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenBudgetTests.swift; sourceTree = "<group>"; };
+		BC000001 /* PreCallBriefMatchPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefMatchPolicyTests.swift; sourceTree = "<group>"; };
 		T1000046 /* NotionPriorNotesReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReaderTests.swift; sourceTree = "<group>"; };
 		T1000009 /* CalendarEventInclusionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventInclusionTests.swift; sourceTree = "<group>"; };
 		T1000011 /* IntradayDiffClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayDiffClassifierTests.swift; sourceTree = "<group>"; };
@@ -338,6 +340,7 @@
 				T1000008 /* IntradayBriefGateTests.swift */,
 				T1000047 /* ClaudeCLILocatorTests.swift */,
 				T1000045 /* TokenBudgetTests.swift */,
+				BC000001 /* PreCallBriefMatchPolicyTests.swift */,
 				T1000046 /* NotionPriorNotesReaderTests.swift */,
 				T1000009 /* CalendarEventInclusionTests.swift */,
 				T1000011 /* IntradayDiffClassifierTests.swift */,
@@ -510,6 +513,7 @@
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,
 				T2000047 /* ClaudeCLILocatorTests.swift in Sources */,
 				T2000045 /* TokenBudgetTests.swift in Sources */,
+				BC000002 /* PreCallBriefMatchPolicyTests.swift in Sources */,
 				T2000046 /* NotionPriorNotesReaderTests.swift in Sources */,
 				T2000009 /* CalendarEventInclusionTests.swift in Sources */,
 				T2000011 /* IntradayDiffClassifierTests.swift in Sources */,
