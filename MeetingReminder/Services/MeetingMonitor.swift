@@ -614,7 +614,16 @@ final class MeetingMonitor: ObservableObject {
 
     /// Calendar-based fallback: detect meetings that passed their endDate
     private func checkMeetingEnded() {
-        guard let current = currentMeetingInProgress else { return }
+        guard let snapshot = currentMeetingInProgress else { return }
+
+        // `currentMeetingInProgress` is a snapshot from join time. If the
+        // organiser has since extended or shortened the meeting, judge the end
+        // against the live calendar copy, not the stale endDate. Reassigning is
+        // safe: the coordinator's sinks de-duplicate on id.
+        let current = MeetingMonitorLogic.refreshed(snapshot, from: calendarService.events)
+        if current != snapshot {
+            currentMeetingInProgress = current
+        }
 
         if current.hasEnded {
             handleMeetingEnded(current)
@@ -793,6 +802,17 @@ final class MeetingMonitor: ObservableObject {
            UserDefaults.standard.bool(forKey: "soundEnabled") {
             NSSound.beep()
         }
+    }
+}
+
+/// Pure decisions extracted from `MeetingMonitor` so they're unit-testable
+/// without timers, EventKit, or Core Audio.
+enum MeetingMonitorLogic {
+    /// The live calendar copy of an in-progress meeting, falling back to the
+    /// join-time snapshot when the event isn't in the list (ad-hoc meetings,
+    /// or a meeting cancelled mid-call).
+    static func refreshed(_ current: MeetingEvent, from live: [MeetingEvent]) -> MeetingEvent {
+        live.first(where: { $0.id == current.id }) ?? current
     }
 }
 
