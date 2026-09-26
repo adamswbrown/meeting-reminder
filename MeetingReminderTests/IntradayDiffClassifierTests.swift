@@ -161,4 +161,21 @@ final class IntradayDiffClassifierTests: XCTestCase {
                                                        addedCount: IntradayBurstGuard.maxChanges,
                                                        removedCount: 0))
     }
+
+    // An absorbed burst still removes queued meetings that vanished in it — e.g. the
+    // user deselects a calendar while one of its meetings waits for working hours.
+    func testAbsorbedBurstStillDropsRemovedQueuedMeetings() {
+        let gone = ev("Intro call", "2026-07-30T14:00:00Z", id: "Q")
+        let kept = ev("Board", "2026-07-30T15:00:00Z", id: "B")
+        let r = IntradayBurstGuard.pruneQueue([gone, kept], removedIDs: ["Q", "X"])
+        XCTAssertEqual(r.kept.map(\.id), ["B"])
+        XCTAssertEqual(r.droppedCount, 1)
+    }
+
+    func testAbsorbedBurstLeavesQueueWhenNothingQueuedWasRemoved() {
+        let kept = ev("Board", "2026-07-30T15:00:00Z", id: "B")
+        let r = IntradayBurstGuard.pruneQueue([kept], removedIDs: ["X"])
+        XCTAssertEqual(r.kept.map(\.id), ["B"])
+        XCTAssertEqual(r.droppedCount, 0)
+    }
 }

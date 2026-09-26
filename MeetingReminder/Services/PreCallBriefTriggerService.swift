@@ -228,6 +228,15 @@ enum IntradayBurstGuard {
                              cap: Int = maxChanges) -> Bool {
         filterChanged || addedCount + removedCount > cap
     }
+
+    /// An absorbed burst still has to drop queued (never-briefed) meetings that vanished
+    /// in it — otherwise a meeting from a just-deselected calendar, or one removed in a
+    /// bulk reload, would be briefed later from the stale queue.
+    static func pruneQueue(_ queue: [MeetingEvent],
+                           removedIDs: Set<String>) -> (kept: [MeetingEvent], droppedCount: Int) {
+        let kept = queue.filter { !removedIDs.contains($0.id) }
+        return (kept, queue.count - kept.count)
+    }
 }
 
 @MainActor
@@ -486,6 +495,11 @@ final class PreCallBriefTriggerService: ObservableObject {
         if IntradayBurstGuard.shouldAbsorb(filterChanged: filterChanged,
                                            addedCount: added.count, removedCount: removed.count) {
             log("absorbed \(added.count) new / \(removed.count) removed without firing — \(filterChanged ? "calendar filter changed" : "bulk calendar reload")")
+            let pruned = IntradayBurstGuard.pruneQueue(pending, removedIDs: Set(removed.map(\.id)))
+            if pruned.droppedCount > 0 {
+                pending = pruned.kept
+                log("dropped \(pruned.droppedCount) queued brief(s) whose meeting vanished in the absorbed burst")
+            }
             return
         }
 
