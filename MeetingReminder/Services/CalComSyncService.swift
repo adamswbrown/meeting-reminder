@@ -146,7 +146,7 @@ final class CalComSyncService: ObservableObject {
             // the Exchange copy has since arrived (late sync). Move the tag onto
             // the Exchange event and delete ours so the meeting isn't doubled.
             if tagged.notes?.contains(Self.createdMarker) == true,
-               let exchange = findExchangeEvent(matching: booking, near: start) {
+               let exchange = findExchangeEvent(matching: booking, near: start, strict: true) {
                 appendMarker(marker, to: exchange)
                 do {
                     try eventStore.remove(tagged, span: .thisEvent, commit: true)
@@ -160,7 +160,7 @@ final class CalComSyncService: ObservableObject {
         }
 
         // Cal.com's Office365 integration already created an Exchange calendar event.
-        // If we find one at the same time with a matching title (or shared attendee),
+        // If we find one at the same time with a matching title (or the booker invited),
         // tag it instead of creating a duplicate.
         if let existing = findExchangeEvent(matching: booking, near: start) {
             appendMarker(marker, to: existing)
@@ -274,42 +274,86 @@ final class CalComSyncService: ObservableObject {
     /// Finds an EKEvent near the booking's start that looks like the Exchange copy
     /// Cal.com created. Uses a ±15 min window to absorb minor Exchange sync timing drift.
     /// Skips events that are already tagged with a Cal.com booking marker (already claimed).
-    private func findExchangeEvent(matching booking: CalComBooking, near date: Date) -> EKEvent? {
+    /// `strict` is for the reconciliation path, which *deletes* the app-created copy
+    /// on a match — it requires the title to match as well as the booker.
+    private func findExchangeEvent(matching booking: CalComBooking, near date: Date,
+                                   strict: Bool = false) -> EKEvent? {
         eventStore.refreshSourcesIfNecessary()
         let windowStart = date.addingTimeInterval(-900)
         let windowEnd   = date.addingTimeInterval(900)
         let pred = eventStore.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: nil)
-        let bookingEmails = booking.attendees?.map(\.email) ?? []
+        // Cal.com lists the booker first; guests added later (e.g. the cal-auto
+        // function adding colleagues to every booking) come after, and must not
+        // be used to match — they share plenty of unrelated internal meetings.
+        let bookerEmail = booking.attendees?.first?.email
         return eventStore.events(matching: pred).first { event in
             // Skip events already tagged by a previous sync pass.
             if let notes = event.notes, notes.contains("[calcom-booking-id:") { return false }
-            let emails = (event.attendees ?? []).compactMap { p -> String? in
-                guard p.url.scheme == "mailto" else { return nil }
-                return p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
-            }
-            return Self.isLikelyExchangeCopy(ekTitle: event.title, ekAttendeeEmails: emails,
-                                             startOffset: event.startDate.timeIntervalSince(date),
-                                             calTitle: booking.title ?? "", bookingEmails: bookingEmails)
+            let emails = (event.attendees ?? []).compactMap(Self.mailtoAddress)
+            return Self.isLikelyExchangeCopy(
+                ekTitle: event.title, ekAttendeeEmails: emails,
+                ekOrganizerIsCurrentUser: event.organizer?.isCurrentUser ?? false,
+                ekOrganizerEmail: event.organizer.flatMap(Self.mailtoAddress),
+                startOffset: event.startDate.timeIntervalSince(date),
+                calTitle: booking.title ?? "", bookerEmail: bookerEmail, strict: strict)
         }
     }
 
+    private nonisolated static func mailtoAddress(_ p: EKParticipant) -> String? {
+        guard p.url.scheme == "mailto" else { return nil }
+        return p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
+    }
+
     /// Matching rules for an Exchange event already in the booking's time window
-    /// (titles case-insensitive, trimmed):
+    /// (titles case-insensitive, trimmed).
+    ///
+    /// Title match — either:
     ///   • Exact title match, OR
     ///   • The longer title has the shorter one as a prefix AND the shorter is ≥ 4 characters.
     ///     (This handles Cal.com appending " between X and Y" to the base title without
-    ///      allowing unrelated short titles to match arbitrary event titles.) OR
-    ///   • The event invites one of the booking's attendees AND starts within 15 min of
-    ///     the booking — covers an Exchange copy whose title was renamed, which would
-    ///     otherwise never match and be duplicated. The start check stops an earlier
-    ///     meeting with the same person that merely overlaps the window from matching.
+    ///      allowing unrelated short titles to match arbitrary event titles.)
+    ///
+    /// Booker match (covers an Exchange copy whose title was renamed) — all of:
+    ///   • The event invites the booker (the booking's *first* attendee; guests are
+    ///     ignored because they are colleagues who share unrelated meetings),
+    ///   • the booker is not on the organiser's own domain (a colleague booking would
+    ///     otherwise match every internal meeting with them),
+    ///   • the current user organises the event (Cal.com's Exchange copy is created
+    ///     on the host's calendar, so a meeting someone else sent is never it), and
+    ///   • it starts within 15 min of the booking.
+    ///
+    /// Non-strict (first-tag path): title match OR booker match.
+    /// Strict (reconciliation, which deletes the app's copy): the title must match,
+    /// and the booker must be invited whenever both sides carry attendees.
     nonisolated static func isLikelyExchangeCopy(ekTitle: String?, ekAttendeeEmails: [String],
+                                                 ekOrganizerIsCurrentUser: Bool,
+                                                 ekOrganizerEmail: String?,
                                                  startOffset: TimeInterval,
-                                                 calTitle: String, bookingEmails: [String]) -> Bool {
-        let booked = Set(bookingEmails.map { $0.lowercased() }.filter { !$0.isEmpty })
-        if abs(startOffset) <= 900,
-           !booked.isDisjoint(with: ekAttendeeEmails.map { $0.lowercased() }) { return true }
+                                                 calTitle: String, bookerEmail: String?,
+                                                 strict: Bool = false) -> Bool {
+        let booker = bookerEmail?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let invited = Set(ekAttendeeEmails.map { $0.lowercased() })
+        let bookerInvited = !booker.isEmpty && invited.contains(booker)
+        let titleMatch = titlesMatch(ekTitle, calTitle)
 
+        if strict {
+            guard titleMatch else { return false }
+            if booker.isEmpty || invited.isEmpty { return true }
+            return bookerInvited
+        }
+        if titleMatch { return true }
+
+        guard bookerInvited, ekOrganizerIsCurrentUser, abs(startOffset) <= 900 else { return false }
+        if let organizer = ekOrganizerEmail?.lowercased(),
+           let orgDomain = organizer.split(separator: "@").last,
+           let bookerDomain = booker.split(separator: "@").last,
+           organizer.contains("@"), orgDomain == bookerDomain {
+            return false
+        }
+        return true
+    }
+
+    private nonisolated static func titlesMatch(_ ekTitle: String?, _ calTitle: String) -> Bool {
         let calTitle = calTitle.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !calTitle.isEmpty,
               let ekTitle = ekTitle?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
