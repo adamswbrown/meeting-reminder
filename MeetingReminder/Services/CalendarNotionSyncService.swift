@@ -981,9 +981,9 @@ final class CalendarSyncReader {
     ///   1. `seenIDs` — the IDs this run actually saw on the calendar. An
     ///      in-window detachment (the common case) lands here, needing no
     ///      EventKit call and no assumption about identifier formats.
-    ///   2. A window-free `event(withIdentifier:)` on the identifier a detached
-    ///      sibling *would* carry, reconstructed from the row's own start time.
-    ///      This catches a detachment moved outside the reactive window.
+    ///   2. A window-free lookup (`liveEvent(externalID:)`) of the identifier a
+    ///      detached sibling *would* carry, reconstructed from the row's own
+    ///      start time. This catches a detachment moved outside the window.
     ///
     /// A `.canceled` sibling counts as gone, not as a claim: some Exchange
     /// cancellations arrive as a cancelled detached item rather than a bare
@@ -994,20 +994,23 @@ final class CalendarSyncReader {
     /// the 06:00 full run would revive it — the same exposure the full run has
     /// always had, since it cannot see such a move either.
     ///
-    /// Do NOT reach for `calendarItems(withExternalIdentifier:)` here. It looks
-    /// like the right API and isn't: a detached occurrence has a *different*
-    /// external identifier from its master, so the lookup returns the master
-    /// alone, whose `occurrenceDate` is the series start and never matches —
-    /// making every vanished occurrence read as cancelled. That shipped in
-    /// v3.5.1 and produced a false positive within the hour.
+    /// Do NOT look the orphan up by its *series* UID with
+    /// `calendarItems(withExternalIdentifier:)`. A detached occurrence has a
+    /// *different* external identifier from its master, so that lookup returns
+    /// the master alone, whose `occurrenceDate` is the series start and never
+    /// matches — making every vanished occurrence read as cancelled. That
+    /// shipped in v3.5.1 and produced a false positive within the hour. Looking
+    /// up a full `<uid>/RID=<n>` identifier is different: it returns exactly
+    /// that detached occurrence (see `liveEvent(externalID:)`).
     func probeOccurrence(appleID: String,
                          originalStart: Date?,
                          seenIDs: Set<String>) -> CalendarSyncCascade.OccurrenceProbe {
         // A row keyed to a *detached* occurrence's own ID resolves directly and
         // window-free — no sibling hunting needed. This is how a genuinely
         // cancelled detached instance still reaches the cascade.
-        if CalendarSyncCascade.detachedOccurrence(fromID: appleID) != nil {
-            if let ev = store.event(withIdentifier: appleID), ev.status != .canceled {
+        if let detached = CalendarSyncCascade.detachedOccurrence(fromID: appleID) {
+            let ownID = "\(detached.seriesUID)/RID=\(Int(detached.originalStart.timeIntervalSinceReferenceDate))"
+            if let ev = liveEvent(externalID: ownID) {
                 logger.debug("probe \(appleID): detached occurrence still live at \(ev.startDate as Date?) — unresolved")
                 return .unresolved
             }
@@ -1024,13 +1027,29 @@ final class CalendarSyncReader {
         if let originalStart {
             let rid = Int(originalStart.timeIntervalSinceReferenceDate)
             let candidate = "\(parts.externalID)/RID=\(rid)"
-            if let ev = store.event(withIdentifier: candidate), ev.status != .canceled {
+            if let ev = liveEvent(externalID: candidate) {
                 logger.debug("probe \(appleID): detached sibling \(candidate) resolves (now \(ev.startDate as Date?)) — unresolved")
                 return .unresolved
             }
         }
         logger.debug("probe \(appleID): no live detached sibling on \(parts.day) — confirmed gone")
         return .confirmedGone
+    }
+
+    /// The non-cancelled event carrying exactly this external identifier,
+    /// window-free, or nil.
+    ///
+    /// `event(withIdentifier:)` is the wrong API for this: it takes the local
+    /// `eventIdentifier`, not `calendarItemExternalIdentifier`. Verified live
+    /// 2026-09-26 against the Exchange store — it resolved none of the external
+    /// IDs tried, `/RID=` or not, so both probe lookups were dead and every
+    /// out-of-window detachment read as cancelled. For a detached occurrence's
+    /// `<uid>/RID=<n>` ID, `calendarItems(withExternalIdentifier:)` returns
+    /// exactly that one occurrence.
+    private func liveEvent(externalID: String) -> EKEvent? {
+        store.calendarItems(withExternalIdentifier: externalID)
+            .compactMap { $0 as? EKEvent }
+            .first { $0.status != .canceled }
     }
 
     /// Resolves the user-opted-in calendars from `prefEnabledCalendarIDsKey`.
