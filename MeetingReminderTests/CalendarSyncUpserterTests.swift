@@ -137,4 +137,30 @@ final class CalendarSyncUpserterTests: XCTestCase {
                                                sweepableCalendars: ["Work"])
         XCTAssertEqual(outcome.counts.orphaned, 0)
     }
+
+    // MARK: Item A7 — Notion 429 handling
+
+    func testRateLimitHonoursRetryAfter() {
+        XCTAssertEqual(NotionRetryPolicy.delay(status: 429, retryAfter: "7", backoff: 0.5), 7)
+    }
+
+    func testRetryAfterIsCappedAndIgnoredWhenMalformed() {
+        XCTAssertEqual(NotionRetryPolicy.delay(status: 429, retryAfter: "3600", backoff: 0.5),
+                       NotionRetryPolicy.maxRetryAfter)
+        XCTAssertEqual(NotionRetryPolicy.delay(status: 429, retryAfter: "soon", backoff: 0.5), 0.5)
+        XCTAssertEqual(NotionRetryPolicy.delay(status: 429, retryAfter: nil, backoff: 2), 2)
+        XCTAssertEqual(NotionRetryPolicy.delay(status: 503, retryAfter: "7", backoff: 1), 1)
+    }
+
+    /// A third 429 used to throw and abort the whole run; rate limits get
+    /// more attempts than transient 5xx/transport errors.
+    func testRateLimitGetsMoreAttemptsThanServerErrors() {
+        XCTAssertTrue(NotionRetryPolicy.shouldRetry(status: 429, attempt: 3))
+        XCTAssertTrue(NotionRetryPolicy.shouldRetry(status: 429, attempt: 5))
+        XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: 429, attempt: 6))
+        XCTAssertTrue(NotionRetryPolicy.shouldRetry(status: 503, attempt: 2))
+        XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: 503, attempt: 3))
+        XCTAssertTrue(NotionRetryPolicy.shouldRetry(status: nil, attempt: 2))
+        XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: 400, attempt: 1))
+    }
 }

@@ -42,7 +42,7 @@ final class CalendarSyncNotionClient {
     private func request(method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
         let url = URL(string: "https://api.notion.com/v1\(path)")!
         var attempt = 0
-        var delay: UInt64 = 500_000_000 // 0.5s
+        var backoff: TimeInterval = 0.5
 
         while true {
             attempt += 1
@@ -57,10 +57,10 @@ final class CalendarSyncNotionClient {
             do {
                 (data, resp) = try await session.data(for: req)
             } catch {
-                if attempt < 3 {
+                if NotionRetryPolicy.shouldRetry(status: nil, attempt: attempt) {
                     logger.warn("network error \(error.localizedDescription), retrying (attempt \(attempt))")
-                    try await Task.sleep(nanoseconds: delay)
-                    delay *= 2
+                    try await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+                    backoff *= 2
                     continue
                 }
                 throw error
@@ -73,15 +73,49 @@ final class CalendarSyncNotionClient {
                 return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             }
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
-            let retriable = [429, 502, 503, 504].contains(http.statusCode)
-            if retriable && attempt < 3 {
-                logger.warn("notion \(http.statusCode), retrying (attempt \(attempt))")
-                try await Task.sleep(nanoseconds: delay)
-                delay *= 2
+            if NotionRetryPolicy.shouldRetry(status: http.statusCode, attempt: attempt) {
+                let wait = NotionRetryPolicy.delay(status: http.statusCode,
+                                                   retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                                                   backoff: backoff)
+                logger.warn("notion \(http.statusCode), retrying in \(wait)s (attempt \(attempt))")
+                try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                backoff *= 2
                 continue
             }
             throw CalendarSyncNotionError(status: http.statusCode, body: bodyStr)
         }
+    }
+}
+
+/// Retry policy for `CalendarSyncNotionClient`. Pure so it's unit-testable.
+enum NotionRetryPolicy {
+    /// Attempts for transport errors and 502/503/504.
+    static let maxAttempts = 3
+    /// A 429 means Notion did not process the request, and giving up on one
+    /// mid-run (e.g. during `fetchExistingEvents`) aborts the whole sync — so
+    /// rate limits get more room than transient server errors.
+    static let maxRateLimitAttempts = 6
+    /// Longest `Retry-After` honoured, so a pathological header can't stall a run.
+    static let maxRetryAfter: TimeInterval = 60
+
+    /// Whether a failed attempt should be retried. `status` nil means a
+    /// transport error (no HTTP response).
+    static func shouldRetry(status: Int?, attempt: Int) -> Bool {
+        guard let status else { return attempt < maxAttempts }
+        if status == 429 { return attempt < maxRateLimitAttempts }
+        if [502, 503, 504].contains(status) { return attempt < maxAttempts }
+        return false
+    }
+
+    /// Seconds to wait before the next attempt: Notion's `Retry-After` (in
+    /// seconds) on a 429 when present and sane, else the exponential backoff.
+    static func delay(status: Int?, retryAfter: String?, backoff: TimeInterval) -> TimeInterval {
+        if status == 429,
+           let raw = retryAfter?.trimmingCharacters(in: .whitespaces),
+           let seconds = TimeInterval(raw), seconds >= 0 {
+            return min(seconds, maxRetryAfter)
+        }
+        return backoff
     }
 }
 
