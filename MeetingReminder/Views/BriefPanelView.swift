@@ -263,7 +263,7 @@ struct BriefPanelView: View {
 
         // The locally recorded page is free to check; only hit the network
         // when we have nothing.
-        if let known = notion.knownMeetingNote(for: event.id) {
+        if let known = notion.knownMeetingNote(for: event) {
             meetingNoteURL = known
             return
         }
@@ -292,23 +292,19 @@ struct BriefPanelView: View {
 
         isCreatingNote = true
         Task {
-            if let existing = await notion.findMeetingNote(for: event) {
-                await MainActor.run {
-                    isCreatingNote = false
-                    meetingNoteURL = existing
-                    NotionService.openInNotionApp(existing)
-                }
-                return
-            }
-
-            let created = await notion.createMeetingPage(for: event)
+            // findOrCreateMeetingPage refuses to create after an ambiguous or
+            // failed lookup, where a blind create would add a duplicate.
+            let outcome = await notion.findOrCreateMeetingPage(for: event)
             await MainActor.run {
                 isCreatingNote = false
-                if let created {
-                    meetingNoteURL = created
-                    NotionService.openInNotionApp(created)
-                } else {
-                    loadError = notion.lastError ?? "Couldn't create the meeting note in Notion."
+                switch outcome {
+                case .note(let url):
+                    meetingNoteURL = url
+                    NotionService.openInNotionApp(url)
+                case .skipped:
+                    break
+                case .failed(let message):
+                    loadError = message
                 }
             }
         }
