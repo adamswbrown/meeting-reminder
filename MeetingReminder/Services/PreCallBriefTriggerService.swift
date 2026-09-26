@@ -793,7 +793,13 @@ final class PreCallBriefTriggerService: ObservableObject {
                 // wedged read can't hang the queue forever (M3/NEW-5). The read thread may
                 // leak until the OS reaps it, but the feature keeps working.
                 DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(600)) {
-                    guard process.isRunning else { return }
+                    // Parent already exited but the read hasn't finished: a grandchild is
+                    // holding stdout open, so EOF may never come. Nothing to kill — resume
+                    // now (a no-op if the normal path already finished).
+                    guard process.isRunning else {
+                        finish("(intraday run timed out after ~10m — output pipe still held open after exit)")
+                        return
+                    }
                     process.terminate()
                     DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(15)) {
                         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
