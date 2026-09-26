@@ -59,6 +59,7 @@ final class MeetingMonitor: ObservableObject {
     private var firedAlertTiers: [String: Set<Int>] = [:]  // eventID -> set of tier rawValues
     private var contextSwitchPromptShown: Set<String> = []
     private var dimmingStartedFor: String?
+    private var dimmingDismissedIDs: Set<String> = []
     private var meetingEndedIDs: Set<String> = []
 
     // MARK: - Audio Monitoring (for meeting end detection)
@@ -248,6 +249,8 @@ final class MeetingMonitor: ObservableObject {
         // this meeting so the screen doesn't stay dim if the user never joins.
         if currentMeetingInProgress == nil {
             screenDimmer.restore()
+            // Remember the dismissal so the next check tick doesn't dim again.
+            if let id = dimmingStartedFor { dimmingDismissedIDs.insert(id) }
             dimmingStartedFor = nil
         }
         shouldShowOverlay = false
@@ -446,6 +449,7 @@ final class MeetingMonitor: ObservableObject {
             firedAlertTiers = firedAlertTiers.filter { activeIDs.contains($0.key) }
             contextSwitchPromptShown = contextSwitchPromptShown.filter { activeIDs.contains($0) }
             meetingEndedIDs = meetingEndedIDs.filter { activeIDs.contains($0) }
+            dimmingDismissedIDs = dimmingDismissedIDs.filter { activeIDs.contains($0) }
             lastCleanupDate = now
         }
 
@@ -496,7 +500,8 @@ final class MeetingMonitor: ObservableObject {
             }
 
             // Screen dimming (start 5 min before)
-            if minutesUntil > 0 && minutesUntil <= 5 && dimmingStartedFor != event.id {
+            if minutesUntil > 0 && minutesUntil <= 5 && dimmingStartedFor != event.id &&
+               !dimmingDismissedIDs.contains(event.id) {
                 dimmingStartedFor = event.id
                 screenDimmer.startDimming(durationSeconds: minutesUntil * 60)
             }
