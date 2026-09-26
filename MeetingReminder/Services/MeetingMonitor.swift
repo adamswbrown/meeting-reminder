@@ -67,6 +67,9 @@ final class MeetingMonitor: ObservableObject {
     private var audioCheckTimer: Timer?
     private var audioInactiveSince: Date?  // debounce: when audio first went idle
     private let audioDebounceSeconds: TimeInterval = 30  // require 30s of silence
+    /// Arms audio/app-quit end detection only once the joined meeting's own
+    /// call has been seen on the mic — see `CallEndGate`.
+    private var callEndGate = CallEndGate()
 
     // MARK: - Video App Monitoring
 
@@ -266,6 +269,7 @@ final class MeetingMonitor: ObservableObject {
         // Track that this meeting is now in progress (user joined)
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
+        callEndGate.begin(micActiveAtJoin: audioWasActive)
         audioInactiveSince = nil  // reset debounce for fresh meeting
         MeetingLauncher.open(url)
         dismiss()
@@ -283,6 +287,7 @@ final class MeetingMonitor: ObservableObject {
         shownEventIDs.insert(event.id)
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
+        callEndGate.begin(micActiveAtJoin: audioWasActive)
         audioInactiveSince = nil
         if let url = event.videoLink {
             MeetingLauncher.open(url)
@@ -323,6 +328,9 @@ final class MeetingMonitor: ObservableObject {
 
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
+        // An ad-hoc meeting is usually started for the call already on the
+        // mic, so that audio counts as this meeting's own — arm on it.
+        callEndGate.begin(micActiveAtJoin: false)
         audioInactiveSince = nil
         return event
     }
@@ -675,6 +683,15 @@ final class MeetingMonitor: ObservableObject {
             return
         }
 
+        // Back-to-back guard: the previous call's mic going quiet must not end
+        // the meeting just joined. Ignore audio until this call is observed.
+        callEndGate.observe(micActive: audioActive)
+        guard callEndGate.isArmed else {
+            audioInactiveSince = nil
+            audioWasActive = audioActive
+            return
+        }
+
         if audioActive {
             // Audio is active — reset the debounce timer
             audioInactiveSince = nil
@@ -771,7 +788,10 @@ final class MeetingMonitor: ObservableObject {
                     "com.tinyspeck.slackmacgap",  // Slack
                 ]
 
+                // Only once this meeting's call has been seen: quitting the
+                // previous meeting's app must not end a back-to-back join.
                 if videoAppBundleIDs.contains(bundleID),
+                   self.callEndGate.isArmed,
                    let event = self.currentMeetingInProgress {
                     self.handleMeetingEnded(event)
                 }
@@ -813,6 +833,32 @@ enum MeetingMonitorLogic {
     /// or a meeting cancelled mid-call).
     static func refreshed(_ current: MeetingEvent, from live: [MeetingEvent]) -> MeetingEvent {
         live.first(where: { $0.id == current.id }) ?? current
+    }
+}
+
+/// Decides when the audio-silence and video-app-quit signals may end the
+/// current meeting. Joining a back-to-back meeting while the previous call
+/// still holds the mic used to hand that call's hang-up (or app quit) to the
+/// new meeting and end it early. If the mic was hot at join time, the gate
+/// waits for it to go quiet and come back — this meeting's own call — before
+/// arming. Joined from idle, the first mic activity arms it. Unarmed, the
+/// meeting still ends by calendar end time or "Done with meeting".
+struct CallEndGate {
+    private(set) var isArmed = false
+    private var waitingForPreviousCallToEnd = false
+
+    mutating func begin(micActiveAtJoin: Bool) {
+        isArmed = false
+        waitingForPreviousCallToEnd = micActiveAtJoin
+    }
+
+    mutating func observe(micActive: Bool) {
+        guard !isArmed else { return }
+        if waitingForPreviousCallToEnd {
+            if !micActive { waitingForPreviousCallToEnd = false }
+        } else if micActive {
+            isArmed = true
+        }
     }
 }
 

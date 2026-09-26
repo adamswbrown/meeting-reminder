@@ -34,4 +34,51 @@ final class MeetingMonitorLogicTests: XCTestCase {
         let fresh = MeetingMonitorLogic.refreshed(joined, from: [event("b", start: Date())])
         XCTAssertEqual(fresh, joined)
     }
+
+    // MARK: - CallEndGate — back-to-back meetings
+
+    func testGateNotArmedAtJoin() {
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: false)
+        XCTAssertFalse(gate.isArmed)
+    }
+
+    func testGateArmsOnFirstMicActivityWhenJoinedFromIdle() {
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: false)
+        gate.observe(micActive: false)
+        XCTAssertFalse(gate.isArmed)
+        gate.observe(micActive: true)
+        XCTAssertTrue(gate.isArmed)
+    }
+
+    func testPreviousCallStillHotDoesNotArm() {
+        // Joined B while A's call still had the mic — A's audio must not count.
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: true)
+        gate.observe(micActive: true)
+        XCTAssertFalse(gate.isArmed)
+        // A hangs up: mic drops. Still not B's call.
+        gate.observe(micActive: false)
+        XCTAssertFalse(gate.isArmed)
+        // B's call picks up the mic: now armed.
+        gate.observe(micActive: true)
+        XCTAssertTrue(gate.isArmed)
+    }
+
+    func testGateStaysArmedOnceArmed() {
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: false)
+        gate.observe(micActive: true)
+        gate.observe(micActive: false)
+        XCTAssertTrue(gate.isArmed)
+    }
+
+    func testBeginResetsGate() {
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: false)
+        gate.observe(micActive: true)
+        gate.begin(micActiveAtJoin: true)
+        XCTAssertFalse(gate.isArmed)
+    }
 }
