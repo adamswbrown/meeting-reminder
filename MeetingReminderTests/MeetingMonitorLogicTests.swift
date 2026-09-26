@@ -94,6 +94,13 @@ final class MeetingMonitorLogicTests: XCTestCase {
         XCTAssertEqual(CalendarService.nextBackToBack(after: a, in: [a, b], now: now)?.id, "b")
     }
 
+    func testBackToBackPicksAdjacentMeetingAlreadyStarted() {
+        // A ends exactly when B starts; the 30s check tick runs ~20s after B began.
+        let a = event("a", start: now.addingTimeInterval(-1820), minutes: 30)  // ended 20s ago
+        let b = event("b", start: a.endDate)
+        XCTAssertEqual(CalendarService.nextBackToBack(after: a, in: [a, b], now: now)?.id, "b")
+    }
+
     func testBackToBackSkipsOverlappingMeetingAlreadyStarted() {
         // c overlapped a and has already started — not a "next" meeting to break before.
         let a = event("a", start: now.addingTimeInterval(-1800), minutes: 30)
@@ -139,46 +146,98 @@ final class MeetingMonitorLogicTests: XCTestCase {
 
     func testGateNotArmedAtJoin() {
         var gate = CallEndGate()
-        gate.begin(micActiveAtJoin: false)
+        gate.begin(micActiveAtJoin: false, previousCallMayHoldMic: true, now: now)
         XCTAssertFalse(gate.isArmed)
     }
 
     func testGateArmsOnFirstMicActivityWhenJoinedFromIdle() {
         var gate = CallEndGate()
-        gate.begin(micActiveAtJoin: false)
-        gate.observe(micActive: false)
+        gate.begin(micActiveAtJoin: false, previousCallMayHoldMic: true, now: now)
+        gate.observe(micActive: false, now: now.addingTimeInterval(5))
         XCTAssertFalse(gate.isArmed)
-        gate.observe(micActive: true)
+        gate.observe(micActive: true, now: now.addingTimeInterval(10))
         XCTAssertTrue(gate.isArmed)
     }
 
     func testPreviousCallStillHotDoesNotArm() {
         // Joined B while A's call still had the mic — A's audio must not count.
         var gate = CallEndGate()
-        gate.begin(micActiveAtJoin: true)
-        gate.observe(micActive: true)
+        gate.begin(micActiveAtJoin: true, previousCallMayHoldMic: true, now: now)
+        gate.observe(micActive: true, now: now.addingTimeInterval(5))
         XCTAssertFalse(gate.isArmed)
         // A hangs up: mic drops. Still not B's call.
-        gate.observe(micActive: false)
+        gate.observe(micActive: false, now: now.addingTimeInterval(10))
         XCTAssertFalse(gate.isArmed)
         // B's call picks up the mic: now armed.
-        gate.observe(micActive: true)
+        gate.observe(micActive: true, now: now.addingTimeInterval(15))
         XCTAssertTrue(gate.isArmed)
+    }
+
+    func testAlreadyInThisCallAtJoinArmsWhenNoOtherMeetingCouldHoldMic() {
+        // Clicking Join on the in-call alert while already in this meeting's
+        // call (true, true, false): the hang-up must still end the meeting.
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: true, previousCallMayHoldMic: false, now: now)
+        gate.observe(micActive: true, now: now.addingTimeInterval(5))
+        XCTAssertTrue(gate.isArmed)
+        gate.observe(micActive: false, now: now.addingTimeInterval(10))
+        XCTAssertTrue(gate.isArmed)
+    }
+
+    func testSeamlessCallSwitchArmsAfterContinuousActivity() {
+        // Teams hold→join with no quiet poll: mic stays hot from A into B.
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: true, previousCallMayHoldMic: true, now: now)
+        gate.observe(micActive: true, now: now.addingTimeInterval(60))
+        XCTAssertFalse(gate.isArmed)
+        gate.observe(micActive: true, now: now.addingTimeInterval(CallEndGate.continuousActiveArmAfter))
+        XCTAssertTrue(gate.isArmed)
+    }
+
+    func testQuietResetsContinuousActivityClock() {
+        var gate = CallEndGate()
+        gate.begin(micActiveAtJoin: true, previousCallMayHoldMic: true, now: now)
+        gate.observe(micActive: false, now: now.addingTimeInterval(5))   // A hung up
+        gate.observe(micActive: false,
+                     now: now.addingTimeInterval(CallEndGate.continuousActiveArmAfter + 5))
+        XCTAssertFalse(gate.isArmed)
     }
 
     func testGateStaysArmedOnceArmed() {
         var gate = CallEndGate()
-        gate.begin(micActiveAtJoin: false)
-        gate.observe(micActive: true)
-        gate.observe(micActive: false)
+        gate.begin(micActiveAtJoin: false, previousCallMayHoldMic: true, now: now)
+        gate.observe(micActive: true, now: now)
+        gate.observe(micActive: false, now: now.addingTimeInterval(5))
         XCTAssertTrue(gate.isArmed)
     }
 
     func testBeginResetsGate() {
         var gate = CallEndGate()
-        gate.begin(micActiveAtJoin: false)
-        gate.observe(micActive: true)
-        gate.begin(micActiveAtJoin: true)
+        gate.begin(micActiveAtJoin: false, previousCallMayHoldMic: true, now: now)
+        gate.observe(micActive: true, now: now)
+        gate.begin(micActiveAtJoin: true, previousCallMayHoldMic: true, now: now)
         XCTAssertFalse(gate.isArmed)
+    }
+
+    // MARK: - otherMeetingMayHoldMic
+
+    func testOtherMeetingInProgressMayHoldMic() {
+        let a = event("a", start: now.addingTimeInterval(-1500), minutes: 30)
+        let b = event("b", start: now.addingTimeInterval(-60))
+        XCTAssertTrue(MeetingMonitorLogic.otherMeetingMayHoldMic(joining: b, in: [a, b], now: now))
+    }
+
+    func testRecentlyEndedMeetingMayStillHoldMic() {
+        // A ended 5 min ago on the calendar but may be overrunning.
+        let a = event("a", start: now.addingTimeInterval(-2100), minutes: 30)
+        let b = event("b", start: now.addingTimeInterval(-300))
+        XCTAssertTrue(MeetingMonitorLogic.otherMeetingMayHoldMic(joining: b, in: [a, b], now: now))
+    }
+
+    func testNoOtherMeetingMeansHotMicIsThisCall() {
+        let old = event("old", start: now.addingTimeInterval(-7200), minutes: 30)
+        let b = event("b", start: now.addingTimeInterval(-600))
+        let later = event("later", start: now.addingTimeInterval(1800))
+        XCTAssertFalse(MeetingMonitorLogic.otherMeetingMayHoldMic(joining: b, in: [old, b, later], now: now))
     }
 }

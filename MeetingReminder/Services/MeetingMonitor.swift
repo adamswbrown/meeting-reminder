@@ -273,7 +273,13 @@ final class MeetingMonitor: ObservableObject {
         // Track that this meeting is now in progress (user joined)
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
-        callEndGate.begin(micActiveAtJoin: audioWasActive)
+        let joinedAt = Date()
+        callEndGate.begin(
+            micActiveAtJoin: audioWasActive,
+            previousCallMayHoldMic: MeetingMonitorLogic.otherMeetingMayHoldMic(
+                joining: event, in: calendarService.events, now: joinedAt),
+            now: joinedAt
+        )
         audioInactiveSince = nil  // reset debounce for fresh meeting
         MeetingLauncher.open(url)
         dismiss()
@@ -291,7 +297,13 @@ final class MeetingMonitor: ObservableObject {
         shownEventIDs.insert(event.id)
         currentMeetingInProgress = event
         audioWasActive = isAudioInputActive()
-        callEndGate.begin(micActiveAtJoin: audioWasActive)
+        let joinedAt = Date()
+        callEndGate.begin(
+            micActiveAtJoin: audioWasActive,
+            previousCallMayHoldMic: MeetingMonitorLogic.otherMeetingMayHoldMic(
+                joining: event, in: calendarService.events, now: joinedAt),
+            now: joinedAt
+        )
         audioInactiveSince = nil
         if let url = event.videoLink {
             MeetingLauncher.open(url)
@@ -334,7 +346,7 @@ final class MeetingMonitor: ObservableObject {
         audioWasActive = isAudioInputActive()
         // An ad-hoc meeting is usually started for the call already on the
         // mic, so that audio counts as this meeting's own — arm on it.
-        callEndGate.begin(micActiveAtJoin: false)
+        callEndGate.begin(micActiveAtJoin: false, previousCallMayHoldMic: false, now: now)
         audioInactiveSince = nil
         return event
     }
@@ -702,7 +714,7 @@ final class MeetingMonitor: ObservableObject {
 
         // Back-to-back guard: the previous call's mic going quiet must not end
         // the meeting just joined. Ignore audio until this call is observed.
-        callEndGate.observe(micActive: audioActive)
+        callEndGate.observe(micActive: audioActive, now: Date())
         guard callEndGate.isArmed else {
             audioInactiveSince = nil
             audioWasActive = audioActive
@@ -870,6 +882,19 @@ enum MeetingMonitorLogic {
     /// How long after a meeting's start an expired snooze still re-fires the overlay.
     static let snoozeRefireWindow: TimeInterval = 600
 
+    /// How long after its calendar end a meeting's call may still be running
+    /// (overrun) and so still own a hot mic.
+    static let overrunAllowance: TimeInterval = 900
+
+    /// Whether a meeting other than `joining` could own a mic that is hot at
+    /// join: one that has started and is in progress, or ended within
+    /// `overrunAllowance`. False means a hot mic is `joining`'s own call.
+    static func otherMeetingMayHoldMic(joining: MeetingEvent, in events: [MeetingEvent], now: Date) -> Bool {
+        events.contains {
+            $0.id != joining.id && $0.startDate <= now && $0.endDate > now.addingTimeInterval(-overrunAllowance)
+        }
+    }
+
     /// Whether to keep a snooze entry in the per-tick cleanup. Active snoozes
     /// stay. An expired one stays only while its meeting has started and is
     /// inside the re-fire window — that's the entry the re-fire branch in
@@ -885,23 +910,44 @@ enum MeetingMonitorLogic {
 /// Decides when the audio-silence and video-app-quit signals may end the
 /// current meeting. Joining a back-to-back meeting while the previous call
 /// still holds the mic used to hand that call's hang-up (or app quit) to the
-/// new meeting and end it early. If the mic was hot at join time, the gate
-/// waits for it to go quiet and come back — this meeting's own call — before
-/// arming. Joined from idle, the first mic activity arms it. Unarmed, the
-/// meeting still ends by calendar end time or "Done with meeting".
+/// new meeting and end it early.
+///
+/// - Joined from idle: the first mic activity arms it.
+/// - Mic hot at join, but no other meeting could own it
+///   (`previousCallMayHoldMic == false`): the hot mic is this meeting's own
+///   call (e.g. Join clicked on the in-call alert), so it arms at once.
+/// - Mic hot at join and another meeting could own it: waits for the mic to
+///   go quiet and come back (this meeting's call), or for the mic to stay hot
+///   continuously for `continuousActiveArmAfter` (a seamless call switch,
+///   e.g. Teams hold→join, that the 5s poll never sees as quiet).
+///
+/// Residual, accepted: in the last case, if the call being joined was already
+/// live and hangs up before `continuousActiveArmAfter`, that hang-up reads as
+/// the previous call ending and the meeting falls back to its calendar end
+/// time (or "Done with meeting").
 struct CallEndGate {
+    static let continuousActiveArmAfter: TimeInterval = 600
+
     private(set) var isArmed = false
     private var waitingForPreviousCallToEnd = false
+    private var continuouslyActiveSince: Date?
 
-    mutating func begin(micActiveAtJoin: Bool) {
-        isArmed = false
-        waitingForPreviousCallToEnd = micActiveAtJoin
+    mutating func begin(micActiveAtJoin: Bool, previousCallMayHoldMic: Bool, now: Date) {
+        isArmed = micActiveAtJoin && !previousCallMayHoldMic
+        waitingForPreviousCallToEnd = micActiveAtJoin && previousCallMayHoldMic
+        continuouslyActiveSince = waitingForPreviousCallToEnd ? now : nil
     }
 
-    mutating func observe(micActive: Bool) {
+    mutating func observe(micActive: Bool, now: Date) {
         guard !isArmed else { return }
         if waitingForPreviousCallToEnd {
-            if !micActive { waitingForPreviousCallToEnd = false }
+            if !micActive {
+                waitingForPreviousCallToEnd = false
+                continuouslyActiveSince = nil
+            } else if let since = continuouslyActiveSince,
+                      now.timeIntervalSince(since) >= Self.continuousActiveArmAfter {
+                isArmed = true
+            }
         } else if micActive {
             isArmed = true
         }
