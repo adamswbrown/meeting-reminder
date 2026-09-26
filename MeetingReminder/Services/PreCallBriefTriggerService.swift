@@ -938,10 +938,13 @@ final class PreCallBriefTriggerService: ObservableObject {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         if let data = line.data(using: .utf8) {
+            // Throwing APIs only: the legacy seekToEndOfFile()/write(_:) raise an
+            // Objective-C exception on an I/O error (disk full, file yanked), which
+            // Swift can't catch and which crashes the app.
             if let handle = try? FileHandle(forWritingTo: logURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
             } else {
                 try? data.write(to: logURL)
             }
