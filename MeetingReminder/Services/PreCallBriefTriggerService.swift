@@ -156,11 +156,7 @@ enum IntradayDiffClassifier {
         var reschedules: [IntradayCalendarDiff.Reschedule] = []
         var cancellations: [MeetingEvent] = []
         for r in removed {
-            // A move = same title, different start. Same title + same start isn't a
-            // move (ambiguous duplicate) — leave both as separate signals.
-            if let idx = remainingAdded.firstIndex(where: {
-                normalizedTitle($0.title) == normalizedTitle(r.title) && $0.startDate != r.startDate
-            }) {
+            if let idx = remainingAdded.firstIndex(where: { isLikelyMove(removed: r, added: $0) }) {
                 reschedules.append(.init(old: r, new: remainingAdded.remove(at: idx)))
             } else {
                 cancellations.append(r)
@@ -169,6 +165,24 @@ enum IntradayDiffClassifier {
         return IntradayCalendarDiff(newMeetings: remainingAdded,
                                     reschedules: reschedules,
                                     cancellations: cancellations)
+    }
+
+    /// A move = same title, different start, AND the same iCal UID when both sides
+    /// carry one. Title alone isn't enough: two unrelated "Catch-up"s would otherwise
+    /// pair, eating the new meeting's brief. Same title + same start isn't a move
+    /// (ambiguous duplicate) — leave both as separate signals.
+    static func isLikelyMove(removed r: MeetingEvent, added a: MeetingEvent) -> Bool {
+        guard normalizedTitle(a.title) == normalizedTitle(r.title), a.startDate != r.startDate else { return false }
+        guard let ru = seriesUID(r), let au = seriesUID(a) else { return true }   // no UID → title-only fallback
+        return ru == au
+    }
+
+    /// External UID with any detached-occurrence `/RID=<n>` suffix stripped, so an
+    /// edited recurring instance still matches its series. nil when EventKit gave none.
+    static func seriesUID(_ e: MeetingEvent) -> String? {
+        guard let ext = e.externalID, !ext.isEmpty else { return nil }
+        if let r = ext.range(of: "/RID=") { return String(ext[..<r.lowerBound]) }
+        return ext
     }
 
     /// Case/whitespace-insensitive title key used to pair a move's two halves.
@@ -424,12 +438,12 @@ final class PreCallBriefTriggerService: ObservableObject {
         // "cancelled" and a "new meeting" alert (user wants one "moved" post).
         let diff = IntradayDiffClassifier.classify(added: added, removed: removed)
 
-        // New meetings → brief queue. Also drop any new meeting whose title matches a
-        // still-pending removal at a different time (a reschedule split across emissions):
-        // the removal job will report the move, so don't also brief the new occurrence.
-        let removalTitles = Set(pendingRemovals.map { IntradayDiffClassifier.normalizedTitle($0.meeting.title) })
-        let freshBriefs = diff.newMeetings.filter {
-            !removalTitles.contains(IntradayDiffClassifier.normalizedTitle($0.title))
+        // New meetings → brief queue. Also drop any new meeting that is the other half
+        // of a still-pending removal (a reschedule split across emissions — same title
+        // and UID, different time): the removal job will report the move, so don't also
+        // brief the new occurrence.
+        let freshBriefs = diff.newMeetings.filter { added in
+            !pendingRemovals.contains { IntradayDiffClassifier.isLikelyMove(removed: $0.meeting, added: added) }
         }
         pending.append(contentsOf: freshBriefs)
         pending.sort { $0.startDate < $1.startDate }
