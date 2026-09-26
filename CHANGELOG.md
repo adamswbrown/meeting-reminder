@@ -5,6 +5,36 @@ All notable changes to Meeting Reminder will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Bug sweep (2026-09-26, PRs #40–#46).** A multi-agent audit found 32 defects; all were
+  fixed test-first where the logic is pure and each branch was adversarially reviewed.
+  Plan and per-item detail: `docs/plans/2026-09-26-bug-sweep-plan.md`.
+  - **Calendar → Notion sync:** unticking a calendar (or an empty fetch) no longer marks
+    every meeting on it Cancelled — the orphan sweep only judges calendars that returned
+    events, and reactive runs skip it. A revived meeting clears its brief's `Cancelled`
+    outcome. A skip rule on a recurring meeting no longer cancels the series row. Page
+    creates aren't blindly retried after a timeout (no more duplicates). 429s honour
+    `Retry-After`. Edits made during a sync get a follow-up run instead of being dropped.
+    The detached-occurrence probe now uses a lookup that actually resolves `/RID=` IDs.
+  - **Meeting monitor:** Teams `/meet/`, `teams.live.com` and SafeLinks-wrapped links are
+    detected. End detection uses the live calendar copy (an extended meeting isn't ended
+    early) and ignores the previous back-to-back call's hang-up or app quit. Snooze no longer
+    replays the banner and chime; the expired-snooze re-fire works. Screen dimming no longer
+    re-dims after Dismiss or ratchets brightness down. The break overlay no longer points at
+    an overlapping or finished meeting.
+  - **Intraday briefs:** a held output pipe can no longer wedge the queue until relaunch.
+    Changing the calendar filter no longer floods Slack with false cancelled/new posts. A
+    meeting cancelled while its brief is queued isn't briefed. Moves pair by iCal UID, not
+    title. Automatic brief matches aren't cached forever.
+  - **Notion notes:** joining a meeting reuses its existing note instead of creating a
+    duplicate, and no longer unlinks the real note from the Calendar Events row. The
+    Cal.com bridge, join and brief panel share one dedupe key.
+  - **Booking / Cal.com / availability:** saving a Cal.com key stops the legacy booking poll
+    and starts Cal.com sync without a relaunch. A recoverable `invalid_grant` (consent/MFA)
+    no longer deletes the Graph refresh token. Cal.com bookings are paginated. Late or
+    renamed Exchange copies are reconciled instead of duplicated. Free events aren't pushed
+    as busy, and the stale-row delete stays under URL length limits.
+- **Brief panel could not be dragged** (#46).
+
 - **Two copies of the app could run at once, doubling every automation.** Nothing stopped a
   second instance launching — a dev build started from DerivedData or Xcode, or a deploy
   whose `killall` raced its own `open`. A second copy is not inert: it runs a *complete*

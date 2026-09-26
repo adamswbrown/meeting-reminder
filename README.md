@@ -25,10 +25,10 @@
 Calendar notifications are easy to miss when you are focused. Meeting Reminder gives you a clearer sense of time and makes the transition into your next call harder to ignore.
 
 - **See what is next without clicking** — a live countdown stays in the menu bar and becomes more urgent as the meeting approaches.
-- **Get reminders that build gradually** — start with a quiet colour change, then a notification, sound, and finally a full-screen overlay.
+- **Get reminders that build gradually** — start with a quiet colour change, then a notification, sound, and finally a full-screen overlay. Snoozing won't replay alerts you've already had.
 - **Join in one click** — meeting links are detected automatically in event URLs, notes, and locations.
 - **Stay focused without being surprised** — wrap-up nudges, short snoozes, and an optional pre-meeting checklist give you time to switch context.
-- **Avoid disrupting a call already in progress** — when your microphone is active, Meeting Reminder can use a compact, screen-share-safe alert instead of the full-screen overlay.
+- **Avoid disrupting a call already in progress** — when your microphone is active, Meeting Reminder can use a compact, screen-share-safe alert instead of the full-screen overlay. A meeting is only marked finished when its own call ends, so hanging up the previous call or an organiser extending the meeting won't cut it short.
 - **Keep the core experience private** — calendars are read through macOS and reminder data stays on your Mac. There are no analytics or tracking.
 
 ## Made for time blindness
@@ -45,7 +45,7 @@ You can tailor the interruption to suit how you work:
 - Dim the screen gradually or show a non-blocking context-switch prompt.
 - Get a break reminder between back-to-back meetings.
 
-Meeting Reminder works with calendars synced to macOS, including iCloud, Google, and Exchange. It detects links for Zoom, Google Meet, Microsoft Teams, Webex, and Slack Huddles.
+Meeting Reminder works with calendars synced to macOS, including iCloud, Google, and Exchange. It detects links for Zoom, Google Meet, Microsoft Teams (including `teams.microsoft.com/meet`, `teams.live.com`, and Outlook SafeLinks-wrapped invites), Webex, and Slack Huddles.
 
 ## Optional integrations
 
@@ -55,7 +55,7 @@ The reminder app works without any external services. If you want to extend it, 
 |---|---|---|
 | Notion | Create a meeting page when you join and sync selected calendar events | [Notion setup](docs/NOTION-SETUP.md) |
 | Pre-call briefings | Generate briefings for newly added meetings using local command-line tools | [Briefing setup](docs/INTRADAY-BRIEFINGS.md) |
-| Availability page | Publish a sanitised free/busy view without exposing event titles or attendees | [Availability setup](docs/AVAILABILITY-PAGE.md) |
+| Availability page | Publish a sanitised free/busy view without exposing event titles or attendees. Events marked Free are not shown as busy | [Availability setup](docs/AVAILABILITY-PAGE.md) |
 | Busy light | Drive a HomeKit accessory—or another automation—with Apple Shortcuts | [Busy light setup](docs/BUSY-LIGHT.md) |
 | Cal.com | Sync bookings and meeting links into the local calendar workflow | [Booking setup](docs/BOOKING.md) |
 
@@ -77,7 +77,11 @@ cd meeting-reminder
 open MeetingReminder.xcodeproj
 ```
 
-Press **Cmd+R** in Xcode to build and run.
+Press **Cmd+R** in Xcode to build and run. Run the test suite with **Cmd+U**, or from the command line:
+
+```bash
+xcodebuild -project MeetingReminder.xcodeproj -scheme MeetingReminder -destination 'platform=macOS' test
+```
 
 ## Credits
 
