@@ -4,6 +4,8 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-09-26
+
 ### Fixed
 - **Bug sweep (2026-09-26, PRs #40–#46).** A multi-agent audit found 32 defects; all were
   fixed test-first where the logic is pure and each branch was adversarially reviewed.
