@@ -264,36 +264,44 @@ final class AvailabilityPushService: ObservableObject {
         // cancelled while already in progress (start < now < end) is also removed —
         // it would otherwise stay "busy" on the public page until its end time.
         //
-        // PostgREST filter syntax: not.in.(id1,id2,...). If the keep-set is empty we
-        // still want to clear the window; PostgREST rejects an empty `in.()` list, so
-        // skip the not-in clause in that case.
+        // The stale set is computed locally (read the window's ids, subtract the
+        // snapshot) and deleted with chunked `in.(...)` filters. A single
+        // `not.in.(<every id in the snapshot>)` grew with the calendar and blew
+        // past URL length limits (HTTP 414) on a busy window.
         //
         // All filter values are set via URLComponents.queryItems so they are
         // percent-encoded properly rather than being string-interpolated into the URL.
         let base = projectURL.hasSuffix("/") ? String(projectURL.dropLast()) : projectURL
-        guard var components = URLComponents(string: base + "/rest/v1/calendar_events") else {
-            throw AvailabilityPushError.invalidURL(base + "/rest/v1/calendar_events")
+        let tableURL = base + "/rest/v1/calendar_events"
+        guard var listComponents = URLComponents(string: tableURL) else {
+            throw AvailabilityPushError.invalidURL(tableURL)
         }
-
-        var items: [URLQueryItem] = [
+        listComponents.queryItems = [
+            URLQueryItem(name: "select", value: "event_id"),
             URLQueryItem(name: "end_utc", value: "gte.\(nowISO)"),
             URLQueryItem(name: "end_utc", value: "lt.\(endISO)"),
         ]
-        if !eventIDs.isEmpty {
-            // PostgREST requires comma-separated, quoted strings inside `in.(...)`.
-            // Quote each id and escape internal quotes by doubling them.
-            let quoted = eventIDs.map { id -> String in
-                let escaped = id.replacingOccurrences(of: "\"", with: "\"\"")
-                return "\"\(escaped)\""
-            }.joined(separator: ",")
-            items.append(URLQueryItem(name: "event_id", value: "not.in.(\(quoted))"))
+        guard let listURL = listComponents.url else {
+            throw AvailabilityPushError.invalidURL(tableURL)
         }
-        components.queryItems = items
-        guard let staleURL = components.url else {
-            throw AvailabilityPushError.invalidURL(base + "/rest/v1/calendar_events")
+        let listData = try await sendForData(try authedRequest(url: listURL, method: "GET"))
+        guard let rows = (try? JSONSerialization.jsonObject(with: listData)) as? [[String: Any]] else {
+            throw AvailabilityPushError.invalidResponse
         }
-        let staleRequest = try authedRequest(url: staleURL, method: "DELETE")
-        try await send(staleRequest)
+        let stale = rows
+            .compactMap { $0["event_id"] as? String }
+            .filter { !eventIDs.contains($0) }
+
+        for filter in Self.inFilterChunks(stale) {
+            guard var components = URLComponents(string: tableURL) else {
+                throw AvailabilityPushError.invalidURL(tableURL)
+            }
+            components.queryItems = [URLQueryItem(name: "event_id", value: filter)]
+            guard let staleURL = components.url else {
+                throw AvailabilityPushError.invalidURL(tableURL)
+            }
+            try await send(try authedRequest(url: staleURL, method: "DELETE"))
+        }
 
         // Step 2: Clean up rows from past pushes whose end time has now passed.
         // These accumulate if the service is left running for days; clearing them
@@ -350,7 +358,23 @@ final class AvailabilityPushService: ObservableObject {
         return request
     }
 
+    /// PostgREST `in.(...)` filters over `ids`, at most `chunkSize` per filter
+    /// so each DELETE URL stays well under server URL limits. Values are
+    /// double-quoted with internal quotes doubled, as PostgREST requires.
+    nonisolated static func inFilterChunks(_ ids: [String], chunkSize: Int = 40) -> [String] {
+        stride(from: 0, to: ids.count, by: chunkSize).map { start in
+            let quoted = ids[start..<min(start + chunkSize, ids.count)].map { id -> String in
+                "\"\(id.replacingOccurrences(of: "\"", with: "\"\""))\""
+            }
+            return "in.(\(quoted.joined(separator: ",")))"
+        }
+    }
+
     private func send(_ request: URLRequest) async throws {
+        _ = try await sendForData(request)
+    }
+
+    private func sendForData(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw AvailabilityPushError.invalidResponse
@@ -359,6 +383,7 @@ final class AvailabilityPushService: ObservableObject {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw AvailabilityPushError.httpError(http.statusCode, body)
         }
+        return data
     }
 }
 

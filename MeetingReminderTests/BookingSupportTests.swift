@@ -396,4 +396,18 @@ final class BookingSweepTests: XCTestCase {
         // Annual leave marked Free in Outlook still drives the "away" banner.
         XCTAssertTrue(PushEvent.shouldPush(isFree: true, isOOO: true))
     }
+
+    func testAvailabilityInFilterChunksBoundsEachFilter() {
+        let ids = (0..<95).map { "EVT-\($0)_2026-09-26T10:00:00Z" }
+        let chunks = AvailabilityPushService.inFilterChunks(ids, chunkSize: 40)
+        XCTAssertEqual(chunks.count, 3)
+        XCTAssertTrue(chunks[0].hasPrefix("in.(\"EVT-0_"))
+        XCTAssertEqual(chunks[2].components(separatedBy: ",").count, 15)
+        XCTAssertTrue(chunks.allSatisfy { $0.count < 4000 })
+    }
+
+    func testAvailabilityInFilterChunksQuotesAndHandlesEmpty() {
+        XCTAssertEqual(AvailabilityPushService.inFilterChunks([]), [])
+        XCTAssertEqual(AvailabilityPushService.inFilterChunks(["a\"b", "c"]), ["in.(\"a\"\"b\",\"c\")"])
+    }
 }
