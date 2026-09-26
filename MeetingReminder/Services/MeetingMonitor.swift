@@ -454,8 +454,16 @@ final class MeetingMonitor: ObservableObject {
             lastCleanupDate = now
         }
 
-        // Clean up expired snoozes
-        snoozedEvents = snoozedEvents.filter { $0.value > now }
+        // Clean up expired snoozes — but keep one whose meeting has just
+        // started, or the expired-snooze re-fire below could never see it.
+        snoozedEvents = snoozedEvents.filter { id, until in
+            let event = calendarService.events.first(where: { $0.id == id })
+            return MeetingMonitorLogic.shouldKeepSnooze(
+                until: until,
+                timeUntilStart: event.map { $0.startDate.timeIntervalSince(now) },
+                now: now
+            )
+        }
 
         // Check for meetings that just ended (calendar-based fallback)
         checkMeetingEnded()
@@ -522,7 +530,7 @@ final class MeetingMonitor: ObservableObject {
             // expired snooze entry still exists for a recently-started, not-yet-
             // joined/ended meeting, re-fire regardless of the normal windows.
             if let snoozeUntil = snoozedEvents[event.id], snoozeUntil <= now,
-               timeUntil <= 0 && timeUntil > -600,
+               timeUntil <= 0 && timeUntil > -MeetingMonitorLogic.snoozeRefireWindow,
                currentMeetingInProgress?.id != event.id,
                !shownEventIDs.contains(event.id) {
                 snoozedEvents[event.id] = nil
@@ -846,6 +854,20 @@ enum MeetingMonitorLogic {
     /// expired. Only the last-chance re-fire is released again.
     static func tiersAfterSnooze(_ fired: Set<Int>?) -> Set<Int>? {
         fired?.subtracting([AlertTier.lastChance.rawValue])
+    }
+
+    /// How long after a meeting's start an expired snooze still re-fires the overlay.
+    static let snoozeRefireWindow: TimeInterval = 600
+
+    /// Whether to keep a snooze entry in the per-tick cleanup. Active snoozes
+    /// stay. An expired one stays only while its meeting has started and is
+    /// inside the re-fire window — that's the entry the re-fire branch in
+    /// `checkUpcomingMeetings` consumes. Everything else is dropped.
+    /// `timeUntilStart` is nil when the event is no longer in the calendar.
+    static func shouldKeepSnooze(until: Date, timeUntilStart: TimeInterval?, now: Date) -> Bool {
+        if until > now { return true }
+        guard let timeUntilStart else { return false }
+        return timeUntilStart <= 0 && timeUntilStart > -snoozeRefireWindow
     }
 }
 

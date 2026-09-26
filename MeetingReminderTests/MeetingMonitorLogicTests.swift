@@ -51,6 +51,41 @@ final class MeetingMonitorLogicTests: XCTestCase {
         XCTAssertNil(MeetingMonitorLogic.tiersAfterSnooze(nil))
     }
 
+    // MARK: - shouldKeepSnooze — expired-snooze re-fire
+
+    private let now = Date()
+
+    func testActiveSnoozeKept() {
+        XCTAssertTrue(MeetingMonitorLogic.shouldKeepSnooze(
+            until: now.addingTimeInterval(30), timeUntilStart: 60, now: now))
+    }
+
+    func testExpiredSnoozeKeptForRecentlyStartedMeeting() {
+        // Snooze ran out after the meeting slipped past the -60s window —
+        // the entry must survive so the re-fire branch can bring the overlay back.
+        XCTAssertTrue(MeetingMonitorLogic.shouldKeepSnooze(
+            until: now.addingTimeInterval(-5), timeUntilStart: -120, now: now))
+    }
+
+    func testExpiredSnoozeDroppedForFutureMeeting() {
+        // The normal pre-meeting window handles it; a lingering entry would
+        // block the catch-up and last-chance paths.
+        XCTAssertFalse(MeetingMonitorLogic.shouldKeepSnooze(
+            until: now.addingTimeInterval(-5), timeUntilStart: 120, now: now))
+    }
+
+    func testExpiredSnoozeDroppedPastRefireWindow() {
+        XCTAssertFalse(MeetingMonitorLogic.shouldKeepSnooze(
+            until: now.addingTimeInterval(-5),
+            timeUntilStart: -(MeetingMonitorLogic.snoozeRefireWindow + 1),
+            now: now))
+    }
+
+    func testExpiredSnoozeDroppedWhenEventGone() {
+        XCTAssertFalse(MeetingMonitorLogic.shouldKeepSnooze(
+            until: now.addingTimeInterval(-5), timeUntilStart: nil, now: now))
+    }
+
     // MARK: - CallEndGate — back-to-back meetings
 
     func testGateNotArmedAtJoin() {
