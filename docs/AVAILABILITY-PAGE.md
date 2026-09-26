@@ -100,11 +100,15 @@ stays in macOS Keychain and never reaches the browser.
 
 **Behaviour notes:**
 - Honours the `enabledCalendarIDs` calendar filter; drops events you've
-  **declined**; keeps tentative (flagged `is_tentative`).
+  **declined**; keeps tentative (flagged `is_tentative`). Drops events marked
+  **Free** in Outlook (they don't block time) — except OOO, which Outlook often
+  marks Free and the page's "away" banner needs.
 - Includes **all-day** events (so OOO blocks count as busy) — unlike the
   meeting-overlay path, which filters them out.
 - Each push **deletes** any rows in the window that are no longer in the
-  EventKit snapshot, so cancellations/reschedules disappear from the page.
+  EventKit snapshot, so cancellations/reschedules disappear from the page. The
+  stale IDs are found by listing the window and deleted in batches, so a busy
+  fortnight can't overflow the request URL.
 - Push only runs **while the Mac is awake**; the `sync_state` heartbeat lets the
   frontend show a staleness pill.
 
