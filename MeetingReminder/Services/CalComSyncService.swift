@@ -22,6 +22,8 @@ final class CalComSyncService: ObservableObject {
     private static let enabledKey = "calComSyncEnabled"
     private static let lastSyncKey = "calComLastSyncedAt"
     static let syncInterval: TimeInterval = 5 * 60
+    /// Notes marker for events this service created itself (vs. tagged Exchange copies).
+    private static let createdMarker = "[calcom-created]"
 
     /// How long to wait before creating a local event for a new booking, giving
     /// Cal.com's Exchange integration time to sync the event down on its own.
@@ -139,12 +141,28 @@ final class CalComSyncService: ObservableObject {
         let marker = "[calcom-booking-id:\(booking.uid)]"
 
         // Already tagged (idempotency — covers both app-created and Exchange-tagged events).
-        if findTaggedEvent(marker: marker, near: start) != nil { return .skipped }
+        if let tagged = findTaggedEvent(marker: marker, near: start) {
+            // Reconciliation: we created our own copy after the grace period, but
+            // the Exchange copy has since arrived (late sync). Move the tag onto
+            // the Exchange event and delete ours so the meeting isn't doubled.
+            if tagged.notes?.contains(Self.createdMarker) == true,
+               let exchange = findExchangeEvent(matching: booking, near: start) {
+                appendMarker(marker, to: exchange)
+                do {
+                    try eventStore.remove(tagged, span: .thisEvent, commit: true)
+                    NSLog("[CalComSync] \(booking.uid): Exchange copy arrived — removed app-created duplicate")
+                } catch {
+                    NSLog("[CalComSync] \(booking.uid): duplicate removal failed: \(error.localizedDescription)")
+                }
+                return .tagged
+            }
+            return .skipped
+        }
 
         // Cal.com's Office365 integration already created an Exchange calendar event.
-        // If we find one at the same time with a matching title, tag it instead of
-        // creating a duplicate.
-        if let existing = findExchangeEvent(matching: booking.title ?? "", near: start) {
+        // If we find one at the same time with a matching title (or shared attendee),
+        // tag it instead of creating a duplicate.
+        if let existing = findExchangeEvent(matching: booking, near: start) {
             appendMarker(marker, to: existing)
             firstSeenUids.removeValue(forKey: booking.uid) // no longer needed
             return .tagged
@@ -172,13 +190,12 @@ final class CalComSyncService: ObservableObject {
         let attendeeLine = booking.attendees?.map { "\($0.name) <\($0.email)>" }.joined(separator: ", ") ?? ""
         // [calcom-created] marks this event as app-created (not an Exchange duplicate),
         // so cancellation can safely remove it rather than just stripping the tag.
-        let createdMarker = "[calcom-created]"
         let notes = [
             "Booked via Cal.com.",
             attendeeLine.isEmpty ? nil : "Attendee: \(attendeeLine)",
             booking.location.map { "Location: \($0)" },
             marker,
-            createdMarker,
+            Self.createdMarker,
         ].compactMap { $0 }.joined(separator: "\n")
 
         guard let calendar = eventStore.defaultCalendarForNewEvents else { return .skipped }
@@ -222,7 +239,7 @@ final class CalComSyncService: ObservableObject {
                 // only tagged, strip the booking marker from the notes instead —
                 // Exchange will remove the event on its own once Cal.com propagates
                 // the cancellation server-side.
-                let isAppCreated = event.notes?.contains("[calcom-created]") ?? false
+                let isAppCreated = event.notes?.contains(Self.createdMarker) ?? false
                 if isAppCreated {
                     try? eventStore.remove(event, span: .thisEvent, commit: true)
                 } else {
@@ -248,35 +265,56 @@ final class CalComSyncService: ObservableObject {
 
     // MARK: - EventKit helpers
 
-    /// Finds an EKEvent near `date` whose title closely matches `title`.
-    /// Uses a ±15 min window to absorb minor Exchange sync timing drift.
-    ///
-    /// Matching rules (case-insensitive, trimmed):
-    ///   • Exact match, OR
-    ///   • The longer title has the shorter one as a prefix AND the shorter is ≥ 4 characters.
-    ///     (This handles Cal.com appending " between X and Y" to the base title without
-    ///      allowing unrelated short titles to match arbitrary event titles.)
+    /// Finds an EKEvent near the booking's start that looks like the Exchange copy
+    /// Cal.com created. Uses a ±15 min window to absorb minor Exchange sync timing drift.
     /// Skips events that are already tagged with a Cal.com booking marker (already claimed).
-    private func findExchangeEvent(matching title: String, near date: Date) -> EKEvent? {
+    private func findExchangeEvent(matching booking: CalComBooking, near date: Date) -> EKEvent? {
         eventStore.refreshSourcesIfNecessary()
         let windowStart = date.addingTimeInterval(-900)
         let windowEnd   = date.addingTimeInterval(900)
         let pred = eventStore.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: nil)
-        let calTitle = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !calTitle.isEmpty else { return nil }
+        let bookingEmails = booking.attendees?.map(\.email) ?? []
         return eventStore.events(matching: pred).first { event in
             // Skip events already tagged by a previous sync pass.
             if let notes = event.notes, notes.contains("[calcom-booking-id:") { return false }
-            guard let ekTitle = event.title?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
-                  !ekTitle.isEmpty else { return false }
-            // Exact match.
-            if ekTitle == calTitle { return true }
-            // Prefix match: the longer must start with the shorter, and the shorter must be
-            // at least 4 characters to prevent "Sync" matching "Sync with the board" etc.
-            let shorter = ekTitle.count < calTitle.count ? ekTitle : calTitle
-            let longer  = ekTitle.count < calTitle.count ? calTitle : ekTitle
-            return shorter.count >= 4 && longer.hasPrefix(shorter)
+            let emails = (event.attendees ?? []).compactMap { p -> String? in
+                guard p.url.scheme == "mailto" else { return nil }
+                return p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
+            }
+            return Self.isLikelyExchangeCopy(ekTitle: event.title, ekAttendeeEmails: emails,
+                                             startOffset: event.startDate.timeIntervalSince(date),
+                                             calTitle: booking.title ?? "", bookingEmails: bookingEmails)
         }
+    }
+
+    /// Matching rules for an Exchange event already in the booking's time window
+    /// (titles case-insensitive, trimmed):
+    ///   • Exact title match, OR
+    ///   • The longer title has the shorter one as a prefix AND the shorter is ≥ 4 characters.
+    ///     (This handles Cal.com appending " between X and Y" to the base title without
+    ///      allowing unrelated short titles to match arbitrary event titles.) OR
+    ///   • The event invites one of the booking's attendees AND starts within 15 min of
+    ///     the booking — covers an Exchange copy whose title was renamed, which would
+    ///     otherwise never match and be duplicated. The start check stops an earlier
+    ///     meeting with the same person that merely overlaps the window from matching.
+    nonisolated static func isLikelyExchangeCopy(ekTitle: String?, ekAttendeeEmails: [String],
+                                                 startOffset: TimeInterval,
+                                                 calTitle: String, bookingEmails: [String]) -> Bool {
+        let booked = Set(bookingEmails.map { $0.lowercased() }.filter { !$0.isEmpty })
+        if abs(startOffset) <= 900,
+           !booked.isDisjoint(with: ekAttendeeEmails.map { $0.lowercased() }) { return true }
+
+        let calTitle = calTitle.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !calTitle.isEmpty,
+              let ekTitle = ekTitle?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
+              !ekTitle.isEmpty else { return false }
+        // Exact match.
+        if ekTitle == calTitle { return true }
+        // Prefix match: the longer must start with the shorter, and the shorter must be
+        // at least 4 characters to prevent "Sync" matching "Sync with the board" etc.
+        let shorter = ekTitle.count < calTitle.count ? ekTitle : calTitle
+        let longer  = ekTitle.count < calTitle.count ? calTitle : ekTitle
+        return shorter.count >= 4 && longer.hasPrefix(shorter)
     }
 
     private func findTaggedEvent(marker: String, near date: Date) -> EKEvent? {

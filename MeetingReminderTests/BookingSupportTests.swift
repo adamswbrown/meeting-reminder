@@ -410,4 +410,31 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertEqual(AvailabilityPushService.inFilterChunks([]), [])
         XCTAssertEqual(AvailabilityPushService.inFilterChunks(["a\"b", "c"]), ["in.(\"a\"\"b\",\"c\")"])
     }
+
+    func testCalComExchangeCopyTitleRules() {
+        func match(_ ek: String?, _ cal: String) -> Bool {
+            CalComSyncService.isLikelyExchangeCopy(ekTitle: ek, ekAttendeeEmails: [], startOffset: 0,
+                                                   calTitle: cal, bookingEmails: [])
+        }
+        XCTAssertTrue(match("Advisory", "advisory "))
+        XCTAssertTrue(match("Advisory between Adam and Sam", "Advisory"))
+        XCTAssertFalse(match("Syn", "Sync with the board"))
+        XCTAssertFalse(match("Lunch", "Advisory"))
+        XCTAssertFalse(match(nil, "Advisory"))
+    }
+
+    func testCalComExchangeCopyMatchesRenamedEventByAttendee() {
+        // Exchange copy renamed so the title no longer matches — the shared
+        // attendee still identifies it, so no duplicate is created.
+        XCTAssertTrue(CalComSyncService.isLikelyExchangeCopy(
+            ekTitle: "Catch-up", ekAttendeeEmails: ["Sam@Example.com"], startOffset: 120,
+            calTitle: "Advisory between Adam and Sam", bookingEmails: ["sam@example.com"]))
+        // Same person, but an earlier meeting merely overlapping the window.
+        XCTAssertFalse(CalComSyncService.isLikelyExchangeCopy(
+            ekTitle: "Catch-up", ekAttendeeEmails: ["sam@example.com"], startOffset: -3600,
+            calTitle: "Advisory between Adam and Sam", bookingEmails: ["sam@example.com"]))
+        XCTAssertFalse(CalComSyncService.isLikelyExchangeCopy(
+            ekTitle: "Catch-up", ekAttendeeEmails: ["lee@example.com"], startOffset: 0,
+            calTitle: "Advisory between Adam and Sam", bookingEmails: ["sam@example.com"]))
+    }
 }
