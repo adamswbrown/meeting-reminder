@@ -366,4 +366,27 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: nil, description: nil))
         XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "temporarily_unavailable", errorCodes: [70008], description: nil))
     }
+
+    @MainActor
+    func testCalComPaginateWalksPagesUntilShortPage() async throws {
+        let source = Array(0..<120)
+        var skips: [Int] = []
+        let all = try await CalComService.paginate(take: 50) { skip -> [Int] in
+            skips.append(skip)
+            return Array(source.dropFirst(skip).prefix(50))
+        }
+        XCTAssertEqual(all, source)
+        XCTAssertEqual(skips, [0, 50, 100])
+    }
+
+    @MainActor
+    func testCalComPaginateStopsAtMaxPagesWhenSkipIgnored() async throws {
+        var calls = 0
+        let all = try await CalComService.paginate(take: 2, maxPages: 3) { _ -> [Int] in
+            calls += 1
+            return [1, 2]
+        }
+        XCTAssertEqual(calls, 3)
+        XCTAssertEqual(all.count, 6)
+    }
 }
