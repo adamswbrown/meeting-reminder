@@ -142,4 +142,23 @@ final class IntradayDiffClassifierTests: XCTestCase {
         XCTAssertTrue(r.withdrawnIDs.isEmpty)
         XCTAssertEqual(r.diff.reschedules.count, 1)
     }
+
+    // MARK: Burst guard (C2)
+
+    func testBurstGuardAbsorbsFilterChange() {
+        XCTAssertTrue(IntradayBurstGuard.shouldAbsorb(filterChanged: true, addedCount: 1, removedCount: 0))
+    }
+
+    func testBurstGuardAbsorbsOversizedBurst() {
+        XCTAssertTrue(IntradayBurstGuard.shouldAbsorb(filterChanged: false,
+                                                      addedCount: IntradayBurstGuard.maxChanges,
+                                                      removedCount: 1))
+    }
+
+    func testBurstGuardPassesNormalChange() {
+        XCTAssertFalse(IntradayBurstGuard.shouldAbsorb(filterChanged: false, addedCount: 1, removedCount: 1))
+        XCTAssertFalse(IntradayBurstGuard.shouldAbsorb(filterChanged: false,
+                                                       addedCount: IntradayBurstGuard.maxChanges,
+                                                       removedCount: 0))
+    }
 }

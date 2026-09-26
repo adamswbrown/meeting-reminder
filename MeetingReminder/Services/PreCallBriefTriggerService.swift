@@ -215,6 +215,21 @@ enum IntradayDiffClassifier {
     }
 }
 
+/// Decides when one emission's diff is not real diary activity and must be absorbed
+/// silently. Changing the monitored-calendars filter adds/removes whole calendars at
+/// once, and an account re-sync can do the same — without this every one of those
+/// meetings would fire a brief or a "cancelled" Slack post.
+enum IntradayBurstGuard {
+    /// More appearances + disappearances than this in a single emission is treated as
+    /// a bulk reload, not bookings. Genuine intraday changes arrive one or two at a time.
+    static let maxChanges = 6
+
+    static func shouldAbsorb(filterChanged: Bool, addedCount: Int, removedCount: Int,
+                             cap: Int = maxChanges) -> Bool {
+        filterChanged || addedCount + removedCount > cap
+    }
+}
+
 @MainActor
 final class PreCallBriefTriggerService: ObservableObject {
 
@@ -280,6 +295,7 @@ final class PreCallBriefTriggerService: ObservableObject {
     private var previousUpcoming: [String: MeetingEvent]?
     private var seeded = false               // has the diff basis been established from a real (non-empty) emission?
     private var lastSeenDay: Date?           // start-of-day of the last emission — detects rollover
+    private var lastCalendarFilter: Set<String>?  // `enabledCalendarIDs` at the last emission — detects a filter change
     private var firedIDs: Set<String>       // fast membership test (briefs)
     private var firedOrder: [String]        // insertion order, for bounded FIFO eviction
     private var firedRemovalIDs: Set<String> // fast membership test (removals/reschedules)
@@ -393,6 +409,7 @@ final class PreCallBriefTriggerService: ObservableObject {
         previousUpcoming = nil   // next real emission re-seeds the diff basis (absorb, don't fire)
         seeded = false
         lastSeenDay = nil
+        lastCalendarFilter = nil
         pending.removeAll()
         pendingRemovals.removeAll()
         skillMissingLatched = false
@@ -416,6 +433,12 @@ final class PreCallBriefTriggerService: ObservableObject {
         // Always advance the diff basis (even outside hours) so pre-existing meetings are
         // absorbed and only genuinely-new appearances/disappearances ever fire.
         previousUpcoming = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+
+        // Settings writes the filter then refetches, so the emission that first sees a
+        // new filter is the one carrying the whole-calendar add/remove.
+        let calendarFilter = Set(UserDefaults.standard.stringArray(forKey: "enabledCalendarIDs") ?? [])
+        let filterChanged = lastCalendarFilter != nil && lastCalendarFilter != calendarFilter
+        lastCalendarFilter = calendarFilter
 
         if skillMissingLatched { return }
 
@@ -457,6 +480,14 @@ final class PreCallBriefTriggerService: ObservableObject {
         }
 
         guard !added.isEmpty || !removed.isEmpty else { return }
+
+        // A calendar-filter change or bulk reload isn't diary activity — the basis has
+        // already advanced, so absorbing here just drops this one burst.
+        if IntradayBurstGuard.shouldAbsorb(filterChanged: filterChanged,
+                                           addedCount: added.count, removedCount: removed.count) {
+            log("absorbed \(added.count) new / \(removed.count) removed without firing — \(filterChanged ? "calendar filter changed" : "bulk calendar reload")")
+            return
+        }
 
         // Pair a same-title move into a single reschedule so it doesn't fire both a
         // "cancelled" and a "new meeting" alert (user wants one "moved" post).
