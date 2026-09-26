@@ -107,4 +107,39 @@ final class IntradayDiffClassifierTests: XCTestCase {
         XCTAssertTrue(IntradayDiffClassifier.isLikelyMove(removed: removed,
                                                           added: ev("1:1", "2026-07-30T12:00:00Z")))
     }
+
+    // MARK: Withdrawing never-briefed meetings (C3)
+
+    // A meeting still queued for a brief that vanishes is withdrawn — no brief, and no
+    // "cancelled" notice for a meeting that was never announced.
+    func testCancelledWhileQueuedIsWithdrawn() {
+        let queued = ev("Intro call", "2026-07-30T14:00:00Z", id: "Q")
+        let announced = ev("Board", "2026-07-30T15:00:00Z", id: "B")
+        let diff = IntradayDiffClassifier.classify(added: [], removed: [queued, announced])
+        let r = IntradayDiffClassifier.withdrawUnbriefed(diff, pendingBriefIDs: ["Q"])
+        XCTAssertEqual(r.withdrawnIDs, ["Q"])
+        XCTAssertEqual(r.diff.cancellations.map(\.id), ["B"])
+        XCTAssertTrue(r.diff.newMeetings.isEmpty)
+    }
+
+    // A queued meeting that moves before it was briefed → brief the new time instead;
+    // no "moved" notice.
+    func testRescheduledWhileQueuedBecomesNewBrief() {
+        let queued = ev("Intro call", "2026-07-30T14:00:00Z", id: "Q", uid: "U")
+        let moved = ev("Intro call", "2026-07-30T16:00:00Z", id: "Q2", uid: "U")
+        let diff = IntradayDiffClassifier.classify(added: [moved], removed: [queued])
+        let r = IntradayDiffClassifier.withdrawUnbriefed(diff, pendingBriefIDs: ["Q"])
+        XCTAssertEqual(r.withdrawnIDs, ["Q"])
+        XCTAssertTrue(r.diff.reschedules.isEmpty)
+        XCTAssertEqual(r.diff.newMeetings.map(\.id), ["Q2"])
+    }
+
+    func testWithdrawLeavesAnnouncedMeetingsAlone() {
+        let old = ev("Review", "2026-07-30T14:00:00Z", id: "R", uid: "U")
+        let moved = ev("Review", "2026-07-30T16:00:00Z", id: "R2", uid: "U")
+        let diff = IntradayDiffClassifier.classify(added: [moved], removed: [old])
+        let r = IntradayDiffClassifier.withdrawUnbriefed(diff, pendingBriefIDs: [])
+        XCTAssertTrue(r.withdrawnIDs.isEmpty)
+        XCTAssertEqual(r.diff.reschedules.count, 1)
+    }
 }

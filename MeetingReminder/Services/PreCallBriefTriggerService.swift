@@ -167,6 +167,30 @@ enum IntradayDiffClassifier {
                                     cancellations: cancellations)
     }
 
+    /// Pull out disappearances of meetings that are still queued for a brief (detected
+    /// but never briefed). Nothing was ever announced for them, so a cancellation needs
+    /// neither the brief nor a "cancelled" notice, and a move just needs the brief at
+    /// the new time — its new half becomes a plain new meeting. Returns the withdrawn
+    /// IDs so the caller can drop them from its brief queue.
+    static func withdrawUnbriefed(_ diff: IntradayCalendarDiff,
+                                  pendingBriefIDs: Set<String>) -> (diff: IntradayCalendarDiff, withdrawnIDs: Set<String>) {
+        var out = diff
+        var withdrawn = Set<String>()
+        out.cancellations.removeAll { c in
+            guard pendingBriefIDs.contains(c.id) else { return false }
+            withdrawn.insert(c.id); return true
+        }
+        var rebriefs: [MeetingEvent] = []
+        out.reschedules.removeAll { r in
+            guard pendingBriefIDs.contains(r.old.id) else { return false }
+            withdrawn.insert(r.old.id)
+            rebriefs.append(r.new)
+            return true
+        }
+        out.newMeetings.append(contentsOf: rebriefs)
+        return (out, withdrawn)
+    }
+
     /// A move = same title, different start, AND the same iCal UID when both sides
     /// carry one. Title alone isn't enough: two unrelated "Catch-up"s would otherwise
     /// pair, eating the new meeting's brief. Same title + same start isn't a move
@@ -436,7 +460,15 @@ final class PreCallBriefTriggerService: ObservableObject {
 
         // Pair a same-title move into a single reschedule so it doesn't fire both a
         // "cancelled" and a "new meeting" alert (user wants one "moved" post).
-        let diff = IntradayDiffClassifier.classify(added: added, removed: removed)
+        // A meeting cancelled/moved while still queued for its brief is withdrawn from
+        // the queue rather than briefed and then reported as removed.
+        let (diff, withdrawn) = IntradayDiffClassifier.withdrawUnbriefed(
+            IntradayDiffClassifier.classify(added: added, removed: removed),
+            pendingBriefIDs: Set(pending.map(\.id)))
+        if !withdrawn.isEmpty {
+            pending.removeAll { withdrawn.contains($0.id) }
+            log("withdrew \(withdrawn.count) queued brief(s) — meeting removed/moved before it was briefed")
+        }
 
         // New meetings → brief queue. Also drop any new meeting that is the other half
         // of a still-pending removal (a reschedule split across emissions — same title
