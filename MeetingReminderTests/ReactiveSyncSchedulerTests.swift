@@ -37,3 +37,52 @@ final class ReactiveSyncSchedulerTests: XCTestCase {
                        change.addingTimeInterval(30))
     }
 }
+
+/// Item A5: a calendar edit landing while a sync runs (or in its cooldown)
+/// used to be dropped outright. It now earns one follow-up run — but only
+/// one, since a run's own `.EKEventStoreChanged` echo is indistinguishable
+/// from an edit and would otherwise loop forever.
+final class ReactiveFollowUpGateTests: XCTestCase {
+    let t0 = iso("2026-09-26T10:00:00Z")
+
+    func testChangeIgnoredDuringARunSchedulesAFollowUp() {
+        var gate = ReactiveFollowUpGate(echoWindow: 60)
+        XCTAssertTrue(gate.ignoredChange(at: t0))
+        XCTAssertTrue(gate.nextFireIsFollowUp)
+    }
+
+    func testEchoOfTheFollowUpRunIsDropped() {
+        var gate = ReactiveFollowUpGate(echoWindow: 60)
+        _ = gate.ignoredChange(at: t0)
+        gate.fireStarting()
+        XCTAssertFalse(gate.ignoredChange(at: t0.addingTimeInterval(40)), "echo during the follow-up")
+        gate.fireFinished(ran: true, at: t0.addingTimeInterval(50))
+        XCTAssertFalse(gate.ignoredChange(at: t0.addingTimeInterval(60)), "echo in its cooldown")
+        XCTAssertFalse(gate.nextFireIsFollowUp)
+    }
+
+    func testLaterRunGetsItsOwnFollowUpAgain() {
+        var gate = ReactiveFollowUpGate(echoWindow: 60)
+        _ = gate.ignoredChange(at: t0)
+        gate.fireStarting()
+        gate.fireFinished(ran: true, at: t0.addingTimeInterval(50))
+        // An hour later another run (e.g. the daily one) is in flight.
+        XCTAssertTrue(gate.ignoredChange(at: t0.addingTimeInterval(3600)))
+    }
+
+    func testSkippedFollowUpStaysAFollowUp() {
+        var gate = ReactiveFollowUpGate(echoWindow: 60)
+        _ = gate.ignoredChange(at: t0)
+        gate.fireStarting()
+        gate.fireFinished(ran: false, at: t0.addingTimeInterval(30))
+        XCTAssertTrue(gate.nextFireIsFollowUp)
+    }
+
+    func testNormalRunIsNotAFollowUp() {
+        var gate = ReactiveFollowUpGate(echoWindow: 60)
+        gate.fireStarting()
+        XCTAssertTrue(gate.ignoredChange(at: t0), "edit during a normal run earns a follow-up")
+        gate.fireFinished(ran: true, at: t0.addingTimeInterval(10))
+        XCTAssertTrue(gate.nextFireIsFollowUp, "finishing the normal run keeps the pending follow-up")
+    }
+}

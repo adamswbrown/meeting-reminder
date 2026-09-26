@@ -70,6 +70,7 @@
 		T2000030 /* SingleInstanceGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000030 /* SingleInstanceGuardTests.swift */; };
 		T2000050 /* MeetingNoteMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000050 /* MeetingNoteMatcherTests.swift */; };
 		T2000051 /* CalendarSyncRunRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000051 /* CalendarSyncRunRegistryTests.swift */; };
+		BA000002 /* CalendarSyncUpserterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA000001 /* CalendarSyncUpserterTests.swift */; };
 		T2000020 /* OverlayCatchUpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000020 /* OverlayCatchUpTests.swift */; };
 		T2000007 /* BookingSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000007 /* BookingSupportTests.swift */; };
 		T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000006 /* ReactiveSyncSchedulerTests.swift */; };
@@ -163,6 +164,7 @@
 		T1000030 /* SingleInstanceGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleInstanceGuardTests.swift; sourceTree = "<group>"; };
 		T1000050 /* MeetingNoteMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingNoteMatcherTests.swift; sourceTree = "<group>"; };
 		T1000051 /* CalendarSyncRunRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncRunRegistryTests.swift; sourceTree = "<group>"; };
+		BA000001 /* CalendarSyncUpserterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncUpserterTests.swift; sourceTree = "<group>"; };
 		T1000020 /* OverlayCatchUpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayCatchUpTests.swift; sourceTree = "<group>"; };
 		T1000007 /* BookingSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupportTests.swift; sourceTree = "<group>"; };
 		T1000006 /* ReactiveSyncSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReactiveSyncSchedulerTests.swift; sourceTree = "<group>"; };
@@ -327,6 +329,7 @@
 				T1000030 /* SingleInstanceGuardTests.swift */,
 				T1000050 /* MeetingNoteMatcherTests.swift */,
 				T1000051 /* CalendarSyncRunRegistryTests.swift */,
+				BA000001 /* CalendarSyncUpserterTests.swift */,
 				T1000020 /* OverlayCatchUpTests.swift */,
 				T1000006 /* ReactiveSyncSchedulerTests.swift */,
 				T1000008 /* IntradayBriefGateTests.swift */,
@@ -497,6 +500,7 @@
 				T2000030 /* SingleInstanceGuardTests.swift in Sources */,
 				T2000050 /* MeetingNoteMatcherTests.swift in Sources */,
 				T2000051 /* CalendarSyncRunRegistryTests.swift in Sources */,
+				BA000002 /* CalendarSyncUpserterTests.swift in Sources */,
 				T2000020 /* OverlayCatchUpTests.swift in Sources */,
 				T2000006 /* ReactiveSyncSchedulerTests.swift in Sources */,
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,

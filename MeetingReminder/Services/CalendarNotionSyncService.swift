@@ -27,8 +27,11 @@ final class CalendarSyncNotionClient {
         self.session = URLSession(configuration: cfg)
     }
 
-    func post(path: String, body: [String: Any]) async throws -> [String: Any] {
-        try await request(method: "POST", path: path, body: body)
+    /// `idempotent: false` for requests that create something (`POST /pages`):
+    /// those are only retried on 429, never after a transport error or 5xx,
+    /// where the create may already have landed. See `NotionRetryPolicy`.
+    func post(path: String, body: [String: Any], idempotent: Bool = true) async throws -> [String: Any] {
+        try await request(method: "POST", path: path, body: body, idempotent: idempotent)
     }
 
     func patch(path: String, body: [String: Any]) async throws -> [String: Any] {
@@ -39,10 +42,11 @@ final class CalendarSyncNotionClient {
         try await request(method: "GET", path: path, body: nil)
     }
 
-    private func request(method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
+    private func request(method: String, path: String, body: [String: Any]?,
+                         idempotent: Bool = true) async throws -> [String: Any] {
         let url = URL(string: "https://api.notion.com/v1\(path)")!
         var attempt = 0
-        var delay: UInt64 = 500_000_000 // 0.5s
+        var backoff: TimeInterval = 0.5
 
         while true {
             attempt += 1
@@ -57,10 +61,10 @@ final class CalendarSyncNotionClient {
             do {
                 (data, resp) = try await session.data(for: req)
             } catch {
-                if attempt < 3 {
+                if NotionRetryPolicy.shouldRetry(status: nil, attempt: attempt, idempotent: idempotent) {
                     logger.warn("network error \(error.localizedDescription), retrying (attempt \(attempt))")
-                    try await Task.sleep(nanoseconds: delay)
-                    delay *= 2
+                    try await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+                    backoff *= 2
                     continue
                 }
                 throw error
@@ -73,15 +77,62 @@ final class CalendarSyncNotionClient {
                 return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             }
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
-            let retriable = [429, 502, 503, 504].contains(http.statusCode)
-            if retriable && attempt < 3 {
-                logger.warn("notion \(http.statusCode), retrying (attempt \(attempt))")
-                try await Task.sleep(nanoseconds: delay)
-                delay *= 2
+            if NotionRetryPolicy.shouldRetry(status: http.statusCode, attempt: attempt,
+                                             idempotent: idempotent) {
+                let wait = NotionRetryPolicy.delay(status: http.statusCode,
+                                                   retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                                                   backoff: backoff)
+                logger.warn("notion \(http.statusCode), retrying in \(wait)s (attempt \(attempt))")
+                try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                backoff *= 2
                 continue
             }
             throw CalendarSyncNotionError(status: http.statusCode, body: bodyStr)
         }
+    }
+}
+
+/// Retry policy for `CalendarSyncNotionClient`. Pure so it's unit-testable.
+enum NotionRetryPolicy {
+    /// Attempts for transport errors and 502/503/504.
+    static let maxAttempts = 3
+    /// A 429 means Notion did not process the request, and giving up on one
+    /// mid-run (e.g. during `fetchExistingEvents`) aborts the whole sync — so
+    /// rate limits get more room than transient server errors.
+    static let maxRateLimitAttempts = 6
+    /// Longest `Retry-After` honoured, so a pathological header can't stall a run.
+    static let maxRetryAfter: TimeInterval = 60
+
+    /// Whether a failed attempt should be retried. `status` nil means a
+    /// transport error (no HTTP response). A non-idempotent request is only
+    /// retried on 429 (Notion did not process it); after a transport error or
+    /// 5xx the request may have landed, so a blind retry could duplicate it.
+    static func shouldRetry(status: Int?, attempt: Int, idempotent: Bool = true) -> Bool {
+        if status == 429 { return attempt < maxRateLimitAttempts }
+        guard idempotent else { return false }
+        guard let status else { return attempt < maxAttempts }
+        if [502, 503, 504].contains(status) { return attempt < maxAttempts }
+        return false
+    }
+
+    /// True when a failed request may nonetheless have been applied by Notion:
+    /// a transport error (timeout, dropped connection, unreadable response) or
+    /// a 5xx. The caller must check before re-sending a non-idempotent request.
+    static func isAmbiguousFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let notion = error as? CalendarSyncNotionError { return notion.status >= 500 }
+        return true
+    }
+
+    /// Seconds to wait before the next attempt: Notion's `Retry-After` (in
+    /// seconds) on a 429 when present and sane, else the exponential backoff.
+    static func delay(status: Int?, retryAfter: String?, backoff: TimeInterval) -> TimeInterval {
+        if status == 429,
+           let raw = retryAfter?.trimmingCharacters(in: .whitespaces),
+           let seconds = TimeInterval(raw), seconds >= 0 {
+            return min(seconds, maxRetryAfter)
+        }
+        return backoff
     }
 }
 
@@ -493,6 +544,13 @@ final class CalendarSyncUpserter {
     private let dryRun: Bool
     private let archiveOrphans: Bool
     private let cascadeStatus: Bool
+    /// Whether the orphan pass (cancel cascade + archive sweep) may run at all.
+    /// False on reactive runs: they suppress series-master rows and see only a
+    /// narrow window, so a master whose first occurrence is upcoming would read
+    /// as a vanished one-off. Independent of `cascadeStatus`, which also gates
+    /// the UPDATE-path reschedule cascade — that one works on rows that are
+    /// present and stays on for reactive runs.
+    private let sweepOrphans: Bool
     /// Resolves whether a vanished recurring occurrence is cancelled or merely
     /// moved. Injected so the upserter stays EventKit-free (and testable);
     /// `nil` means "can't tell", which keeps reactive runs deferring to the
@@ -504,12 +562,14 @@ final class CalendarSyncUpserter {
          dryRun: Bool,
          archiveOrphans: Bool,
          cascadeStatus: Bool = false,
+         sweepOrphans: Bool = true,
          occurrenceProbe: ((String, Date?, Set<String>) -> CalendarSyncCascade.OccurrenceProbe)? = nil) {
         self.client = client
         self.logger = logger
         self.dryRun = dryRun
         self.archiveOrphans = archiveOrphans
         self.cascadeStatus = cascadeStatus
+        self.sweepOrphans = sweepOrphans
         self.occurrenceProbe = occurrenceProbe
     }
 
@@ -527,10 +587,15 @@ final class CalendarSyncUpserter {
     /// Rows outside the window (older history, far-future) are left untouched
     /// because `touched` only reflects events in the current fetch window. Nil
     /// disables the window guard (the sweep is off in that case anyway).
+    ///
+    /// `sweepableCalendars` further bounds the sweep to rows whose `Source
+    /// Calendar` is one that returned events this run (see
+    /// `CalendarSyncCascade.sweepableCalendarNames`). Nil disables the guard.
     func run(rows: [(event: EventLike, isSeriesMaster: Bool, sourceCalendarName: String)],
              existing: [String: CalendarSyncNotionQueries.ExistingRow],
              orphanWindow: (start: Date, end: Date)? = nil,
-             presentIDs: Set<String> = []) async -> RunOutcome {
+             presentIDs: Set<String> = [],
+             sweepableCalendars: Set<String>? = nil) async -> RunOutcome {
         var counts = CalendarSyncCounts()
         var linkTargets: [RelationLinker.LinkTarget] = []
         let now = Date()
@@ -633,6 +698,25 @@ final class CalendarSyncUpserter {
                             ]])
                             logger.info("cascade: re-dated brief \(briefID) → \(start)")
                         }
+                        // Revival: a row the cascade stamped Cancelled is back
+                        // (e.g. moved past the lookahead, now re-entering it).
+                        // Undo the brief's Meeting Outcome = Cancelled — but
+                        // only if it still reads Cancelled, so a later manual
+                        // outcome is never overwritten. Not gated on
+                        // `cascadeStatus`: a reactive run may be the one that
+                        // revives the row, and the full run then sees nothing
+                        // to revive.
+                        if let briefID = existingRow.preCallBriefingPageID,
+                           CalendarSyncCascade.isRevival(existingStatus: existingRow.properties["Status"],
+                                                         incomingStatus: props["Status"]),
+                           let brief = try? await client.get(path: "/pages/\(briefID)"),
+                           CalendarSyncCascade.isCancelledStatus(
+                               (brief["properties"] as? [String: Any])?["Meeting Outcome"]) {
+                            _ = try? await client.patch(path: "/pages/\(briefID)", body: ["properties": [
+                                "Meeting Outcome": ["select": NSNull()]
+                            ]])
+                            logger.info("cascade: revived \(appleID) — cleared brief \(briefID) Meeting Outcome")
+                        }
                     }
                     resultPageID = existingRow.pageID
                     runRegistry.register(appleID: appleID, pageID: existingRow.pageID)
@@ -684,14 +768,34 @@ final class CalendarSyncUpserter {
                         if dryRun {
                             logger.info("DRY CREATE \(appleID)")
                         } else {
-                            let resp = try await client.post(path: "/pages", body: [
+                            let createBody: [String: Any] = [
                                 "parent": [
                                     "type": "data_source_id",
                                     "data_source_id": CalendarSyncConstants.calendarEventsDataSourceID,
                                 ],
                                 "properties": props,
-                            ])
-                            resultPageID = resp["id"] as? String
+                            ]
+                            do {
+                                let resp = try await client.post(path: "/pages", body: createBody,
+                                                                 idempotent: false)
+                                resultPageID = resp["id"] as? String
+                            } catch where NotionRetryPolicy.isAmbiguousFailure(error) {
+                                // The create may have landed with only the
+                                // response lost. Look before re-sending, so a
+                                // timeout can't mint a twin row. Notion's
+                                // create→query visibility is ~2s.
+                                logger.warn("create for \(appleID) failed ambiguously (\(error)) — checking Notion before retrying")
+                                try await Task.sleep(nanoseconds: 2_000_000_000)
+                                if let landed = try await CalendarSyncNotionQueries.findPageID(client: client,
+                                                                                               appleID: appleID) {
+                                    logger.warn("create for \(appleID) had landed :: \(landed)")
+                                    resultPageID = landed
+                                } else {
+                                    let resp = try await client.post(path: "/pages", body: createBody,
+                                                                     idempotent: false)
+                                    resultPageID = resp["id"] as? String
+                                }
+                            }
                             if let resultPageID {
                                 runRegistry.register(appleID: appleID, pageID: resultPageID)
                             }
@@ -730,10 +834,11 @@ final class CalendarSyncUpserter {
             }
         }
 
-        if archiveOrphans || cascadeStatus {
+        if sweepOrphans, archiveOrphans || cascadeStatus {
             await processOrphans(touched: touched,
                                  existing: existing,
                                  orphanWindow: orphanWindow,
+                                 sweepableCalendars: sweepableCalendars,
                                  counts: &counts)
         }
         return RunOutcome(counts: counts, linkTargets: linkTargets)
@@ -756,9 +861,11 @@ final class CalendarSyncUpserter {
     private func processOrphans(touched: Set<String>,
                                 existing: [String: CalendarSyncNotionQueries.ExistingRow],
                                 orphanWindow: (start: Date, end: Date)?,
+                                sweepableCalendars: Set<String>?,
                                 counts: inout CalendarSyncCounts) async {
         var orphanIDs: [String] = []
         var skippedOutOfWindow = 0
+        var skippedUnfetchedCalendar = 0
         for (appleID, row) in existing where !touched.contains(appleID) {
             // Only sweep rows whose event date falls inside the current run's
             // fetch window. `fetchExistingEvents` queries the whole data source
@@ -773,10 +880,22 @@ final class CalendarSyncUpserter {
                     continue
                 }
             }
+            // Only sweep rows from a calendar that returned events this run.
+            // `touched` says nothing about a calendar that wasn't fetched (or
+            // came back empty), so its rows can't be judged missing.
+            if let sweepable = sweepableCalendars,
+               !CalendarSyncCascade.isInSweptCalendar(row.properties["Source Calendar"],
+                                                      sweepable: sweepable) {
+                skippedUnfetchedCalendar += 1
+                continue
+            }
             orphanIDs.append(appleID)
         }
         if skippedOutOfWindow > 0 {
             logger.info("orphans: \(skippedOutOfWindow) rows skipped (outside fetch window or no date)")
+        }
+        if skippedUnfetchedCalendar > 0 {
+            logger.info("orphans: \(skippedUnfetchedCalendar) rows skipped (source calendar not fetched or returned no events)")
         }
         guard !orphanIDs.isEmpty else { return }
         logger.info("orphans: \(orphanIDs.count) rows in Notion not in source")
@@ -871,9 +990,9 @@ final class CalendarSyncReader {
     ///   1. `seenIDs` — the IDs this run actually saw on the calendar. An
     ///      in-window detachment (the common case) lands here, needing no
     ///      EventKit call and no assumption about identifier formats.
-    ///   2. A window-free `event(withIdentifier:)` on the identifier a detached
-    ///      sibling *would* carry, reconstructed from the row's own start time.
-    ///      This catches a detachment moved outside the reactive window.
+    ///   2. A window-free lookup (`liveEvent(externalID:)`) of the identifier a
+    ///      detached sibling *would* carry, reconstructed from the row's own
+    ///      start time. This catches a detachment moved outside the window.
     ///
     /// A `.canceled` sibling counts as gone, not as a claim: some Exchange
     /// cancellations arrive as a cancelled detached item rather than a bare
@@ -884,20 +1003,23 @@ final class CalendarSyncReader {
     /// the 06:00 full run would revive it — the same exposure the full run has
     /// always had, since it cannot see such a move either.
     ///
-    /// Do NOT reach for `calendarItems(withExternalIdentifier:)` here. It looks
-    /// like the right API and isn't: a detached occurrence has a *different*
-    /// external identifier from its master, so the lookup returns the master
-    /// alone, whose `occurrenceDate` is the series start and never matches —
-    /// making every vanished occurrence read as cancelled. That shipped in
-    /// v3.5.1 and produced a false positive within the hour.
+    /// Do NOT look the orphan up by its *series* UID with
+    /// `calendarItems(withExternalIdentifier:)`. A detached occurrence has a
+    /// *different* external identifier from its master, so that lookup returns
+    /// the master alone, whose `occurrenceDate` is the series start and never
+    /// matches — making every vanished occurrence read as cancelled. That
+    /// shipped in v3.5.1 and produced a false positive within the hour. Looking
+    /// up a full `<uid>/RID=<n>` identifier is different: it returns exactly
+    /// that detached occurrence (see `liveEvent(externalID:)`).
     func probeOccurrence(appleID: String,
                          originalStart: Date?,
                          seenIDs: Set<String>) -> CalendarSyncCascade.OccurrenceProbe {
         // A row keyed to a *detached* occurrence's own ID resolves directly and
         // window-free — no sibling hunting needed. This is how a genuinely
         // cancelled detached instance still reaches the cascade.
-        if CalendarSyncCascade.detachedOccurrence(fromID: appleID) != nil {
-            if let ev = store.event(withIdentifier: appleID), ev.status != .canceled {
+        if let detached = CalendarSyncCascade.detachedOccurrence(fromID: appleID) {
+            let ownID = "\(detached.seriesUID)/RID=\(Int(detached.originalStart.timeIntervalSinceReferenceDate))"
+            if let ev = liveEvent(externalID: ownID) {
                 logger.debug("probe \(appleID): detached occurrence still live at \(ev.startDate as Date?) — unresolved")
                 return .unresolved
             }
@@ -914,13 +1036,29 @@ final class CalendarSyncReader {
         if let originalStart {
             let rid = Int(originalStart.timeIntervalSinceReferenceDate)
             let candidate = "\(parts.externalID)/RID=\(rid)"
-            if let ev = store.event(withIdentifier: candidate), ev.status != .canceled {
+            if let ev = liveEvent(externalID: candidate) {
                 logger.debug("probe \(appleID): detached sibling \(candidate) resolves (now \(ev.startDate as Date?)) — unresolved")
                 return .unresolved
             }
         }
         logger.debug("probe \(appleID): no live detached sibling on \(parts.day) — confirmed gone")
         return .confirmedGone
+    }
+
+    /// The non-cancelled event carrying exactly this external identifier,
+    /// window-free, or nil.
+    ///
+    /// `event(withIdentifier:)` is the wrong API for this: it takes the local
+    /// `eventIdentifier`, not `calendarItemExternalIdentifier`. Verified live
+    /// 2026-09-26 against the Exchange store — it resolved none of the external
+    /// IDs tried, `/RID=` or not, so both probe lookups were dead and every
+    /// out-of-window detachment read as cancelled. For a detached occurrence's
+    /// `<uid>/RID=<n>` ID, `calendarItems(withExternalIdentifier:)` returns
+    /// exactly that one occurrence.
+    private func liveEvent(externalID: String) -> EKEvent? {
+        store.calendarItems(withExternalIdentifier: externalID)
+            .compactMap { $0 as? EKEvent }
+            .first { $0.status != .canceled }
     }
 
     /// Resolves the user-opted-in calendars from `prefEnabledCalendarIDsKey`.
@@ -1005,6 +1143,19 @@ enum CalendarSyncMode {
         switch self {
         case .full: return "full"
         case .reactive: return "reactive"
+        }
+    }
+
+    /// Whether this mode may run the orphan pass (cancel cascade + archive
+    /// sweep). Reactive runs never do: they suppress series-master rows and see
+    /// only a narrow window, so a master (bare UID) whose first occurrence is
+    /// upcoming would read as a vanished one-off and be stamped Cancelled. The
+    /// 06:00 full run owns it. The reschedule cascade (UPDATE path) is not
+    /// affected and still runs on reactive runs.
+    var sweepsOrphans: Bool {
+        switch self {
+        case .full: return true
+        case .reactive: return false
         }
     }
 }
@@ -1172,7 +1323,9 @@ final class CalendarNotionSyncService: ObservableObject {
         await run(mode: .full, dryRun: dryRun)
     }
 
-    /// Change-driven run. Narrow forward window, orphan archival forced off,
+    /// Change-driven run. Narrow forward window, orphan pass (archival and the
+    /// cancel cascade) forced off (see `CalendarSyncMode.sweepsOrphans`) while
+    /// the reschedule cascade still runs,
     /// rolling-week patch skipped. Shares the upsert pipeline with the full run.
     /// Returns whether the run actually executed (false if another was in
     /// flight and it was skipped).
@@ -1250,6 +1403,9 @@ final class CalendarNotionSyncService: ObservableObject {
             // still exist on the calendar, so the orphan sweep must treat them
             // as present (otherwise a newly-added skip rule mass-archives them).
             var skipFilteredIDs: Set<String> = []
+            // Per-calendar raw event counts, so the orphan sweep only judges
+            // rows from calendars that actually returned events this run.
+            var fetchedCalendars: [(name: String, eventCount: Int)] = []
             // The fetch window bracket, captured so the orphan sweep only
             // considers Notion rows whose date falls inside it. Full runs use
             // the 90/30 window; reactive runs are narrow (but skip the sweep).
@@ -1283,12 +1439,13 @@ final class CalendarNotionSyncService: ObservableObject {
                 }
                 totalEK += events.count
                 let calName = reader.notionCalendarName(for: cal)
+                fetchedCalendars.append((calName, events.count))
                 let kept: [EKEvent] = events.filter { e in
                     let title = e.title ?? ""
                     if SkipFilter.shouldSkip(title: title, rules: skipRules) {
                         logger.debug("skip rule: \(title)")
                         skipped += 1
-                        skipFilteredIDs.insert(CalendarEventMapper.compositeAppleID(for: e))
+                        skipFilteredIDs.formUnion(CalendarSyncCascade.presentIDs(forSkipped: e))
                         return false
                     }
                     if skipFreeOOO {
@@ -1296,7 +1453,7 @@ final class CalendarNotionSyncService: ObservableObject {
                         if name == "Free" || name == "OOO" {
                             logger.debug("skip free/OOO: \(title) (\(name))")
                             skipped += 1
-                            skipFilteredIDs.insert(CalendarEventMapper.compositeAppleID(for: e))
+                            skipFilteredIDs.formUnion(CalendarSyncCascade.presentIDs(forSkipped: e))
                             return false
                         }
                     }
@@ -1333,6 +1490,7 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled,
                                                 cascadeStatus: cascadeStatusEnabled,
+                                                sweepOrphans: mode.sweepsOrphans,
                                                 occurrenceProbe: { id, start, seen in
                                                     reader.probeOccurrence(appleID: id,
                                                                            originalStart: start,
@@ -1341,7 +1499,9 @@ final class CalendarNotionSyncService: ObservableObject {
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
                                              orphanWindow: (start: windowStart, end: windowEnd),
-                                             presentIDs: skipFilteredIDs)
+                                             presentIDs: skipFilteredIDs,
+                                             sweepableCalendars: CalendarSyncCascade.sweepableCalendarNames(
+                                                fetched: fetchedCalendars))
             var counts = outcome.counts
             counts.duplicates = existingResult.duplicates.count
 

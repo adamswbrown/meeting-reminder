@@ -140,6 +140,36 @@ enum CalendarSyncCascade {
                              skip: false)
     }
 
+    /// The `Source Calendar` names whose rows the orphan sweep may classify
+    /// this run: only calendars that actually returned events. A calendar that
+    /// comes back empty (account offline, EventKit hiccup, opted out) would
+    /// otherwise look like every one of its meetings had been cancelled.
+    static func sweepableCalendarNames(fetched: [(name: String, eventCount: Int)]) -> Set<String> {
+        Set(fetched.filter { $0.eventCount > 0 }.map(\.name))
+    }
+
+    /// Apple Event IDs an event dropped by the skip filters still accounts for,
+    /// so the orphan sweep treats them as present. For a recurring occurrence
+    /// that includes the bare series UID: when a skip rule drops every
+    /// occurrence no series-master row is emitted, and the existing master row
+    /// would otherwise be swept as a cancelled one-off.
+    static func presentIDs(forSkipped event: EventLike) -> [String] {
+        let composite = CalendarEventMapper.compositeAppleID(for: event)
+        guard event.eventIsRecurring, !event.externalIdentifier.isEmpty,
+              event.externalIdentifier != composite else { return [composite] }
+        return [composite, event.externalIdentifier]
+    }
+
+    /// True when a row's `Source Calendar` select (read-format) names a calendar
+    /// in `sweepable`. A row with no Source Calendar is never swept — every
+    /// live in-window row carries one, since each upsert writes it.
+    static func isInSweptCalendar(_ sourceCalendar: Any?, sweepable: Set<String>) -> Bool {
+        guard let dict = sourceCalendar as? [String: Any],
+              let sel = dict["select"] as? [String: Any],
+              let name = sel["name"] as? String else { return false }
+        return sweepable.contains(name)
+    }
+
     /// True when a Notion `Status` property payload (read-format
     /// `{"select":{"name":"..."}}`) currently reads "Cancelled". Used to make
     /// the cancel cascade transition-only (fire exactly once).
@@ -148,6 +178,13 @@ enum CalendarSyncCascade {
               let sel = dict["select"] as? [String: Any],
               let name = sel["name"] as? String else { return false }
         return name == "Cancelled"
+    }
+
+    /// True when a row the cascade stamped Cancelled is back on the calendar
+    /// (e.g. a meeting moved past the lookahead window re-entering it). The
+    /// linked brief's `Meeting Outcome = Cancelled` must then be undone.
+    static func isRevival(existingStatus: Any?, incomingStatus: Any?) -> Bool {
+        isCancelledStatus(existingStatus) && !isCancelledStatus(incomingStatus)
     }
 
     /// True when a row's incoming start differs from what Notion currently has
