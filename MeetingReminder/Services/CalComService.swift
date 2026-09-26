@@ -61,29 +61,47 @@ final class CalComService: ObservableObject {
     // MARK: - Bookings
 
     func fetchUpcomingBookings(after: Date? = nil) async throws -> [CalComBooking] {
-        var query = "status[]=upcoming&take=50"
+        var query = "status[]=upcoming"
         if let after {
             let fmt = ISO8601DateFormatter()
             fmt.formatOptions = [.withInternetDateTime]
             let iso = fmt.string(from: after)
             query += "&afterStart=\(iso.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? iso)"
         }
-        let data = try await get(path: "/bookings?\(query)", version: Self.bookingVersion)
-        let resp = try decode(CalComListResponse<CalComBooking>.self, from: data)
-        return resp.data ?? []
+        return try await fetchAllBookings(query: query, take: 50)
     }
 
     func fetchCancelledBookings(after: Date? = nil) async throws -> [CalComBooking] {
-        var query = "status[]=cancelled&take=100"
+        var query = "status[]=cancelled"
         if let after {
             let fmt = ISO8601DateFormatter()
             fmt.formatOptions = [.withInternetDateTime]
             let iso = fmt.string(from: after)
             query += "&afterStart=\(iso.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? iso)"
         }
-        let data = try await get(path: "/bookings?\(query)", version: Self.bookingVersion)
-        let resp = try decode(CalComListResponse<CalComBooking>.self, from: data)
-        return resp.data ?? []
+        return try await fetchAllBookings(query: query, take: 100)
+    }
+
+    /// Pages through `/bookings` with `take`/`skip` so a busy calendar isn't
+    /// silently truncated at the first page.
+    private func fetchAllBookings(query: String, take: Int) async throws -> [CalComBooking] {
+        try await Self.paginate(take: take) { skip in
+            let data = try await self.get(path: "/bookings?\(query)&take=\(take)&skip=\(skip)", version: Self.bookingVersion)
+            return try self.decode(CalComListResponse<CalComBooking>.self, from: data).data ?? []
+        }
+    }
+
+    /// Calls `fetchPage(skip)` until a page comes back shorter than `take`.
+    /// `maxPages` bounds the loop in case the server ignores `skip`.
+    static func paginate<T>(take: Int, maxPages: Int = 20,
+                            fetchPage: (Int) async throws -> [T]) async throws -> [T] {
+        var all: [T] = []
+        for page in 0..<maxPages {
+            let items = try await fetchPage(page * take)
+            all.append(contentsOf: items)
+            if items.count < take { break }
+        }
+        return all
     }
 
     func cancelBooking(uid: String, reason: String? = nil) async throws {

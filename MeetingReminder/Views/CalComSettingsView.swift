@@ -244,9 +244,14 @@ struct CalComSettingsView: View {
         calComService.saveAPIKey(apiKeyDraft)
         connectionStatus = nil
         if calComService.isConfigured { loadAll() }
+        // Launch-time startIfEnabled() no-ops without a key, so a key saved
+        // mid-session must start the sync here (the legacy booking poll
+        // stops itself on its next tick once the key exists).
+        calComSyncService.startIfEnabled()
     }
 
     private func disconnect() {
+        calComSyncService.stop()
         calComService.deleteAPIKey()
         apiKeyDraft = ""
         eventTypes = []

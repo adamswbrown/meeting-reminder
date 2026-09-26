@@ -96,10 +96,19 @@ final class BookingPollService: ObservableObject {
 
     // MARK: - Lifecycle
 
+    /// Legacy Supabase poll is superseded once a Cal.com API key is stored.
+    nonisolated static func isSupersededByCalCom(calComKey: String?) -> Bool {
+        !(calComKey ?? "").isEmpty
+    }
+
+    private var isSupersededByCalCom: Bool {
+        Self.isSupersededByCalCom(calComKey: KeychainHelper.read(key: CalComService.keychainKey))
+    }
+
     func start() {
-        // Legacy Supabase poll — disabled when Cal.com API key is configured.
-        guard KeychainHelper.read(key: CalComService.keychainKey) == nil else { return }
         stop()
+        // Legacy Supabase poll — disabled when Cal.com API key is configured.
+        guard !isSupersededByCalCom else { return }
         guard isEnabled, isConfigured else { return }
 
         // Fire one immediately so the user gets feedback that it's working.
@@ -120,6 +129,12 @@ final class BookingPollService: ObservableObject {
     // MARK: - Poll
 
     func pollOnce() async {
+        // Re-checked every tick: a Cal.com key saved after launch must stop the
+        // legacy loop, or both paths create events for the same booking.
+        guard !isSupersededByCalCom else {
+            stop()
+            return
+        }
         guard isConfigured else {
             lastError = "Not configured — set Supabase project URL + service-role key in Settings."
             return
