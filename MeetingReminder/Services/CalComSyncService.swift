@@ -165,6 +165,12 @@ final class CalComSyncService: ObservableObject {
         if let existing = findExchangeEvent(matching: booking, near: start) {
             appendMarker(marker, to: existing)
             firstSeenUids.removeValue(forKey: booking.uid) // no longer needed
+            // Most bookings take this path (Exchange syncs within the grace
+            // period), so the notes page must be created here as well as on
+            // .created — otherwise tagged meetings never get one.
+            if let bridge = notionBridge {
+                Task { await bridge.createPageIfNeeded(for: booking) }
+            }
             return .tagged
         }
 
