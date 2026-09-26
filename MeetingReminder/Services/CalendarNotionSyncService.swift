@@ -638,6 +638,25 @@ final class CalendarSyncUpserter {
                             ]])
                             logger.info("cascade: re-dated brief \(briefID) → \(start)")
                         }
+                        // Revival: a row the cascade stamped Cancelled is back
+                        // (e.g. moved past the lookahead, now re-entering it).
+                        // Undo the brief's Meeting Outcome = Cancelled — but
+                        // only if it still reads Cancelled, so a later manual
+                        // outcome is never overwritten. Not gated on
+                        // `cascadeStatus`: a reactive run may be the one that
+                        // revives the row, and the full run then sees nothing
+                        // to revive.
+                        if let briefID = existingRow.preCallBriefingPageID,
+                           CalendarSyncCascade.isRevival(existingStatus: existingRow.properties["Status"],
+                                                         incomingStatus: props["Status"]),
+                           let brief = try? await client.get(path: "/pages/\(briefID)"),
+                           CalendarSyncCascade.isCancelledStatus(
+                               (brief["properties"] as? [String: Any])?["Meeting Outcome"]) {
+                            _ = try? await client.patch(path: "/pages/\(briefID)", body: ["properties": [
+                                "Meeting Outcome": ["select": NSNull()]
+                            ]])
+                            logger.info("cascade: revived \(appleID) — cleared brief \(briefID) Meeting Outcome")
+                        }
                     }
                     resultPageID = existingRow.pageID
                     runRegistry.register(appleID: appleID, pageID: existingRow.pageID)

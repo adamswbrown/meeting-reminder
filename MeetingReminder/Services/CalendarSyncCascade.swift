@@ -168,6 +168,13 @@ enum CalendarSyncCascade {
         return name == "Cancelled"
     }
 
+    /// True when a row the cascade stamped Cancelled is back on the calendar
+    /// (e.g. a meeting moved past the lookahead window re-entering it). The
+    /// linked brief's `Meeting Outcome = Cancelled` must then be undone.
+    static func isRevival(existingStatus: Any?, incomingStatus: Any?) -> Bool {
+        isCancelledStatus(existingStatus) && !isCancelledStatus(incomingStatus)
+    }
+
     /// True when a row's incoming start differs from what Notion currently has
     /// (both non-nil). Used to cascade a one-off move onto the linked brief.
     static func startChanged(incoming: Date, existing: Date?) -> Bool {

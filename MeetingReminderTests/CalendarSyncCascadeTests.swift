@@ -111,6 +111,28 @@ final class CalendarSyncCascadeTests: XCTestCase {
         XCTAssertFalse(CalendarSyncCascade.isCancelledStatus(nil))
     }
 
+    // MARK: isRevival
+
+    /// A meeting moved past the lookahead was cascaded to Cancelled; when it
+    /// re-enters the window the row is rewritten, and the brief's
+    /// Meeting Outcome = Cancelled must be undone too.
+    func testRevivalDetectedWhenCancelledRowComesBack() {
+        XCTAssertTrue(CalendarSyncCascade.isRevival(
+            existingStatus: ["select": ["name": "Cancelled"]],
+            incomingStatus: ["select": ["name": "Upcoming"]]))
+    }
+
+    func testNotRevivalWhenRowWasNotCancelledOrStillIs() {
+        XCTAssertFalse(CalendarSyncCascade.isRevival(
+            existingStatus: ["select": ["name": "Upcoming"]],
+            incomingStatus: ["select": ["name": "Today"]]))
+        XCTAssertFalse(CalendarSyncCascade.isRevival(
+            existingStatus: ["select": ["name": "Cancelled"]],
+            incomingStatus: ["select": ["name": "Cancelled"]]))
+        XCTAssertFalse(CalendarSyncCascade.isRevival(existingStatus: nil,
+                                                     incomingStatus: ["select": ["name": "Upcoming"]]))
+    }
+
     // MARK: startChanged
 
     func testDateChangedDetectsMove() {
