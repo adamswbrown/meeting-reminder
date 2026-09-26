@@ -244,4 +244,68 @@ final class MeetingNoteMatcherTests: XCTestCase {
         XCTAssertEqual(filter["property"] as? String, "Apple Event ID")
         XCTAssertEqual((filter["rich_text"] as? [String: Any])?["equals"] as? String, "12D54CB4")
     }
+
+    // MARK: - Meeting Notes relation (NotionService)
+
+    /// Linking a new note must add to the relation, not replace it —
+    /// a PATCH with only the new ID would unlink a note already there.
+    func testRelationAppendingKeepsExistingNotes() {
+        let merged = NotionService.relationAppending("new-note", to: ["hand-made"])
+        XCTAssertEqual(merged, ["hand-made", "new-note"])
+    }
+
+    func testRelationAppendingIgnoresAlreadyLinkedIDInEitherFormat() {
+        let dashed = "1d605620-3b70-47f1-96d8-465e57fd0bdd"
+        let bare = "1d6056203b7047f196d8465e57fd0bdd"
+        XCTAssertEqual(NotionService.relationAppending(bare, to: [dashed]), [dashed])
+    }
+
+    func testRelationAppendingToEmptyRelation() {
+        XCTAssertEqual(NotionService.relationAppending("n1", to: []), ["n1"])
+    }
+
+    // MARK: - Note dedupe key (NotionService)
+
+    /// A Cal.com-tagged calendar event must dedupe against the page the
+    /// Cal.com bridge made (keyed `calcom-<uid>`), not its own EventKit ID —
+    /// otherwise joining it creates a second page.
+    func testNoteKeyUsesCalComBookingTag() {
+        let notes = "Agenda\n\n[calcom-booking-id:bk_123]\n[calcom-created]"
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-LOCAL-ID", notes: notes), "calcom-bk_123")
+    }
+
+    func testNoteKeyFallsBackToEventIDWithoutTag() {
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: "just notes"), "EK-1")
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: nil), "EK-1")
+    }
+
+    func testNoteKeyIgnoresEmptyOrUnterminatedTag() {
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: "[calcom-booking-id:]"), "EK-1")
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: "[calcom-booking-id:abc"), "EK-1")
+    }
+
+    func testNoteKeyForBridgeEventIsItsOwnID() {
+        XCTAssertEqual(NotionService.noteKey(eventID: "calcom-bk_123", notes: nil), "calcom-bk_123")
+    }
+
+    // MARK: - Find-or-create decision (NotionService)
+
+    /// The create decision must come from the lookup's own result, not the
+    /// shared `lastError`, which any concurrent Notion call can overwrite.
+    func testFoundNoteIsOpenedNotRecreated() {
+        let url = URL(string: "https://www.notion.so/abc")!
+        XCTAssertEqual(NotionService.nextStep(after: .found(url)), .open(url))
+    }
+
+    func testNoNoteMeansCreate() {
+        XCTAssertEqual(NotionService.nextStep(after: .none), .create)
+    }
+
+    func testAmbiguousLookupBlocksCreateWithItsOwnMessage() {
+        XCTAssertEqual(NotionService.nextStep(after: .ambiguous("2 notes")), .refuse("2 notes"))
+    }
+
+    func testFailedLookupBlocksCreateWithItsOwnMessage() {
+        XCTAssertEqual(NotionService.nextStep(after: .failed("timeout")), .refuse("timeout"))
+    }
 }

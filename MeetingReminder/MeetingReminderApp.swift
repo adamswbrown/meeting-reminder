@@ -366,17 +366,21 @@ final class OverlayCoordinator: ObservableObject {
             .sink { [weak self] event in
                 guard let self else { return }
 
-                // Notion: create page + open in desktop app (fire-and-forget).
+                // Notion: open the event's note in the desktop app, creating it
+                // only when none exists (fire-and-forget). A note this app
+                // already made — including the one the Cal.com bridge made for
+                // a booking — or one made by hand is opened, never duplicated.
+                // `.removeDuplicates` above keeps this to once per meeting.
                 // On failure, surface the error as a banner so the user isn't
                 // left wondering why nothing happened.
                 if self.notionService.isActive {
                     Task { @MainActor in
-                        if let pageURL = await self.notionService.createMeetingPage(for: event) {
+                        switch await self.notionService.findOrCreateMeetingPage(for: event) {
+                        case .note(let pageURL):
                             NotionService.openInNotionApp(pageURL)
-                        } else if let detail = self.notionService.lastError {
-                            // lastError is nil for a silent deduplication skip (page
-                            // already created for this event), so only show the banner
-                            // when there is an actual API or configuration failure.
+                        case .skipped:
+                            break  // another call is creating this note now
+                        case .failed(let detail):
                             NotificationService.shared.postIntegrationFailure(
                                 integration: "Notion",
                                 detail: detail

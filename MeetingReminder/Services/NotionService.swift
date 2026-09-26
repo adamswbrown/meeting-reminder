@@ -139,8 +139,9 @@ final class NotionService: ObservableObject {
     ///   - End (date)
     ///   - Attendees Name (rich_text)  — optional
     func createMeetingPage(for event: MeetingEvent) async -> URL? {
-        guard !createdEventIDs.contains(event.id),
-              !pendingEventIDs.contains(event.id) else {
+        let key = Self.noteKey(for: event)
+        guard !createdEventIDs.contains(key),
+              !pendingEventIDs.contains(key) else {
             // A page was already created (or is currently being created) for this
             // event. Clear lastError so the caller knows this is a silent skip,
             // not a real failure, and won't show a spurious error banner.
@@ -150,8 +151,8 @@ final class NotionService: ObservableObject {
 
         // Mark as in-flight before the first await so that a second call racing
         // through while the API request is pending won't pass the guard above.
-        pendingEventIDs.insert(event.id)
-        defer { pendingEventIDs.remove(event.id) }
+        pendingEventIDs.insert(key)
+        defer { pendingEventIDs.remove(key) }
 
         guard let token = apiToken, !databaseID.isEmpty else {
             lastError = "Notion not configured — missing API token or database ID."
@@ -276,7 +277,7 @@ final class NotionService: ObservableObject {
                let result = URL(string: pageURL) {
                 // Only mark as created after a confirmed successful API response so
                 // that transient failures don't permanently suppress retries.
-                rememberMeetingNote(result, for: event.id)
+                rememberMeetingNote(result, for: key)
 
                 // Relate the note to its Calendar Events row. Detached so the
                 // caller can open the page immediately — the link is a
@@ -292,6 +293,75 @@ final class NotionService: ObservableObject {
         }
 
         return nil
+    }
+
+    /// What a meeting-note lookup found. Returned directly rather than
+    /// signalled through `lastError`: that property is shared by every
+    /// NotionService call, so a concurrent operation could overwrite it
+    /// between the lookup and the create decision.
+    enum MeetingNoteLookup: Equatable {
+        case found(URL)
+        case none
+        case ambiguous(String)
+        case failed(String)
+    }
+
+    /// What find-or-create should do with a lookup result.
+    enum MeetingNoteStep: Equatable {
+        case open(URL)
+        case create
+        case refuse(String)
+    }
+
+    /// Pure decision behind `findOrCreateMeetingPage`. An ambiguous or failed
+    /// lookup refuses to create — adding another page to an ambiguous set
+    /// only makes it worse.
+    nonisolated static func nextStep(after lookup: MeetingNoteLookup) -> MeetingNoteStep {
+        switch lookup {
+        case .found(let url): return .open(url)
+        case .none: return .create
+        case .ambiguous(let message), .failed(let message): return .refuse(message)
+        }
+    }
+
+    /// Result of `findOrCreateMeetingPage`.
+    enum MeetingNoteOutcome: Equatable {
+        /// The event's note — existing or just created.
+        case note(URL)
+        /// Another call is creating this event's note right now.
+        case skipped
+        /// Nothing to open; the message is for the user.
+        case failed(String)
+    }
+
+    /// Returns the existing note for `event` if the lookup resolves one,
+    /// otherwise creates a page.
+    ///
+    /// Creating blind is what made join produce a second page next to one
+    /// written by hand. A known note (made by this app, including by the
+    /// Cal.com bridge) comes back as `.note` so the caller can open it.
+    func findOrCreateMeetingPage(for event: MeetingEvent) async -> MeetingNoteOutcome {
+        switch Self.nextStep(after: await lookupMeetingNote(for: event)) {
+        case .open(let url):
+            return .note(url)
+        case .refuse(let message):
+            lastError = message
+            return .failed(message)
+        case .create:
+            break
+        }
+
+        // A concurrent call may have created or started the page while the
+        // lookup was awaiting. No suspension between here and
+        // createMeetingPage's own guard, so this check is exact.
+        let key = Self.noteKey(for: event)
+        if let known = knownMeetingNote(for: key) { return .note(known) }
+        if createdEventIDs.contains(key) || pendingEventIDs.contains(key) { return .skipped }
+
+        if let created = await createMeetingPage(for: event) { return .note(created) }
+        // createMeetingPage sets lastError as its last act before returning
+        // nil, with no suspension in between.
+        return .failed(lastError ?? "Couldn't create the meeting note in Notion.")
     }
 
     // MARK: - Finding an existing meeting note
@@ -311,6 +381,30 @@ final class NotionService: ObservableObject {
     /// synchronous — the panel calls this before reaching for the network.
     func knownMeetingNote(for eventID: String) -> URL? {
         noteLinks[eventID].flatMap(URL.init(string:))
+    }
+
+    /// As above, keyed by `noteKey(for:)` so a Cal.com-tagged event finds
+    /// the page the Cal.com bridge made for it.
+    func knownMeetingNote(for event: MeetingEvent) -> URL? {
+        knownMeetingNote(for: Self.noteKey(for: event))
+    }
+
+    /// Dedupe key for an event's meeting note. A calendar event tagged
+    /// `[calcom-booking-id:<uid>]` maps to `calcom-<uid>` — the ID
+    /// `CalComNotionBridge` creates its page under — so joining that event
+    /// finds the bridge's page instead of making a second one. Everything
+    /// else keys on its own event ID.
+    nonisolated static func noteKey(eventID: String, notes: String?) -> String {
+        let marker = "[calcom-booking-id:"
+        guard let notes,
+              let start = notes.range(of: marker)?.upperBound,
+              let end = notes[start...].firstIndex(of: "]"),
+              start < end else { return eventID }
+        return "calcom-\(notes[start..<end])"
+    }
+
+    private static func noteKey(for event: MeetingEvent) -> String {
+        noteKey(eventID: event.id, notes: event.notes)
     }
 
     private func rememberMeetingNote(_ url: URL, for eventID: String) {
@@ -333,9 +427,20 @@ final class NotionService: ObservableObject {
     /// picking one, because opening the wrong meeting's notes is worse than
     /// opening none.
     func findMeetingNote(for event: MeetingEvent) async -> URL? {
-        if let known = knownMeetingNote(for: event.id) { return known }
+        switch await lookupMeetingNote(for: event) {
+        case .found(let url): return url
+        case .none: return nil
+        case .ambiguous(let message), .failed(let message):
+            lastError = message
+            return nil
+        }
+    }
 
-        guard let token = apiToken else { return nil }
+    /// `findMeetingNote` without the side effect on `lastError`.
+    func lookupMeetingNote(for event: MeetingEvent) async -> MeetingNoteLookup {
+        if let known = knownMeetingNote(for: event) { return .found(known) }
+
+        guard let token = apiToken else { return .none }
         let client = CalendarSyncNotionClient(token: token, logger: CalendarSyncLogger())
 
         // Strategy 1: the Calendar Events row's `Meeting Notes` relation.
@@ -345,13 +450,12 @@ final class NotionService: ObservableObject {
             switch row.noteIDs.count {
             case 1:
                 let url = MeetingNoteMatcher.pageURL(forPageID: row.noteIDs[0])
-                rememberMeetingNote(url, for: event.id)
-                return url
+                rememberMeetingNote(url, for: Self.noteKey(for: event))
+                return .found(url)
             case 0:
                 break  // fall through to the title search
             default:
-                lastError = "\(row.noteIDs.count) notes are linked to this calendar event — open Notion and merge them."
-                return nil
+                return .ambiguous("\(row.noteIDs.count) notes are linked to this calendar event — open Notion and merge them.")
             }
         }
 
@@ -359,7 +463,7 @@ final class NotionService: ObservableObject {
         // a page made by hand before the sync has related it to anything.
         let day = MeetingNoteMatcher.dayString(for: event.startDate)
         let title = event.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
+        guard !title.isEmpty else { return .none }
 
         var candidates: [MeetingNoteMatcher.Candidate] = []
         var cursor: String?
@@ -384,21 +488,19 @@ final class NotionService: ObservableObject {
                     titleProperty: CalendarSyncConstants.meetingNotesTitleProperty)
                 cursor = MeetingNoteMatcher.nextCursor(from: resp)
             } catch {
-                lastError = "Notion lookup failed — \(error.localizedDescription)"
-                return nil
+                return .failed("Notion lookup failed — \(error.localizedDescription)")
             }
             page += 1
         } while cursor != nil && page < 10
 
         switch MeetingNoteMatcher.resolve(candidates: candidates, title: title) {
         case .none:
-            return nil
+            return .none
         case .unique(let hit):
-            rememberMeetingNote(hit.url, for: event.id)
-            return hit.url
+            rememberMeetingNote(hit.url, for: Self.noteKey(for: event))
+            return .found(hit.url)
         case .ambiguous(let pageIDs):
-            lastError = "\(pageIDs.count) notes titled “\(title)” on \(day) — open Notion and merge them."
-            return nil
+            return .ambiguous("\(pageIDs.count) notes titled “\(title)” on \(day) — open Notion and merge them.")
         }
     }
 
@@ -453,19 +555,32 @@ final class NotionService: ObservableObject {
         guard let row = await calendarEventRow(for: event, client: client) else { return }
         let calendarEventPageID = row.pageID
 
+        // PATCH replaces the whole relation, so send what's already there
+        // plus the new note — sending only the new ID would unlink the rest.
+        let relation = Self.relationAppending(notePageID, to: row.noteIDs).map { ["id": $0] }
+
         do {
             _ = try await client.patch(
                 path: "/pages/\(calendarEventPageID)",
                 body: [
                     "properties": [
                         CalendarSyncConstants.calendarEventsMeetingNotesRelation: [
-                            "relation": [["id": notePageID]]
+                            "relation": relation
                         ]
                     ]
                 ])
         } catch {
             lastError = "Note created, but linking it to the calendar event failed — \(error.localizedDescription)"
         }
+    }
+
+    /// `existing` with `noteID` appended unless it's already there. Notion
+    /// returns relation IDs dashed but accepts either form, so compare
+    /// without dashes.
+    nonisolated static func relationAppending(_ noteID: String, to existing: [String]) -> [String] {
+        let bare = { (id: String) in id.replacingOccurrences(of: "-", with: "").lowercased() }
+        guard !existing.contains(where: { bare($0) == bare(noteID) }) else { return existing }
+        return existing + [noteID]
     }
 
     // MARK: - Open in Notion desktop app

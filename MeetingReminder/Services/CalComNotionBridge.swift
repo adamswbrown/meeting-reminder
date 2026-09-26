@@ -18,10 +18,11 @@ final class CalComNotionBridge {
         guard let notion, notion.isConfigured else { return }
         guard let start = booking.startDate, let end = booking.endDate else { return }
 
-        // Construct a MeetingEvent so we can reuse NotionService.createMeetingPage(for:)
-        // directly — including its session-scoped dedup guard (createdEventIDs).
-        // "calcom-<uid>" is stable across sync runs so the guard also prevents
-        // duplicates if syncOnce fires more than once before the page write completes.
+        // Construct a MeetingEvent so we can reuse NotionService's find-or-create
+        // path — the same one meeting join uses, including its dedup guard.
+        // "calcom-<uid>" is stable across sync runs, and is the key NotionService
+        // derives for the tagged EKEvent too (`noteKey`), so joining the meeting
+        // later finds this page instead of creating a second one.
         let attendeeNames = booking.attendees?.map { "\($0.name) <\($0.email)>" }
         let videoLink = booking.location.flatMap { URL(string: $0) }
         let event = MeetingEvent(
@@ -34,6 +35,6 @@ final class CalComNotionBridge {
             attendees: attendeeNames,
             location: booking.location
         )
-        _ = await notion.createMeetingPage(for: event)
+        _ = await notion.findOrCreateMeetingPage(for: event)
     }
 }
