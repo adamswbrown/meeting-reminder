@@ -139,8 +139,9 @@ final class NotionService: ObservableObject {
     ///   - End (date)
     ///   - Attendees Name (rich_text)  — optional
     func createMeetingPage(for event: MeetingEvent) async -> URL? {
-        guard !createdEventIDs.contains(event.id),
-              !pendingEventIDs.contains(event.id) else {
+        let key = Self.noteKey(for: event)
+        guard !createdEventIDs.contains(key),
+              !pendingEventIDs.contains(key) else {
             // A page was already created (or is currently being created) for this
             // event. Clear lastError so the caller knows this is a silent skip,
             // not a real failure, and won't show a spurious error banner.
@@ -150,8 +151,8 @@ final class NotionService: ObservableObject {
 
         // Mark as in-flight before the first await so that a second call racing
         // through while the API request is pending won't pass the guard above.
-        pendingEventIDs.insert(event.id)
-        defer { pendingEventIDs.remove(event.id) }
+        pendingEventIDs.insert(key)
+        defer { pendingEventIDs.remove(key) }
 
         guard let token = apiToken, !databaseID.isEmpty else {
             lastError = "Notion not configured — missing API token or database ID."
@@ -276,7 +277,7 @@ final class NotionService: ObservableObject {
                let result = URL(string: pageURL) {
                 // Only mark as created after a confirmed successful API response so
                 // that transient failures don't permanently suppress retries.
-                rememberMeetingNote(result, for: event.id)
+                rememberMeetingNote(result, for: key)
 
                 // Relate the note to its Calendar Events row. Detached so the
                 // caller can open the page immediately — the link is a
@@ -327,6 +328,30 @@ final class NotionService: ObservableObject {
         noteLinks[eventID].flatMap(URL.init(string:))
     }
 
+    /// As above, keyed by `noteKey(for:)` so a Cal.com-tagged event finds
+    /// the page the Cal.com bridge made for it.
+    func knownMeetingNote(for event: MeetingEvent) -> URL? {
+        knownMeetingNote(for: Self.noteKey(for: event))
+    }
+
+    /// Dedupe key for an event's meeting note. A calendar event tagged
+    /// `[calcom-booking-id:<uid>]` maps to `calcom-<uid>` — the ID
+    /// `CalComNotionBridge` creates its page under — so joining that event
+    /// finds the bridge's page instead of making a second one. Everything
+    /// else keys on its own event ID.
+    nonisolated static func noteKey(eventID: String, notes: String?) -> String {
+        let marker = "[calcom-booking-id:"
+        guard let notes,
+              let start = notes.range(of: marker)?.upperBound,
+              let end = notes[start...].firstIndex(of: "]"),
+              start < end else { return eventID }
+        return "calcom-\(notes[start..<end])"
+    }
+
+    private static func noteKey(for event: MeetingEvent) -> String {
+        noteKey(eventID: event.id, notes: event.notes)
+    }
+
     private func rememberMeetingNote(_ url: URL, for eventID: String) {
         var links = noteLinks
         links[eventID] = url.absoluteString
@@ -347,7 +372,7 @@ final class NotionService: ObservableObject {
     /// picking one, because opening the wrong meeting's notes is worse than
     /// opening none.
     func findMeetingNote(for event: MeetingEvent) async -> URL? {
-        if let known = knownMeetingNote(for: event.id) { return known }
+        if let known = knownMeetingNote(for: event) { return known }
 
         guard let token = apiToken else { return nil }
         let client = CalendarSyncNotionClient(token: token, logger: CalendarSyncLogger())
@@ -359,7 +384,7 @@ final class NotionService: ObservableObject {
             switch row.noteIDs.count {
             case 1:
                 let url = MeetingNoteMatcher.pageURL(forPageID: row.noteIDs[0])
-                rememberMeetingNote(url, for: event.id)
+                rememberMeetingNote(url, for: Self.noteKey(for: event))
                 return url
             case 0:
                 break  // fall through to the title search
@@ -408,7 +433,7 @@ final class NotionService: ObservableObject {
         case .none:
             return nil
         case .unique(let hit):
-            rememberMeetingNote(hit.url, for: event.id)
+            rememberMeetingNote(hit.url, for: Self.noteKey(for: event))
             return hit.url
         case .ambiguous(let pageIDs):
             lastError = "\(pageIDs.count) notes titled “\(title)” on \(day) — open Notion and merge them."

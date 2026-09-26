@@ -263,4 +263,28 @@ final class MeetingNoteMatcherTests: XCTestCase {
     func testRelationAppendingToEmptyRelation() {
         XCTAssertEqual(NotionService.relationAppending("n1", to: []), ["n1"])
     }
+
+    // MARK: - Note dedupe key (NotionService)
+
+    /// A Cal.com-tagged calendar event must dedupe against the page the
+    /// Cal.com bridge made (keyed `calcom-<uid>`), not its own EventKit ID —
+    /// otherwise joining it creates a second page.
+    func testNoteKeyUsesCalComBookingTag() {
+        let notes = "Agenda\n\n[calcom-booking-id:bk_123]\n[calcom-created]"
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-LOCAL-ID", notes: notes), "calcom-bk_123")
+    }
+
+    func testNoteKeyFallsBackToEventIDWithoutTag() {
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: "just notes"), "EK-1")
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: nil), "EK-1")
+    }
+
+    func testNoteKeyIgnoresEmptyOrUnterminatedTag() {
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: "[calcom-booking-id:]"), "EK-1")
+        XCTAssertEqual(NotionService.noteKey(eventID: "EK-1", notes: "[calcom-booking-id:abc"), "EK-1")
+    }
+
+    func testNoteKeyForBridgeEventIsItsOwnID() {
+        XCTAssertEqual(NotionService.noteKey(eventID: "calcom-bk_123", notes: nil), "calcom-bk_123")
+    }
 }

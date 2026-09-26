@@ -374,7 +374,7 @@ final class OverlayCoordinator: ObservableObject {
                 // (e.g. one made by hand) before creating, so join never
                 // puts a second page next to it.
                 if self.notionService.isActive,
-                   self.notionService.knownMeetingNote(for: event.id) == nil {
+                   self.notionService.knownMeetingNote(for: event) == nil {
                     Task { @MainActor in
                         if let pageURL = await self.notionService.findOrCreateMeetingPage(for: event) {
                             NotionService.openInNotionApp(pageURL)
