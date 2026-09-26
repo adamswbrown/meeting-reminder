@@ -195,9 +195,20 @@ final class CalendarService: ObservableObject {
 
     /// Check if the next meeting after the given event is back-to-back (< 5 min gap)
     func nextBackToBackEvent(after event: MeetingEvent) -> MeetingEvent? {
+        Self.nextBackToBack(after: event, in: events, now: Date())
+    }
+
+    /// The next meeting that hasn't started yet, if it begins within 5 min of
+    /// `event`'s end. Meetings that overlapped `event` and are already underway
+    /// (or finished) are skipped — they aren't something to take a break before.
+    nonisolated static func nextBackToBack(
+        after event: MeetingEvent,
+        in events: [MeetingEvent],
+        now: Date
+    ) -> MeetingEvent? {
         guard let index = events.firstIndex(where: { $0.id == event.id }),
-              index + 1 < events.count else { return nil }
-        let next = events[index + 1]
+              let next = events[(index + 1)...].first(where: { $0.startDate >= now })
+        else { return nil }
         let gap = next.startDate.timeIntervalSince(event.endDate)
         return gap < 300 ? next : nil
     }

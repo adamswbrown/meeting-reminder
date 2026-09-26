@@ -86,6 +86,34 @@ final class MeetingMonitorLogicTests: XCTestCase {
             until: now.addingTimeInterval(-5), timeUntilStart: nil, now: now))
     }
 
+    // MARK: - CalendarService.nextBackToBack — break overlay target
+
+    func testBackToBackPicksUpcomingMeeting() {
+        let a = event("a", start: now.addingTimeInterval(-1800), minutes: 30)  // ends now
+        let b = event("b", start: now.addingTimeInterval(120))
+        XCTAssertEqual(CalendarService.nextBackToBack(after: a, in: [a, b], now: now)?.id, "b")
+    }
+
+    func testBackToBackSkipsOverlappingMeetingAlreadyStarted() {
+        // c overlapped a and has already started — not a "next" meeting to break before.
+        let a = event("a", start: now.addingTimeInterval(-1800), minutes: 30)
+        let c = event("c", start: now.addingTimeInterval(-600), minutes: 60)
+        let b = event("b", start: now.addingTimeInterval(60))
+        XCTAssertEqual(CalendarService.nextBackToBack(after: a, in: [a, c, b], now: now)?.id, "b")
+    }
+
+    func testBackToBackSkipsFinishedMeeting() {
+        let a = event("a", start: now.addingTimeInterval(-3600), minutes: 60)
+        let done = event("done", start: now.addingTimeInterval(-900), minutes: 10)
+        XCTAssertNil(CalendarService.nextBackToBack(after: a, in: [a, done], now: now))
+    }
+
+    func testBackToBackNilWhenGapIsABreak() {
+        let a = event("a", start: now.addingTimeInterval(-1800), minutes: 30)
+        let b = event("b", start: now.addingTimeInterval(900))
+        XCTAssertNil(CalendarService.nextBackToBack(after: a, in: [a, b], now: now))
+    }
+
     // MARK: - CallEndGate — back-to-back meetings
 
     func testGateNotArmedAtJoin() {
