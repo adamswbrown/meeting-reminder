@@ -262,8 +262,9 @@ final class MeetingMonitor: ObservableObject {
         guard let event = activeOverlayEvent else { return }
         snoozedEvents[event.id] = Date().addingTimeInterval(TimeInterval(seconds))
         shownEventIDs.remove(event.id)
-        // Reset alert tiers so they can re-fire after snooze
-        firedAlertTiers[event.id] = nil
+        // Keep the banner/chime tiers already fired so the snooze expiring
+        // doesn't replay them; only last-chance can re-fire.
+        firedAlertTiers[event.id] = MeetingMonitorLogic.tiersAfterSnooze(firedAlertTiers[event.id])
         dismiss()
     }
 
@@ -838,6 +839,13 @@ enum MeetingMonitorLogic {
     /// or a meeting cancelled mid-call).
     static func refreshed(_ current: MeetingEvent, from live: [MeetingEvent]) -> MeetingEvent {
         live.first(where: { $0.id == current.id }) ?? current
+    }
+
+    /// Fired tiers to keep when the overlay is snoozed. The banner and chime
+    /// already did their job — clearing them replayed both when the snooze
+    /// expired. Only the last-chance re-fire is released again.
+    static func tiersAfterSnooze(_ fired: Set<Int>?) -> Set<Int>? {
+        fired?.subtracting([AlertTier.lastChance.rawValue])
     }
 }
 

@@ -35,6 +35,22 @@ final class MeetingMonitorLogicTests: XCTestCase {
         XCTAssertEqual(fresh, joined)
     }
 
+    // MARK: - tiersAfterSnooze — no banner/beep replay
+
+    func testSnoozeKeepsFiredLowerTiers() {
+        let fired: Set<Int> = [AlertTier.ambient.rawValue, AlertTier.banner.rawValue, AlertTier.urgent.rawValue]
+        XCTAssertEqual(MeetingMonitorLogic.tiersAfterSnooze(fired), fired)
+    }
+
+    func testSnoozeReleasesLastChanceTier() {
+        let fired: Set<Int> = [AlertTier.banner.rawValue, AlertTier.lastChance.rawValue]
+        XCTAssertEqual(MeetingMonitorLogic.tiersAfterSnooze(fired), [AlertTier.banner.rawValue])
+    }
+
+    func testSnoozeWithNothingFired() {
+        XCTAssertNil(MeetingMonitorLogic.tiersAfterSnooze(nil))
+    }
+
     // MARK: - CallEndGate — back-to-back meetings
 
     func testGateNotArmedAtJoin() {
