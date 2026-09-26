@@ -27,8 +27,11 @@ final class CalendarSyncNotionClient {
         self.session = URLSession(configuration: cfg)
     }
 
-    func post(path: String, body: [String: Any]) async throws -> [String: Any] {
-        try await request(method: "POST", path: path, body: body)
+    /// `idempotent: false` for requests that create something (`POST /pages`):
+    /// those are only retried on 429, never after a transport error or 5xx,
+    /// where the create may already have landed. See `NotionRetryPolicy`.
+    func post(path: String, body: [String: Any], idempotent: Bool = true) async throws -> [String: Any] {
+        try await request(method: "POST", path: path, body: body, idempotent: idempotent)
     }
 
     func patch(path: String, body: [String: Any]) async throws -> [String: Any] {
@@ -39,7 +42,8 @@ final class CalendarSyncNotionClient {
         try await request(method: "GET", path: path, body: nil)
     }
 
-    private func request(method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
+    private func request(method: String, path: String, body: [String: Any]?,
+                         idempotent: Bool = true) async throws -> [String: Any] {
         let url = URL(string: "https://api.notion.com/v1\(path)")!
         var attempt = 0
         var backoff: TimeInterval = 0.5
@@ -57,7 +61,7 @@ final class CalendarSyncNotionClient {
             do {
                 (data, resp) = try await session.data(for: req)
             } catch {
-                if NotionRetryPolicy.shouldRetry(status: nil, attempt: attempt) {
+                if NotionRetryPolicy.shouldRetry(status: nil, attempt: attempt, idempotent: idempotent) {
                     logger.warn("network error \(error.localizedDescription), retrying (attempt \(attempt))")
                     try await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
                     backoff *= 2
@@ -73,7 +77,8 @@ final class CalendarSyncNotionClient {
                 return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             }
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
-            if NotionRetryPolicy.shouldRetry(status: http.statusCode, attempt: attempt) {
+            if NotionRetryPolicy.shouldRetry(status: http.statusCode, attempt: attempt,
+                                             idempotent: idempotent) {
                 let wait = NotionRetryPolicy.delay(status: http.statusCode,
                                                    retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
                                                    backoff: backoff)
@@ -99,12 +104,24 @@ enum NotionRetryPolicy {
     static let maxRetryAfter: TimeInterval = 60
 
     /// Whether a failed attempt should be retried. `status` nil means a
-    /// transport error (no HTTP response).
-    static func shouldRetry(status: Int?, attempt: Int) -> Bool {
-        guard let status else { return attempt < maxAttempts }
+    /// transport error (no HTTP response). A non-idempotent request is only
+    /// retried on 429 (Notion did not process it); after a transport error or
+    /// 5xx the request may have landed, so a blind retry could duplicate it.
+    static func shouldRetry(status: Int?, attempt: Int, idempotent: Bool = true) -> Bool {
         if status == 429 { return attempt < maxRateLimitAttempts }
+        guard idempotent else { return false }
+        guard let status else { return attempt < maxAttempts }
         if [502, 503, 504].contains(status) { return attempt < maxAttempts }
         return false
+    }
+
+    /// True when a failed request may nonetheless have been applied by Notion:
+    /// a transport error (timeout, dropped connection, unreadable response) or
+    /// a 5xx. The caller must check before re-sending a non-idempotent request.
+    static func isAmbiguousFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let notion = error as? CalendarSyncNotionError { return notion.status >= 500 }
+        return true
     }
 
     /// Seconds to wait before the next attempt: Notion's `Retry-After` (in
@@ -742,14 +759,34 @@ final class CalendarSyncUpserter {
                         if dryRun {
                             logger.info("DRY CREATE \(appleID)")
                         } else {
-                            let resp = try await client.post(path: "/pages", body: [
+                            let createBody: [String: Any] = [
                                 "parent": [
                                     "type": "data_source_id",
                                     "data_source_id": CalendarSyncConstants.calendarEventsDataSourceID,
                                 ],
                                 "properties": props,
-                            ])
-                            resultPageID = resp["id"] as? String
+                            ]
+                            do {
+                                let resp = try await client.post(path: "/pages", body: createBody,
+                                                                 idempotent: false)
+                                resultPageID = resp["id"] as? String
+                            } catch where NotionRetryPolicy.isAmbiguousFailure(error) {
+                                // The create may have landed with only the
+                                // response lost. Look before re-sending, so a
+                                // timeout can't mint a twin row. Notion's
+                                // create→query visibility is ~2s.
+                                logger.warn("create for \(appleID) failed ambiguously (\(error)) — checking Notion before retrying")
+                                try await Task.sleep(nanoseconds: 2_000_000_000)
+                                if let landed = try await CalendarSyncNotionQueries.findPageID(client: client,
+                                                                                               appleID: appleID) {
+                                    logger.warn("create for \(appleID) had landed :: \(landed)")
+                                    resultPageID = landed
+                                } else {
+                                    let resp = try await client.post(path: "/pages", body: createBody,
+                                                                     idempotent: false)
+                                    resultPageID = resp["id"] as? String
+                                }
+                            }
                             if let resultPageID {
                                 runRegistry.register(appleID: appleID, pageID: resultPageID)
                             }

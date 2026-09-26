@@ -163,4 +163,24 @@ final class CalendarSyncUpserterTests: XCTestCase {
         XCTAssertTrue(NotionRetryPolicy.shouldRetry(status: nil, attempt: 2))
         XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: 400, attempt: 1))
     }
+
+    // MARK: Item A4 — page creates are not blindly retried
+
+    /// A transport error or 5xx on `POST /pages` may mean the page was created
+    /// and only the response was lost; retrying it blindly mints a duplicate.
+    func testNonIdempotentRequestsOnlyRetryRateLimits() {
+        XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: nil, attempt: 1, idempotent: false))
+        XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: 503, attempt: 1, idempotent: false))
+        XCTAssertFalse(NotionRetryPolicy.shouldRetry(status: 504, attempt: 1, idempotent: false))
+        XCTAssertTrue(NotionRetryPolicy.shouldRetry(status: 429, attempt: 1, idempotent: false))
+    }
+
+    func testAmbiguousFailureClassification() {
+        XCTAssertTrue(NotionRetryPolicy.isAmbiguousFailure(URLError(.timedOut)))
+        XCTAssertTrue(NotionRetryPolicy.isAmbiguousFailure(CalendarSyncNotionError(status: 504, body: "")))
+        XCTAssertTrue(NotionRetryPolicy.isAmbiguousFailure(CalendarSyncNotionError(status: 500, body: "")))
+        XCTAssertFalse(NotionRetryPolicy.isAmbiguousFailure(CalendarSyncNotionError(status: 400, body: "")))
+        XCTAssertFalse(NotionRetryPolicy.isAmbiguousFailure(CalendarSyncNotionError(status: 429, body: "")))
+        XCTAssertFalse(NotionRetryPolicy.isAmbiguousFailure(CancellationError()))
+    }
 }
