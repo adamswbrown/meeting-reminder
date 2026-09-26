@@ -140,6 +140,24 @@ enum CalendarSyncCascade {
                              skip: false)
     }
 
+    /// The `Source Calendar` names whose rows the orphan sweep may classify
+    /// this run: only calendars that actually returned events. A calendar that
+    /// comes back empty (account offline, EventKit hiccup, opted out) would
+    /// otherwise look like every one of its meetings had been cancelled.
+    static func sweepableCalendarNames(fetched: [(name: String, eventCount: Int)]) -> Set<String> {
+        Set(fetched.filter { $0.eventCount > 0 }.map(\.name))
+    }
+
+    /// True when a row's `Source Calendar` select (read-format) names a calendar
+    /// in `sweepable`. A row with no Source Calendar is never swept — every
+    /// live in-window row carries one, since each upsert writes it.
+    static func isInSweptCalendar(_ sourceCalendar: Any?, sweepable: Set<String>) -> Bool {
+        guard let dict = sourceCalendar as? [String: Any],
+              let sel = dict["select"] as? [String: Any],
+              let name = sel["name"] as? String else { return false }
+        return sweepable.contains(name)
+    }
+
     /// True when a Notion `Status` property payload (read-format
     /// `{"select":{"name":"..."}}`) currently reads "Cancelled". Used to make
     /// the cancel cascade transition-only (fire exactly once).

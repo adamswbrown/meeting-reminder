@@ -527,10 +527,15 @@ final class CalendarSyncUpserter {
     /// Rows outside the window (older history, far-future) are left untouched
     /// because `touched` only reflects events in the current fetch window. Nil
     /// disables the window guard (the sweep is off in that case anyway).
+    ///
+    /// `sweepableCalendars` further bounds the sweep to rows whose `Source
+    /// Calendar` is one that returned events this run (see
+    /// `CalendarSyncCascade.sweepableCalendarNames`). Nil disables the guard.
     func run(rows: [(event: EventLike, isSeriesMaster: Bool, sourceCalendarName: String)],
              existing: [String: CalendarSyncNotionQueries.ExistingRow],
              orphanWindow: (start: Date, end: Date)? = nil,
-             presentIDs: Set<String> = []) async -> RunOutcome {
+             presentIDs: Set<String> = [],
+             sweepableCalendars: Set<String>? = nil) async -> RunOutcome {
         var counts = CalendarSyncCounts()
         var linkTargets: [RelationLinker.LinkTarget] = []
         let now = Date()
@@ -734,6 +739,7 @@ final class CalendarSyncUpserter {
             await processOrphans(touched: touched,
                                  existing: existing,
                                  orphanWindow: orphanWindow,
+                                 sweepableCalendars: sweepableCalendars,
                                  counts: &counts)
         }
         return RunOutcome(counts: counts, linkTargets: linkTargets)
@@ -756,9 +762,11 @@ final class CalendarSyncUpserter {
     private func processOrphans(touched: Set<String>,
                                 existing: [String: CalendarSyncNotionQueries.ExistingRow],
                                 orphanWindow: (start: Date, end: Date)?,
+                                sweepableCalendars: Set<String>?,
                                 counts: inout CalendarSyncCounts) async {
         var orphanIDs: [String] = []
         var skippedOutOfWindow = 0
+        var skippedUnfetchedCalendar = 0
         for (appleID, row) in existing where !touched.contains(appleID) {
             // Only sweep rows whose event date falls inside the current run's
             // fetch window. `fetchExistingEvents` queries the whole data source
@@ -773,10 +781,22 @@ final class CalendarSyncUpserter {
                     continue
                 }
             }
+            // Only sweep rows from a calendar that returned events this run.
+            // `touched` says nothing about a calendar that wasn't fetched (or
+            // came back empty), so its rows can't be judged missing.
+            if let sweepable = sweepableCalendars,
+               !CalendarSyncCascade.isInSweptCalendar(row.properties["Source Calendar"],
+                                                      sweepable: sweepable) {
+                skippedUnfetchedCalendar += 1
+                continue
+            }
             orphanIDs.append(appleID)
         }
         if skippedOutOfWindow > 0 {
             logger.info("orphans: \(skippedOutOfWindow) rows skipped (outside fetch window or no date)")
+        }
+        if skippedUnfetchedCalendar > 0 {
+            logger.info("orphans: \(skippedUnfetchedCalendar) rows skipped (source calendar not fetched or returned no events)")
         }
         guard !orphanIDs.isEmpty else { return }
         logger.info("orphans: \(orphanIDs.count) rows in Notion not in source")
@@ -1007,6 +1027,17 @@ enum CalendarSyncMode {
         case .reactive: return "reactive"
         }
     }
+
+    /// Whether this mode may run the cancel/reschedule cascade. Reactive runs
+    /// never do: they suppress series-master rows and see only a narrow window,
+    /// so a master (bare UID) whose first occurrence is upcoming would read as
+    /// a vanished one-off and be stamped Cancelled. The 06:00 full run owns it.
+    func cascadesStatus(enabled: Bool) -> Bool {
+        switch self {
+        case .full: return enabled
+        case .reactive: return false
+        }
+    }
 }
 
 @MainActor
@@ -1172,7 +1203,8 @@ final class CalendarNotionSyncService: ObservableObject {
         await run(mode: .full, dryRun: dryRun)
     }
 
-    /// Change-driven run. Narrow forward window, orphan archival forced off,
+    /// Change-driven run. Narrow forward window, orphan archival and the
+    /// status cascade forced off (see `CalendarSyncMode.cascadesStatus`),
     /// rolling-week patch skipped. Shares the upsert pipeline with the full run.
     /// Returns whether the run actually executed (false if another was in
     /// flight and it was skipped).
@@ -1250,6 +1282,9 @@ final class CalendarNotionSyncService: ObservableObject {
             // still exist on the calendar, so the orphan sweep must treat them
             // as present (otherwise a newly-added skip rule mass-archives them).
             var skipFilteredIDs: Set<String> = []
+            // Per-calendar raw event counts, so the orphan sweep only judges
+            // rows from calendars that actually returned events this run.
+            var fetchedCalendars: [(name: String, eventCount: Int)] = []
             // The fetch window bracket, captured so the orphan sweep only
             // considers Notion rows whose date falls inside it. Full runs use
             // the 90/30 window; reactive runs are narrow (but skip the sweep).
@@ -1283,6 +1318,7 @@ final class CalendarNotionSyncService: ObservableObject {
                 }
                 totalEK += events.count
                 let calName = reader.notionCalendarName(for: cal)
+                fetchedCalendars.append((calName, events.count))
                 let kept: [EKEvent] = events.filter { e in
                     let title = e.title ?? ""
                     if SkipFilter.shouldSkip(title: title, rules: skipRules) {
@@ -1332,7 +1368,7 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 logger: logger,
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled,
-                                                cascadeStatus: cascadeStatusEnabled,
+                                                cascadeStatus: mode.cascadesStatus(enabled: cascadeStatusEnabled),
                                                 occurrenceProbe: { id, start, seen in
                                                     reader.probeOccurrence(appleID: id,
                                                                            originalStart: start,
@@ -1341,7 +1377,9 @@ final class CalendarNotionSyncService: ObservableObject {
             let outcome = await upserter.run(rows: rows,
                                              existing: existing,
                                              orphanWindow: (start: windowStart, end: windowEnd),
-                                             presentIDs: skipFilteredIDs)
+                                             presentIDs: skipFilteredIDs,
+                                             sweepableCalendars: CalendarSyncCascade.sweepableCalendarNames(
+                                                fetched: fetchedCalendars))
             var counts = outcome.counts
             counts.duplicates = existingResult.duplicates.count
 
