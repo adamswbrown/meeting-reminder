@@ -294,6 +294,20 @@ final class NotionService: ObservableObject {
         return nil
     }
 
+    /// Returns the existing note for `event` if `findMeetingNote` resolves
+    /// one, otherwise creates a page.
+    ///
+    /// Creating blind is what made join produce a second page next to one
+    /// written by hand. When the lookup fails or is ambiguous (`lastError`
+    /// set) this returns nil rather than creating — adding another page to
+    /// an ambiguous set only makes it worse.
+    func findOrCreateMeetingPage(for event: MeetingEvent) async -> URL? {
+        lastError = nil
+        if let existing = await findMeetingNote(for: event) { return existing }
+        guard lastError == nil else { return nil }
+        return await createMeetingPage(for: event)
+    }
+
     // MARK: - Finding an existing meeting note
 
     /// Event ID → Notion page URL for notes this app has created.
@@ -453,19 +467,32 @@ final class NotionService: ObservableObject {
         guard let row = await calendarEventRow(for: event, client: client) else { return }
         let calendarEventPageID = row.pageID
 
+        // PATCH replaces the whole relation, so send what's already there
+        // plus the new note — sending only the new ID would unlink the rest.
+        let relation = Self.relationAppending(notePageID, to: row.noteIDs).map { ["id": $0] }
+
         do {
             _ = try await client.patch(
                 path: "/pages/\(calendarEventPageID)",
                 body: [
                     "properties": [
                         CalendarSyncConstants.calendarEventsMeetingNotesRelation: [
-                            "relation": [["id": notePageID]]
+                            "relation": relation
                         ]
                     ]
                 ])
         } catch {
             lastError = "Note created, but linking it to the calendar event failed — \(error.localizedDescription)"
         }
+    }
+
+    /// `existing` with `noteID` appended unless it's already there. Notion
+    /// returns relation IDs dashed but accepts either form, so compare
+    /// without dashes.
+    nonisolated static func relationAppending(_ noteID: String, to existing: [String]) -> [String] {
+        let bare = { (id: String) in id.replacingOccurrences(of: "-", with: "").lowercased() }
+        guard !existing.contains(where: { bare($0) == bare(noteID) }) else { return existing }
+        return existing + [noteID]
     }
 
     // MARK: - Open in Notion desktop app

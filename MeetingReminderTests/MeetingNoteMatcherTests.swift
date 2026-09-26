@@ -244,4 +244,23 @@ final class MeetingNoteMatcherTests: XCTestCase {
         XCTAssertEqual(filter["property"] as? String, "Apple Event ID")
         XCTAssertEqual((filter["rich_text"] as? [String: Any])?["equals"] as? String, "12D54CB4")
     }
+
+    // MARK: - Meeting Notes relation (NotionService)
+
+    /// Linking a new note must add to the relation, not replace it —
+    /// a PATCH with only the new ID would unlink a note already there.
+    func testRelationAppendingKeepsExistingNotes() {
+        let merged = NotionService.relationAppending("new-note", to: ["hand-made"])
+        XCTAssertEqual(merged, ["hand-made", "new-note"])
+    }
+
+    func testRelationAppendingIgnoresAlreadyLinkedIDInEitherFormat() {
+        let dashed = "1d605620-3b70-47f1-96d8-465e57fd0bdd"
+        let bare = "1d6056203b7047f196d8465e57fd0bdd"
+        XCTAssertEqual(NotionService.relationAppending(bare, to: [dashed]), [dashed])
+    }
+
+    func testRelationAppendingToEmptyRelation() {
+        XCTAssertEqual(NotionService.relationAppending("n1", to: []), ["n1"])
+    }
 }

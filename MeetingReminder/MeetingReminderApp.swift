@@ -369,9 +369,14 @@ final class OverlayCoordinator: ObservableObject {
                 // Notion: create page + open in desktop app (fire-and-forget).
                 // On failure, surface the error as a banner so the user isn't
                 // left wondering why nothing happened.
-                if self.notionService.isActive {
+                // A note this app already made or found for the event is a
+                // silent skip, as before; otherwise look for an existing note
+                // (e.g. one made by hand) before creating, so join never
+                // puts a second page next to it.
+                if self.notionService.isActive,
+                   self.notionService.knownMeetingNote(for: event.id) == nil {
                     Task { @MainActor in
-                        if let pageURL = await self.notionService.createMeetingPage(for: event) {
+                        if let pageURL = await self.notionService.findOrCreateMeetingPage(for: event) {
                             NotionService.openInNotionApp(pageURL)
                         } else if let detail = self.notionService.lastError {
                             // lastError is nil for a silent deduplication skip (page
