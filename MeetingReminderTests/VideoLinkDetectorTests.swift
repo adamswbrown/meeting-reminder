@@ -167,4 +167,52 @@ final class VideoLinkDetectorTests: XCTestCase {
         let url = VideoLinkDetector.findVideoURL(in: text)
         XCTAssertEqual(url!.absoluteString, "https://us04web.zoom.us/j/123456789")
     }
+    // MARK: - Teams /meet/, Teams personal, SafeLinks
+
+    func testFindsTeamsMeetShortLink() {
+        let text = "Join: https://teams.microsoft.com/meet/2345678901234?p=AbCdEfGh"
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertEqual(url?.absoluteString, "https://teams.microsoft.com/meet/2345678901234?p=AbCdEfGh")
+    }
+
+    func testFindsTeamsLiveLink() {
+        let text = "Join: https://teams.live.com/meet/9384756102938?p=xyz"
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertNotNil(url)
+        XCTAssertEqual(url?.host, "teams.live.com")
+    }
+
+    func testIsVideoLinkTeamsMeetShortLink() {
+        let url = URL(string: "https://teams.microsoft.com/meet/2345678901234?p=AbCdEfGh")!
+        XCTAssertTrue(VideoLinkDetector.isVideoLink(url))
+    }
+
+    func testServiceNameTeamsLive() {
+        let url = URL(string: "https://teams.live.com/meet/9384756102938")!
+        XCTAssertEqual(VideoLinkDetector.serviceName(for: url), "Teams")
+    }
+
+    func testUnwrapsSafeLinksTeamsURLInText() {
+        let text = "Join <https://eur02.safelinks.protection.outlook.com/?url=https%3A%2F%2Fteams.microsoft.com%2Fl%2Fmeetup-join%2F19%253ameeting_abc%2540thread.v2%2F0&data=05%7C01&reserved=0>"
+        let url = VideoLinkDetector.findVideoURL(in: text)
+        XCTAssertEqual(url?.host, "teams.microsoft.com")
+        XCTAssertTrue(url!.absoluteString.hasPrefix("https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc"))
+    }
+
+    func testUnwrapsSafeLinksEventURL() {
+        let wrapped = URL(string: "https://nam12.safelinks.protection.outlook.com/?url=https%3A%2F%2Fus02web.zoom.us%2Fj%2F123456789&data=abc")!
+        let unwrapped = VideoLinkDetector.unwrapSafeLink(wrapped)
+        XCTAssertEqual(unwrapped.absoluteString, "https://us02web.zoom.us/j/123456789")
+        XCTAssertTrue(VideoLinkDetector.isVideoLink(unwrapped))
+    }
+
+    func testUnwrapSafeLinkLeavesOrdinaryURLAlone() {
+        let url = URL(string: "https://meet.google.com/abc-defg-hij")!
+        XCTAssertEqual(VideoLinkDetector.unwrapSafeLink(url), url)
+    }
+
+    func testSafeLinksToNonVideoURLIgnored() {
+        let text = "See https://eur02.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fagenda&data=1"
+        XCTAssertNil(VideoLinkDetector.findVideoURL(in: text))
+    }
 }
