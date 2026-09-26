@@ -295,18 +295,73 @@ final class NotionService: ObservableObject {
         return nil
     }
 
-    /// Returns the existing note for `event` if `findMeetingNote` resolves
-    /// one, otherwise creates a page.
+    /// What a meeting-note lookup found. Returned directly rather than
+    /// signalled through `lastError`: that property is shared by every
+    /// NotionService call, so a concurrent operation could overwrite it
+    /// between the lookup and the create decision.
+    enum MeetingNoteLookup: Equatable {
+        case found(URL)
+        case none
+        case ambiguous(String)
+        case failed(String)
+    }
+
+    /// What find-or-create should do with a lookup result.
+    enum MeetingNoteStep: Equatable {
+        case open(URL)
+        case create
+        case refuse(String)
+    }
+
+    /// Pure decision behind `findOrCreateMeetingPage`. An ambiguous or failed
+    /// lookup refuses to create — adding another page to an ambiguous set
+    /// only makes it worse.
+    nonisolated static func nextStep(after lookup: MeetingNoteLookup) -> MeetingNoteStep {
+        switch lookup {
+        case .found(let url): return .open(url)
+        case .none: return .create
+        case .ambiguous(let message), .failed(let message): return .refuse(message)
+        }
+    }
+
+    /// Result of `findOrCreateMeetingPage`.
+    enum MeetingNoteOutcome: Equatable {
+        /// The event's note — existing or just created.
+        case note(URL)
+        /// Another call is creating this event's note right now.
+        case skipped
+        /// Nothing to open; the message is for the user.
+        case failed(String)
+    }
+
+    /// Returns the existing note for `event` if the lookup resolves one,
+    /// otherwise creates a page.
     ///
     /// Creating blind is what made join produce a second page next to one
-    /// written by hand. When the lookup fails or is ambiguous (`lastError`
-    /// set) this returns nil rather than creating — adding another page to
-    /// an ambiguous set only makes it worse.
-    func findOrCreateMeetingPage(for event: MeetingEvent) async -> URL? {
-        lastError = nil
-        if let existing = await findMeetingNote(for: event) { return existing }
-        guard lastError == nil else { return nil }
-        return await createMeetingPage(for: event)
+    /// written by hand. A known note (made by this app, including by the
+    /// Cal.com bridge) comes back as `.note` so the caller can open it.
+    func findOrCreateMeetingPage(for event: MeetingEvent) async -> MeetingNoteOutcome {
+        switch Self.nextStep(after: await lookupMeetingNote(for: event)) {
+        case .open(let url):
+            return .note(url)
+        case .refuse(let message):
+            lastError = message
+            return .failed(message)
+        case .create:
+            break
+        }
+
+        // A concurrent call may have created or started the page while the
+        // lookup was awaiting. No suspension between here and
+        // createMeetingPage's own guard, so this check is exact.
+        let key = Self.noteKey(for: event)
+        if let known = knownMeetingNote(for: key) { return .note(known) }
+        if createdEventIDs.contains(key) || pendingEventIDs.contains(key) { return .skipped }
+
+        if let created = await createMeetingPage(for: event) { return .note(created) }
+        // createMeetingPage sets lastError as its last act before returning
+        // nil, with no suspension in between.
+        return .failed(lastError ?? "Couldn't create the meeting note in Notion.")
     }
 
     // MARK: - Finding an existing meeting note
@@ -372,9 +427,20 @@ final class NotionService: ObservableObject {
     /// picking one, because opening the wrong meeting's notes is worse than
     /// opening none.
     func findMeetingNote(for event: MeetingEvent) async -> URL? {
-        if let known = knownMeetingNote(for: event) { return known }
+        switch await lookupMeetingNote(for: event) {
+        case .found(let url): return url
+        case .none: return nil
+        case .ambiguous(let message), .failed(let message):
+            lastError = message
+            return nil
+        }
+    }
 
-        guard let token = apiToken else { return nil }
+    /// `findMeetingNote` without the side effect on `lastError`.
+    func lookupMeetingNote(for event: MeetingEvent) async -> MeetingNoteLookup {
+        if let known = knownMeetingNote(for: event) { return .found(known) }
+
+        guard let token = apiToken else { return .none }
         let client = CalendarSyncNotionClient(token: token, logger: CalendarSyncLogger())
 
         // Strategy 1: the Calendar Events row's `Meeting Notes` relation.
@@ -385,12 +451,11 @@ final class NotionService: ObservableObject {
             case 1:
                 let url = MeetingNoteMatcher.pageURL(forPageID: row.noteIDs[0])
                 rememberMeetingNote(url, for: Self.noteKey(for: event))
-                return url
+                return .found(url)
             case 0:
                 break  // fall through to the title search
             default:
-                lastError = "\(row.noteIDs.count) notes are linked to this calendar event — open Notion and merge them."
-                return nil
+                return .ambiguous("\(row.noteIDs.count) notes are linked to this calendar event — open Notion and merge them.")
             }
         }
 
@@ -398,7 +463,7 @@ final class NotionService: ObservableObject {
         // a page made by hand before the sync has related it to anything.
         let day = MeetingNoteMatcher.dayString(for: event.startDate)
         let title = event.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
+        guard !title.isEmpty else { return .none }
 
         var candidates: [MeetingNoteMatcher.Candidate] = []
         var cursor: String?
@@ -423,21 +488,19 @@ final class NotionService: ObservableObject {
                     titleProperty: CalendarSyncConstants.meetingNotesTitleProperty)
                 cursor = MeetingNoteMatcher.nextCursor(from: resp)
             } catch {
-                lastError = "Notion lookup failed — \(error.localizedDescription)"
-                return nil
+                return .failed("Notion lookup failed — \(error.localizedDescription)")
             }
             page += 1
         } while cursor != nil && page < 10
 
         switch MeetingNoteMatcher.resolve(candidates: candidates, title: title) {
         case .none:
-            return nil
+            return .none
         case .unique(let hit):
             rememberMeetingNote(hit.url, for: Self.noteKey(for: event))
-            return hit.url
+            return .found(hit.url)
         case .ambiguous(let pageIDs):
-            lastError = "\(pageIDs.count) notes titled “\(title)” on \(day) — open Notion and merge them."
-            return nil
+            return .ambiguous("\(pageIDs.count) notes titled “\(title)” on \(day) — open Notion and merge them.")
         }
     }
 

@@ -287,4 +287,25 @@ final class MeetingNoteMatcherTests: XCTestCase {
     func testNoteKeyForBridgeEventIsItsOwnID() {
         XCTAssertEqual(NotionService.noteKey(eventID: "calcom-bk_123", notes: nil), "calcom-bk_123")
     }
+
+    // MARK: - Find-or-create decision (NotionService)
+
+    /// The create decision must come from the lookup's own result, not the
+    /// shared `lastError`, which any concurrent Notion call can overwrite.
+    func testFoundNoteIsOpenedNotRecreated() {
+        let url = URL(string: "https://www.notion.so/abc")!
+        XCTAssertEqual(NotionService.nextStep(after: .found(url)), .open(url))
+    }
+
+    func testNoNoteMeansCreate() {
+        XCTAssertEqual(NotionService.nextStep(after: .none), .create)
+    }
+
+    func testAmbiguousLookupBlocksCreateWithItsOwnMessage() {
+        XCTAssertEqual(NotionService.nextStep(after: .ambiguous("2 notes")), .refuse("2 notes"))
+    }
+
+    func testFailedLookupBlocksCreateWithItsOwnMessage() {
+        XCTAssertEqual(NotionService.nextStep(after: .failed("timeout")), .refuse("timeout"))
+    }
 }
