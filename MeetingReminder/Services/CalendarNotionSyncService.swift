@@ -544,6 +544,13 @@ final class CalendarSyncUpserter {
     private let dryRun: Bool
     private let archiveOrphans: Bool
     private let cascadeStatus: Bool
+    /// Whether the orphan pass (cancel cascade + archive sweep) may run at all.
+    /// False on reactive runs: they suppress series-master rows and see only a
+    /// narrow window, so a master whose first occurrence is upcoming would read
+    /// as a vanished one-off. Independent of `cascadeStatus`, which also gates
+    /// the UPDATE-path reschedule cascade — that one works on rows that are
+    /// present and stays on for reactive runs.
+    private let sweepOrphans: Bool
     /// Resolves whether a vanished recurring occurrence is cancelled or merely
     /// moved. Injected so the upserter stays EventKit-free (and testable);
     /// `nil` means "can't tell", which keeps reactive runs deferring to the
@@ -555,12 +562,14 @@ final class CalendarSyncUpserter {
          dryRun: Bool,
          archiveOrphans: Bool,
          cascadeStatus: Bool = false,
+         sweepOrphans: Bool = true,
          occurrenceProbe: ((String, Date?, Set<String>) -> CalendarSyncCascade.OccurrenceProbe)? = nil) {
         self.client = client
         self.logger = logger
         self.dryRun = dryRun
         self.archiveOrphans = archiveOrphans
         self.cascadeStatus = cascadeStatus
+        self.sweepOrphans = sweepOrphans
         self.occurrenceProbe = occurrenceProbe
     }
 
@@ -825,7 +834,7 @@ final class CalendarSyncUpserter {
             }
         }
 
-        if archiveOrphans || cascadeStatus {
+        if sweepOrphans, archiveOrphans || cascadeStatus {
             await processOrphans(touched: touched,
                                  existing: existing,
                                  orphanWindow: orphanWindow,
@@ -1137,13 +1146,15 @@ enum CalendarSyncMode {
         }
     }
 
-    /// Whether this mode may run the cancel/reschedule cascade. Reactive runs
-    /// never do: they suppress series-master rows and see only a narrow window,
-    /// so a master (bare UID) whose first occurrence is upcoming would read as
-    /// a vanished one-off and be stamped Cancelled. The 06:00 full run owns it.
-    func cascadesStatus(enabled: Bool) -> Bool {
+    /// Whether this mode may run the orphan pass (cancel cascade + archive
+    /// sweep). Reactive runs never do: they suppress series-master rows and see
+    /// only a narrow window, so a master (bare UID) whose first occurrence is
+    /// upcoming would read as a vanished one-off and be stamped Cancelled. The
+    /// 06:00 full run owns it. The reschedule cascade (UPDATE path) is not
+    /// affected and still runs on reactive runs.
+    var sweepsOrphans: Bool {
         switch self {
-        case .full: return enabled
+        case .full: return true
         case .reactive: return false
         }
     }
@@ -1312,8 +1323,9 @@ final class CalendarNotionSyncService: ObservableObject {
         await run(mode: .full, dryRun: dryRun)
     }
 
-    /// Change-driven run. Narrow forward window, orphan archival and the
-    /// status cascade forced off (see `CalendarSyncMode.cascadesStatus`),
+    /// Change-driven run. Narrow forward window, orphan pass (archival and the
+    /// cancel cascade) forced off (see `CalendarSyncMode.sweepsOrphans`) while
+    /// the reschedule cascade still runs,
     /// rolling-week patch skipped. Shares the upsert pipeline with the full run.
     /// Returns whether the run actually executed (false if another was in
     /// flight and it was skipped).
@@ -1477,7 +1489,8 @@ final class CalendarNotionSyncService: ObservableObject {
                                                 logger: logger,
                                                 dryRun: dryRun,
                                                 archiveOrphans: mode == .full && archiveOrphansEnabled,
-                                                cascadeStatus: mode.cascadesStatus(enabled: cascadeStatusEnabled),
+                                                cascadeStatus: cascadeStatusEnabled,
+                                                sweepOrphans: mode.sweepsOrphans,
                                                 occurrenceProbe: { id, start, seen in
                                                     reader.probeOccurrence(appleID: id,
                                                                            originalStart: start,

@@ -39,13 +39,15 @@ final class CalendarSyncUpserterTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeUpserter(cascade: Bool = true, archive: Bool = false) -> CalendarSyncUpserter {
+    private func makeUpserter(cascade: Bool = true, archive: Bool = false,
+                              sweepOrphans: Bool = true) -> CalendarSyncUpserter {
         let logger = CalendarSyncLogger(path: logPath)
         return CalendarSyncUpserter(client: CalendarSyncNotionClient(token: "test", logger: logger),
                                     logger: logger,
                                     dryRun: true,
                                     archiveOrphans: archive,
-                                    cascadeStatus: cascade)
+                                    cascadeStatus: cascade,
+                                    sweepOrphans: sweepOrphans)
     }
 
     private func existingRow(pageID: String = "page-1",
@@ -104,10 +106,21 @@ final class CalendarSyncUpserterTests: XCTestCase {
         XCTAssertEqual(names, ["Calendar (Exchange)", "Personal"])
     }
 
-    func testCascadeStatusIsForcedOffOnReactiveRuns() {
-        XCTAssertTrue(CalendarSyncMode.full.cascadesStatus(enabled: true))
-        XCTAssertFalse(CalendarSyncMode.full.cascadesStatus(enabled: false))
-        XCTAssertFalse(CalendarSyncMode.reactive.cascadesStatus(enabled: true))
+    func testOrphanPassIsForcedOffOnReactiveRuns() {
+        XCTAssertTrue(CalendarSyncMode.full.sweepsOrphans)
+        XCTAssertFalse(CalendarSyncMode.reactive.sweepsOrphans)
+    }
+
+    /// Reactive runs keep `cascadeStatus` on (so a moved one-off re-dates its
+    /// brief) but must still skip the orphan pass entirely.
+    func testOrphanPassSkippedWhenSweepOffEvenWithCascadeOn() async {
+        let existing = ["ONE-OFF": existingRow(sourceCalendar: "Work", date: iso("2026-09-20T10:00:00Z"))]
+        let outcome = await makeUpserter(cascade: true, archive: true, sweepOrphans: false)
+            .run(rows: [], existing: existing,
+                 orphanWindow: window,
+                 sweepableCalendars: ["Work"])
+        XCTAssertEqual(outcome.counts.orphaned, 0)
+        XCTAssertEqual(outcome.counts.staled, 0)
     }
 
     // MARK: Item A3 — skip-filtered recurring series keeps its master row
