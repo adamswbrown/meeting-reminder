@@ -114,6 +114,27 @@ final class MeetingMonitorLogicTests: XCTestCase {
         XCTAssertNil(CalendarService.nextBackToBack(after: a, in: [a, b], now: now))
     }
 
+    // MARK: - menuBarInProgress — ended long blocks don't hide the countdown
+
+    func testMenuBarInProgressSkipsMeetingMarkedEnded() {
+        let block = event("block", start: now.addingTimeInterval(-3600), minutes: 480)
+        XCTAssertNil(MeetingMonitorLogic.menuBarInProgress(in: [block], endedIDs: ["block"]))
+    }
+
+    func testMenuBarInProgressFindsNextUnendedMeeting() {
+        let block = event("block", start: now.addingTimeInterval(-3600), minutes: 480)
+        let call = event("call", start: now.addingTimeInterval(-300), minutes: 30)
+        XCTAssertEqual(
+            MeetingMonitorLogic.menuBarInProgress(in: [block, call], endedIDs: ["block"])?.id,
+            "call"
+        )
+    }
+
+    func testMenuBarInProgressDefault() {
+        let call = event("call", start: now.addingTimeInterval(-300), minutes: 30)
+        XCTAssertEqual(MeetingMonitorLogic.menuBarInProgress(in: [call], endedIDs: [])?.id, "call")
+    }
+
     // MARK: - CallEndGate — back-to-back meetings
 
     func testGateNotArmedAtJoin() {

@@ -399,7 +399,10 @@ final class MeetingMonitor: ObservableObject {
         }
 
         let upcoming = calendarService.events.filter { $0.startDate > now }
-        let inProgress = calendarService.events.first(where: { $0.isInProgress })
+        let inProgress = MeetingMonitorLogic.menuBarInProgress(
+            in: calendarService.events,
+            endedIDs: meetingEndedIDs
+        )
 
         if let current = inProgress {
             // Wrap-up nudge: only when we're actually in a meeting and the
@@ -854,6 +857,14 @@ enum MeetingMonitorLogic {
     /// expired. Only the last-chance re-fire is released again.
     static func tiersAfterSnooze(_ fired: Set<Int>?) -> Set<Int>? {
         fired?.subtracting([AlertTier.lastChance.rawValue])
+    }
+
+    /// The meeting the menu bar should show as "(in progress)". Skips meetings
+    /// already marked ended (audio end, app quit, "Done with meeting"), so a
+    /// long calendar block the user has finished doesn't hide the countdown
+    /// to the next meeting for the rest of its scheduled span.
+    static func menuBarInProgress(in events: [MeetingEvent], endedIDs: Set<String>) -> MeetingEvent? {
+        events.first(where: { $0.isInProgress && !endedIDs.contains($0.id) })
     }
 
     /// How long after a meeting's start an expired snooze still re-fires the overlay.
