@@ -353,17 +353,30 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertTrue(GraphMailService.isDeadRefreshToken(
             error: "invalid_grant", errorCodes: nil,
             description: "AADSTS700082: The refresh token has expired due to inactivity."))
+        // Conditional Access sign-in-frequency expiry.
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [70043], description: nil))
+    }
+
+    func testGraphInteractionRequiredForcesReconnect() {
+        // MFA / Conditional Access interaction can't be satisfied without the
+        // user, so it must surface as needsReauth (and notify), not a silent fallback.
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(
+            error: "invalid_grant", errorCodes: nil,
+            description: "AADSTS50076: Due to a configuration change made by your administrator..."))
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [50079], description: nil))
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "interaction_required", errorCodes: [50078], description: nil))
+        // An unrecognised or missing code is treated as dead: keeping it would fail every send silently.
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: nil, description: nil))
+        XCTAssertTrue(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [12345], description: nil))
     }
 
     func testGraphRecoverableInvalidGrantKeepsToken() {
         // consent_required for a new scope: the token still works for Mail.Send.
         XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: [65001], description: nil))
-        // MFA / Conditional Access interaction.
         XCTAssertFalse(GraphMailService.isDeadRefreshToken(
             error: "invalid_grant", errorCodes: nil,
-            description: "AADSTS50076: Due to a configuration change made by your administrator..."))
-        // No code at all — don't destroy the token on a guess.
-        XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "invalid_grant", errorCodes: nil, description: nil))
+            description: "AADSTS65001: The user or administrator has not consented..."))
+        // Not an auth failure at all.
         XCTAssertFalse(GraphMailService.isDeadRefreshToken(error: "temporarily_unavailable", errorCodes: [70008], description: nil))
     }
 
@@ -411,10 +424,19 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertEqual(AvailabilityPushService.inFilterChunks(["a\"b", "c"]), ["in.(\"a\"\"b\",\"c\")"])
     }
 
+    private func exchangeCopy(title: String?, invited: [String], hostOrganises: Bool = true,
+                              organizer: String? = "adam@askadam.cloud", offset: TimeInterval = 0,
+                              calTitle: String = "Advisory between Adam and Sam",
+                              booker: String? = "sam@example.com", strict: Bool = false) -> Bool {
+        CalComSyncService.isLikelyExchangeCopy(
+            ekTitle: title, ekAttendeeEmails: invited, ekOrganizerIsCurrentUser: hostOrganises,
+            ekOrganizerEmail: organizer, startOffset: offset,
+            calTitle: calTitle, bookerEmail: booker, strict: strict)
+    }
+
     func testCalComExchangeCopyTitleRules() {
         func match(_ ek: String?, _ cal: String) -> Bool {
-            CalComSyncService.isLikelyExchangeCopy(ekTitle: ek, ekAttendeeEmails: [], startOffset: 0,
-                                                   calTitle: cal, bookingEmails: [])
+            exchangeCopy(title: ek, invited: [], calTitle: cal, booker: nil)
         }
         XCTAssertTrue(match("Advisory", "advisory "))
         XCTAssertTrue(match("Advisory between Adam and Sam", "Advisory"))
@@ -423,18 +445,38 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertFalse(match(nil, "Advisory"))
     }
 
-    func testCalComExchangeCopyMatchesRenamedEventByAttendee() {
-        // Exchange copy renamed so the title no longer matches — the shared
-        // attendee still identifies it, so no duplicate is created.
-        XCTAssertTrue(CalComSyncService.isLikelyExchangeCopy(
-            ekTitle: "Catch-up", ekAttendeeEmails: ["Sam@Example.com"], startOffset: 120,
-            calTitle: "Advisory between Adam and Sam", bookingEmails: ["sam@example.com"]))
+    func testCalComExchangeCopyMatchesRenamedEventByBooker() {
+        // Exchange copy renamed so the title no longer matches — the booker being
+        // invited to a meeting the host organises still identifies it.
+        XCTAssertTrue(exchangeCopy(title: "Catch-up", invited: ["Sam@Example.com"], offset: 120))
         // Same person, but an earlier meeting merely overlapping the window.
-        XCTAssertFalse(CalComSyncService.isLikelyExchangeCopy(
-            ekTitle: "Catch-up", ekAttendeeEmails: ["sam@example.com"], startOffset: -3600,
-            calTitle: "Advisory between Adam and Sam", bookingEmails: ["sam@example.com"]))
-        XCTAssertFalse(CalComSyncService.isLikelyExchangeCopy(
-            ekTitle: "Catch-up", ekAttendeeEmails: ["lee@example.com"], startOffset: 0,
-            calTitle: "Advisory between Adam and Sam", bookingEmails: ["sam@example.com"]))
+        XCTAssertFalse(exchangeCopy(title: "Catch-up", invited: ["sam@example.com"], offset: -3600))
+        XCTAssertFalse(exchangeCopy(title: "Catch-up", invited: ["lee@example.com"]))
+    }
+
+    func testCalComExchangeCopyIgnoresGuestsAndForeignMeetings() {
+        // An internal meeting with a cal-auto guest (e.g. a colleague added to every
+        // booking) is not the booking's copy: only the booker's email counts.
+        XCTAssertFalse(exchangeCopy(title: "Pipeline review", invited: ["sandra@altra.cloud"]))
+        // A meeting someone else organised, even with the booker on it, is not it.
+        XCTAssertFalse(exchangeCopy(title: "Partner sync", invited: ["sam@example.com"],
+                                    hostOrganises: false, organizer: "lee@example.com"))
+        // A colleague on the host's own domain booking via Cal.com must not match
+        // every internal meeting with them.
+        XCTAssertFalse(exchangeCopy(title: "1:1", invited: ["kim@askadam.cloud"], booker: "kim@askadam.cloud"))
+    }
+
+    func testCalComReconciliationRequiresTitleAndBooker() {
+        // Strict (the path that deletes the app copy): a renamed event invited
+        // to the booker is not enough.
+        XCTAssertFalse(exchangeCopy(title: "Catch-up", invited: ["sam@example.com"], strict: true))
+        // Title matches but the booker isn't on it — a different meeting.
+        XCTAssertFalse(exchangeCopy(title: "Advisory between Adam and Sam",
+                                    invited: ["lee@example.com"], strict: true))
+        XCTAssertTrue(exchangeCopy(title: "Advisory between Adam and Sam",
+                                   invited: ["sam@example.com"], strict: true))
+        // No attendee data on the event: fall back to the title.
+        XCTAssertTrue(exchangeCopy(title: "Advisory between Adam and Sam", invited: [], strict: true))
     }
 }
+

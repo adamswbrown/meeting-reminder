@@ -18,9 +18,9 @@ import Foundation
 ///   expiry). Entra's 90-day rolling inactivity window means regular use keeps
 ///   it alive indefinitely; a password change / session revoke / Conditional
 ///   Access sign-in-frequency policy can force a reconnect.
-/// - **`needsReauth`**: a `refresh_token` grant that fails with an expiry-coded `invalid_grant`
-///   clears the stored token and surfaces as a distinct error so the caller can
-///   notify the user and fall back.
+/// - **`needsReauth`**: a `refresh_token` grant that fails with `invalid_grant` (other than
+///   consent_required) or `interaction_required` clears the stored token and
+///   surfaces as a distinct error so the caller can notify the user and fall back.
 @MainActor
 final class GraphMailService: ObservableObject {
     // MARK: - Config
@@ -191,11 +191,10 @@ final class GraphMailService: ObservableObject {
 
         if let error = json["error"] as? String {
             let description = json["error_description"] as? String
-            // A dead refresh token (revoked, expired, password changed) surfaces
-            // as invalid_grant with an expiry AADSTS code — clear it and demand
-            // reconnection. invalid_grant is also returned for recoverable cases
-            // (consent_required, MFA/CA interaction), where the token still works
-            // for Mail.Send, so those keep the token and just fail this send.
+            // A refresh token that can't be used without the user (revoked,
+            // expired, password change, MFA/CA interaction) — clear it and demand
+            // reconnection so the caller notifies. Only consent_required keeps
+            // the token (it still works for Mail.Send) and just fails this send.
             if Self.isDeadRefreshToken(error: error,
                                        errorCodes: json["error_codes"] as? [Int],
                                        description: description) {
@@ -220,16 +219,22 @@ final class GraphMailService: ObservableObject {
         return access
     }
 
-    /// AADSTS codes meaning the refresh token itself is dead: 70000 (revoked /
-    /// invalid grant), 70008 + 700082 (expired, inactivity), 50173 (grant expired
-    /// after password change), 50132/50133 (session invalidated by password
-    /// expiry/change).
-    nonisolated static let deadRefreshTokenCodes: Set<Int> = [70000, 70008, 700082, 50173, 50132, 50133]
+    /// AADSTS codes for an `invalid_grant` the stored token survives: 65001
+    /// (consent_required — a new scope needs consent, but the token still works
+    /// for the already-granted Mail.Send). Everything else — revoked (70000),
+    /// expired (70008, 700082), sign-in-frequency expiry (70043), password change
+    /// (50173, 50132, 50133), MFA / Conditional Access interaction (50076, 50079,
+    /// 50078, 50158, …) — cannot be fixed without the user signing in again.
+    nonisolated static let recoverableInvalidGrantCodes: Set<Int> = [65001]
 
-    /// True only for an `invalid_grant` carrying one of the dead-token codes,
-    /// read from `error_codes` or, failing that, the `AADSTSnnnn` prefix in the
-    /// description. An `invalid_grant` with no recognisable code keeps the token.
+    /// True when the refresh token can't be used without the user reconnecting:
+    /// an `interaction_required` error, or an `invalid_grant` unless its code
+    /// (from `error_codes` or the `AADSTSnnnn` prefix in the description) is on
+    /// the known-recoverable list. Defaulting to "dead" is deliberate — keeping a
+    /// token that can't refresh means every send silently falls back to Mail.app
+    /// and the user is never told to reconnect.
     nonisolated static func isDeadRefreshToken(error: String, errorCodes: [Int]?, description: String?) -> Bool {
+        if error == "interaction_required" { return true }
         guard error == "invalid_grant" else { return false }
         var codes = Set(errorCodes ?? [])
         if codes.isEmpty, let description,
@@ -238,7 +243,8 @@ final class GraphMailService: ObservableObject {
                 codes.insert(code)
             }
         }
-        return !codes.isDisjoint(with: deadRefreshTokenCodes)
+        if codes.isEmpty { return true }
+        return !codes.isSubset(of: recoverableInvalidGrantCodes)
     }
 
     // MARK: - Device code helpers
