@@ -1343,7 +1343,7 @@ final class CalendarNotionSyncService: ObservableObject {
                     if SkipFilter.shouldSkip(title: title, rules: skipRules) {
                         logger.debug("skip rule: \(title)")
                         skipped += 1
-                        skipFilteredIDs.insert(CalendarEventMapper.compositeAppleID(for: e))
+                        skipFilteredIDs.formUnion(CalendarSyncCascade.presentIDs(forSkipped: e))
                         return false
                     }
                     if skipFreeOOO {
@@ -1351,7 +1351,7 @@ final class CalendarNotionSyncService: ObservableObject {
                         if name == "Free" || name == "OOO" {
                             logger.debug("skip free/OOO: \(title) (\(name))")
                             skipped += 1
-                            skipFilteredIDs.insert(CalendarEventMapper.compositeAppleID(for: e))
+                            skipFilteredIDs.formUnion(CalendarSyncCascade.presentIDs(forSkipped: e))
                             return false
                         }
                     }

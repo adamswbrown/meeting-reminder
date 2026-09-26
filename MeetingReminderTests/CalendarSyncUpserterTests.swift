@@ -7,6 +7,22 @@ private func iso(_ s: String) -> Date {
     return f.date(from: s)!
 }
 
+private struct StubEvent: EventLike {
+    var eventTitle: String = "Stub"
+    var eventStart: Date = Date()
+    var eventEnd: Date = Date().addingTimeInterval(1800)
+    var eventIsAllDay: Bool = false
+    var statusRawValue: Int = 1
+    var organizerName: String? = nil
+    var organizerEmail: String? = nil
+    var attendeesList: [(name: String?, email: String)] = []
+    var locationString: String? = nil
+    var notesString: String? = nil
+    var eventIsRecurring: Bool = false
+    var externalIdentifier: String = "EXT"
+    var availabilityRawValue: Int = 1
+}
+
 /// Drives `CalendarSyncUpserter` in dry-run mode, which never touches the
 /// network, so the orphan sweep's row selection can be asserted via counts.
 final class CalendarSyncUpserterTests: XCTestCase {
@@ -92,5 +108,33 @@ final class CalendarSyncUpserterTests: XCTestCase {
         XCTAssertTrue(CalendarSyncMode.full.cascadesStatus(enabled: true))
         XCTAssertFalse(CalendarSyncMode.full.cascadesStatus(enabled: false))
         XCTAssertFalse(CalendarSyncMode.reactive.cascadesStatus(enabled: true))
+    }
+
+    // MARK: Item A3 — skip-filtered recurring series keeps its master row
+
+    func testSkippedRecurringOccurrenceMarksSeriesMasterPresent() {
+        var e = StubEvent(); e.externalIdentifier = "SERIES"; e.eventIsRecurring = true
+        e.eventStart = iso("2026-09-21T09:00:00Z")
+        XCTAssertEqual(Set(CalendarSyncCascade.presentIDs(forSkipped: e)),
+                       ["SERIES_2026-09-21", "SERIES"])
+    }
+
+    func testSkippedOneOffMarksOnlyItself() {
+        var e = StubEvent(); e.externalIdentifier = "ONE-OFF"; e.eventIsRecurring = false
+        XCTAssertEqual(CalendarSyncCascade.presentIDs(forSkipped: e), ["ONE-OFF"])
+    }
+
+    /// A Skip List rule added for a recurring meeting drops every occurrence,
+    /// so no series-master row is emitted; its bare-UID row must not then be
+    /// swept as a cancelled one-off.
+    func testSeriesMasterOfSkippedSeriesIsNotCancelled() async {
+        var e = StubEvent(); e.externalIdentifier = "SERIES"; e.eventIsRecurring = true
+        e.eventStart = iso("2026-09-21T09:00:00Z")
+        let existing = ["SERIES": existingRow(sourceCalendar: "Work", date: iso("2026-09-14T09:00:00Z"))]
+        let outcome = await makeUpserter().run(rows: [], existing: existing,
+                                               orphanWindow: window,
+                                               presentIDs: Set(CalendarSyncCascade.presentIDs(forSkipped: e)),
+                                               sweepableCalendars: ["Work"])
+        XCTAssertEqual(outcome.counts.orphaned, 0)
     }
 }

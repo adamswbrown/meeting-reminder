@@ -148,6 +148,18 @@ enum CalendarSyncCascade {
         Set(fetched.filter { $0.eventCount > 0 }.map(\.name))
     }
 
+    /// Apple Event IDs an event dropped by the skip filters still accounts for,
+    /// so the orphan sweep treats them as present. For a recurring occurrence
+    /// that includes the bare series UID: when a skip rule drops every
+    /// occurrence no series-master row is emitted, and the existing master row
+    /// would otherwise be swept as a cancelled one-off.
+    static func presentIDs(forSkipped event: EventLike) -> [String] {
+        let composite = CalendarEventMapper.compositeAppleID(for: event)
+        guard event.eventIsRecurring, !event.externalIdentifier.isEmpty,
+              event.externalIdentifier != composite else { return [composite] }
+        return [composite, event.externalIdentifier]
+    }
+
     /// True when a row's `Source Calendar` select (read-format) names a calendar
     /// in `sweepable`. A row with no Source Calendar is never swept — every
     /// live in-window row carries one, since each upsert writes it.
