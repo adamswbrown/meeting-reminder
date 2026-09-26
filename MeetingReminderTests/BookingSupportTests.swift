@@ -389,4 +389,11 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertEqual(calls, 3)
         XCTAssertEqual(all.count, 6)
     }
+
+    func testAvailabilityPushDropsFreeUnlessOOO() {
+        XCTAssertTrue(PushEvent.shouldPush(isFree: false, isOOO: false))
+        XCTAssertFalse(PushEvent.shouldPush(isFree: true, isOOO: false))
+        // Annual leave marked Free in Outlook still drives the "away" banner.
+        XCTAssertTrue(PushEvent.shouldPush(isFree: true, isOOO: true))
+    }
 }

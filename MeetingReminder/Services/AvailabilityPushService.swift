@@ -226,6 +226,11 @@ final class AvailabilityPushService: ObservableObject {
                 return true
             }
             .map { PushEvent(from: $0) }
+            // "Free" events don't block time (the legacy booking conflict check
+            // skips them too), so pushing them showed free slots as busy. OOO
+            // rows stay even when Free — Outlook marks leave that way and the
+            // page's "away" banner depends on them.
+            .filter { PushEvent.shouldPush(isFree: $0.isFree, isOOO: $0.isOOO) }
 
         return Snapshot(
             events: pushed,
@@ -370,6 +375,7 @@ struct PushEvent {
     let isAllDay: Bool
     let isTentative: Bool
     let isOOO: Bool
+    let isFree: Bool
     let status: String
     let calendarName: String
     let hasVideoLink: Bool
@@ -399,6 +405,8 @@ struct PushEvent {
         self.isOOO = CalendarEventMapper.availabilityName(for: ekEvent) == "OOO"
             || CalendarEventMapper.looksLikeOOO(title: ekEvent.title ?? "")
 
+        self.isFree = ekEvent.availability == .free
+
         switch ekEvent.status {
         case .canceled:
             self.status = "cancelled"
@@ -407,6 +415,10 @@ struct PushEvent {
         }
 
         self.hasVideoLink = VideoLinkDetector.detectLink(in: ekEvent) != nil
+    }
+
+    static func shouldPush(isFree: Bool, isOOO: Bool) -> Bool {
+        !isFree || isOOO
     }
 
     func toJSONDictionary() -> [String: Any] {
