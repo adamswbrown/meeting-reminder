@@ -82,6 +82,7 @@
 		T2000046 /* NotionPriorNotesReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000046 /* NotionPriorNotesReaderTests.swift */; };
 		T2000009 /* CalendarEventInclusionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000009 /* CalendarEventInclusionTests.swift */; };
 		T2000011 /* IntradayDiffClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000011 /* IntradayDiffClassifierTests.swift */; };
+		T2000052 /* IntradayPromotionDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000052 /* IntradayPromotionDetectorTests.swift */; };
 		T2000001 /* VideoLinkDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000001 /* VideoLinkDetectorTests.swift */; };
 		T2000002 /* MeetingEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000002 /* MeetingEventTests.swift */; };
 		T2000003 /* OverlayBackgroundTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000003 /* OverlayBackgroundTests.swift */; };
@@ -178,6 +179,7 @@
 		T1000046 /* NotionPriorNotesReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReaderTests.swift; sourceTree = "<group>"; };
 		T1000009 /* CalendarEventInclusionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventInclusionTests.swift; sourceTree = "<group>"; };
 		T1000011 /* IntradayDiffClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayDiffClassifierTests.swift; sourceTree = "<group>"; };
+		T1000052 /* IntradayPromotionDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayPromotionDetectorTests.swift; sourceTree = "<group>"; };
 		T1000001 /* VideoLinkDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLinkDetectorTests.swift; sourceTree = "<group>"; };
 		T1000002 /* MeetingEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEventTests.swift; sourceTree = "<group>"; };
 		T1000003 /* OverlayBackgroundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayBackgroundTests.swift; sourceTree = "<group>"; };
@@ -344,6 +346,7 @@
 				T1000046 /* NotionPriorNotesReaderTests.swift */,
 				T1000009 /* CalendarEventInclusionTests.swift */,
 				T1000011 /* IntradayDiffClassifierTests.swift */,
+				T1000052 /* IntradayPromotionDetectorTests.swift */,
 				T1000007 /* BookingSupportTests.swift */,
 				T1000010 /* SnoozeUntilThresholdTests.swift */,
 			);
@@ -517,6 +520,7 @@
 				T2000046 /* NotionPriorNotesReaderTests.swift in Sources */,
 				T2000009 /* CalendarEventInclusionTests.swift in Sources */,
 				T2000011 /* IntradayDiffClassifierTests.swift in Sources */,
+				T2000052 /* IntradayPromotionDetectorTests.swift in Sources */,
 				T2000007 /* BookingSupportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
