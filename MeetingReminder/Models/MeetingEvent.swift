@@ -19,6 +19,9 @@ struct MeetingEvent: Identifiable, Equatable {
     /// True if the event is part of a recurring series (drives the `_YYYY-MM-DD`
     /// occurrence-suffix convention when building the Notion "Apple Event ID").
     let isRecurring: Bool
+    /// True when the event is marked Free — a hold, not a committed meeting. The intraday
+    /// catcher briefs a hold the moment it flips to busy/tentative.
+    let isHold: Bool
 
     var timeUntilStart: TimeInterval {
         startDate.timeIntervalSinceNow
@@ -118,6 +121,7 @@ struct MeetingEvent: Identifiable, Equatable {
         self.location = ekEvent.location
         self.externalID = ekEvent.calendarItemExternalIdentifier
         self.isRecurring = ekEvent.hasRecurrenceRules
+        self.isHold = ekEvent.availability == .free
 
         // Extract attendee names
         if let ekAttendees = ekEvent.attendees {
@@ -134,7 +138,7 @@ struct MeetingEvent: Identifiable, Equatable {
          calendar: String, calendarColor: String = "",
          videoLink: URL? = nil, isAllDay: Bool = false,
          attendees: [String]? = nil, notes: String? = nil, location: String? = nil,
-         externalID: String? = nil, isRecurring: Bool = false) {
+         externalID: String? = nil, isRecurring: Bool = false, isHold: Bool = false) {
         self.id = id
         self.title = title
         self.startDate = startDate
@@ -148,5 +152,6 @@ struct MeetingEvent: Identifiable, Equatable {
         self.location = location
         self.externalID = externalID
         self.isRecurring = isRecurring
+        self.isHold = isHold
     }
 }

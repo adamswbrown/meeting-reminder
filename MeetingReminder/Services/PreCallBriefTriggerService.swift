@@ -215,6 +215,22 @@ enum IntradayDiffClassifier {
     }
 }
 
+/// A meeting that was already in the diary but has only now become a real one: a Free
+/// hold switched to busy/tentative, or a "placeholder" title was renamed. Its id is
+/// unchanged, so the id-based diff never sees it as added (Northumbria, 2026-09-28).
+enum IntradayPromotionDetector {
+    static func isPlaceholder(_ e: MeetingEvent) -> Bool {
+        e.isHold || e.title.range(of: "placeholder", options: .caseInsensitive) != nil
+    }
+
+    static func promoted(previous: [String: MeetingEvent], current: [MeetingEvent]) -> [MeetingEvent] {
+        current.filter { c in
+            guard let p = previous[c.id] else { return false }
+            return isPlaceholder(p) && !isPlaceholder(c)
+        }
+    }
+}
+
 /// Decides when one emission's diff is not real diary activity and must be absorbed
 /// silently. Changing the monitored-calendars filter adds/removes whole calendars at
 /// once, and an account re-sync can do the same — without this every one of those
@@ -474,9 +490,19 @@ final class PreCallBriefTriggerService: ObservableObject {
 
         // Genuinely-new appearances (a batch sync can surface several at once).
         let pendingIDs = Set(pending.map(\.id))
-        let added = current.filter {
+        let appeared = current.filter {
             previous[$0.id] == nil && !firedIDs.contains($0.id) && !pendingIDs.contains($0.id)
         }
+        // Holds/placeholders that just became real meetings. Not gated on `firedIDs`: the
+        // hold may have been "briefed" (and skipped) when it first appeared, and the
+        // promotion is a one-off transition so it can't loop.
+        let promoted = IntradayPromotionDetector.promoted(previous: previous, current: current)
+            .filter { !pendingIDs.contains($0.id) }
+        if !promoted.isEmpty {
+            log("hold/placeholder became a real meeting: \(promoted.map(\.title).joined(separator: ", "))")
+            promoted.forEach { unmarkFired($0.id) }   // else drainPending drops it as already fired
+        }
+        let added = appeared + promoted
         // Genuine disappearances: present before, absent now, AND still in the future.
         // A meeting whose start has passed left "upcoming" because it STARTED, not
         // because it was removed — never treat that as a cancellation.
@@ -933,6 +959,12 @@ final class PreCallBriefTriggerService: ObservableObject {
         while firedOrder.count > 500 {
             firedIDs.remove(firedOrder.removeFirst())
         }
+        UserDefaults.standard.set(firedOrder, forKey: Keys.firedIDs)
+    }
+
+    private func unmarkFired(_ id: String) {
+        guard firedIDs.remove(id) != nil else { return }
+        firedOrder.removeAll { $0 == id }
         UserDefaults.standard.set(firedOrder, forKey: Keys.firedIDs)
     }
 
