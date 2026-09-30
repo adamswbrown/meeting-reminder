@@ -4,6 +4,8 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-09-30
+
 ### Fixed
 - **A Cal.com meeting cancelled in Outlook came back.** Deleting the Exchange copy also
   deleted the booking tag, so `CalComSyncService` read the still-accepted booking as "not

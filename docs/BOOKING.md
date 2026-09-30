@@ -309,6 +309,17 @@ conflict.
 
 ## Troubleshooting
 
+**Cal.com booking cancelled in Outlook still shows as booked:** cancelling the
+Exchange copy in Outlook does **not** cancel the Cal.com booking — Cal.com still
+reports it `accepted`, and the booker gets no Cal.com cancellation. Cancel it in
+Cal.com too (Settings → Cal.com → Upcoming bookings → Cancel). Since 3.6.1 the
+Mac app remembers bookings it has matched to an Exchange copy
+(`calComExchangeClaimedBookings`) and will **not** recreate a local copy once
+that Exchange event is gone; before 3.6.1 `CalComSyncService` recreated it after
+its 20-min grace period, putting the cancelled meeting back in the menu bar.
+Console shows `[CalComSync] <uid>: Exchange copy deleted but booking still
+accepted in Cal.com — not recreating` once per booking per launch.
+
 **Confirmations not arriving / bookings stuck `pending`:**
 
 1. **Check the Settings status line** (Availability tab) — does it show a recent
