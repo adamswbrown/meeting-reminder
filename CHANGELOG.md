@@ -4,6 +4,14 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A Cal.com meeting cancelled in Outlook came back.** Deleting the Exchange copy also
+  deleted the booking tag, so `CalComSyncService` read the still-accepted booking as "not
+  synced yet" and recreated it after the 20-min grace period — putting the cancelled
+  meeting back in the menu bar. Bookings matched to an Exchange copy are now remembered
+  (`calComExchangeClaimedBookings`); if that copy disappears the app logs it and does not
+  recreate it. Cancel in Cal.com as well if the booker should be notified.
+
 ## [3.6.0] - 2026-09-26
 
 ### Fixed

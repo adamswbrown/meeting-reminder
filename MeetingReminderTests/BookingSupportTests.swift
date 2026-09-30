@@ -478,5 +478,43 @@ final class BookingSweepTests: XCTestCase {
         // No attendee data on the event: fall back to the title.
         XCTAssertTrue(exchangeCopy(title: "Advisory between Adam and Sam", invited: [], strict: true))
     }
-}
 
+    // MARK: - Exchange claim ledger (Outlook-cancel must not resurrect)
+
+    func testClaimedBookingIsRemembered() {
+        var ledger = CalComExchangeClaims()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertFalse(ledger.wasClaimed("abc"))
+        ledger.record("abc", start: start)
+        XCTAssertTrue(ledger.wasClaimed("abc"))
+        XCTAssertFalse(ledger.wasClaimed("other"))
+    }
+
+    func testForgetDropsClaim() {
+        var ledger = CalComExchangeClaims()
+        ledger.record("abc", start: Date())
+        ledger.forget("abc")
+        XCTAssertFalse(ledger.wasClaimed("abc"))
+    }
+
+    func testPruneDropsOnlyBookingsWellInThePast() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var ledger = CalComExchangeClaims()
+        ledger.record("old", start: now.addingTimeInterval(-3 * 86_400))
+        ledger.record("earlierToday", start: now.addingTimeInterval(-3_600))
+        ledger.record("future", start: now.addingTimeInterval(86_400))
+        ledger.prune(now: now)
+        XCTAssertFalse(ledger.wasClaimed("old"))
+        XCTAssertTrue(ledger.wasClaimed("earlierToday"))
+        XCTAssertTrue(ledger.wasClaimed("future"))
+    }
+
+    func testClaimsRoundTripThroughPropertyList() {
+        var ledger = CalComExchangeClaims()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        ledger.record("abc", start: start)
+        let restored = CalComExchangeClaims(storage: ledger.storage)
+        XCTAssertTrue(restored.wasClaimed("abc"))
+        XCTAssertEqual(restored.storage["abc"], start)
+    }
+}

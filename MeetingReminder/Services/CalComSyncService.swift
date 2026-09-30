@@ -21,6 +21,7 @@ final class CalComSyncService: ObservableObject {
 
     private static let enabledKey = "calComSyncEnabled"
     private static let lastSyncKey = "calComLastSyncedAt"
+    private static let exchangeClaimsKey = "calComExchangeClaimedBookings"
     static let syncInterval: TimeInterval = 5 * 60
     /// Notes marker for events this service created itself (vs. tagged Exchange copies).
     private static let createdMarker = "[calcom-created]"
@@ -41,12 +42,23 @@ final class CalComSyncService: ObservableObject {
     /// Exchange event. Used to implement the grace-period grace on first sighting.
     private var firstSeenUids: [String: Date] = [:]
 
+    /// Bookings that have been matched to an Exchange copy. Persisted so that
+    /// when that copy later disappears (cancelled in Outlook), the booking isn't
+    /// mistaken for one Exchange hasn't synced yet and recreated locally.
+    private var exchangeClaims: CalComExchangeClaims {
+        didSet { UserDefaults.standard.set(exchangeClaims.storage, forKey: Self.exchangeClaimsKey) }
+    }
+    /// Uids already logged as deleted-from-Exchange, so each is logged once per launch.
+    private var reportedDeletedUids: Set<String> = []
+
     init(calCom: CalComService, eventStore: EKEventStore = EKEventStore(), notionBridge: CalComNotionBridge? = nil) {
         self.calCom = calCom
         self.eventStore = eventStore
         self.notionBridge = notionBridge
         self.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         self.lastSyncedAt = UserDefaults.standard.object(forKey: Self.lastSyncKey) as? Date
+        self.exchangeClaims = CalComExchangeClaims(
+            storage: UserDefaults.standard.dictionary(forKey: Self.exchangeClaimsKey) as? [String: Date] ?? [:])
     }
 
     // MARK: - Lifecycle
@@ -100,6 +112,7 @@ final class CalComSyncService: ObservableObject {
         let after = (lastSyncedAt.map { min($0, lookback) }) ?? lookback
         // Look back 30 days for cancellations of previously-upcoming meetings.
         let cancelLookback = Date().addingTimeInterval(-30 * 24 * 3600)
+        exchangeClaims.prune(now: Date())
 
         do {
             let bookings = try await calCom.fetchUpcomingBookings(after: after)
@@ -148,6 +161,7 @@ final class CalComSyncService: ObservableObject {
             if tagged.notes?.contains(Self.createdMarker) == true,
                let exchange = findExchangeEvent(matching: booking, near: start, strict: true) {
                 appendMarker(marker, to: exchange)
+                exchangeClaims.record(booking.uid, start: start)
                 do {
                     try eventStore.remove(tagged, span: .thisEvent, commit: true)
                     NSLog("[CalComSync] \(booking.uid): Exchange copy arrived — removed app-created duplicate")
@@ -155,6 +169,10 @@ final class CalComSyncService: ObservableObject {
                     NSLog("[CalComSync] \(booking.uid): duplicate removal failed: \(error.localizedDescription)")
                 }
                 return .tagged
+            }
+            // Covers Exchange copies tagged before the claim ledger existed.
+            if tagged.notes?.contains(Self.createdMarker) != true {
+                exchangeClaims.record(booking.uid, start: start)
             }
             return .skipped
         }
@@ -164,6 +182,7 @@ final class CalComSyncService: ObservableObject {
         // tag it instead of creating a duplicate.
         if let existing = findExchangeEvent(matching: booking, near: start) {
             appendMarker(marker, to: existing)
+            exchangeClaims.record(booking.uid, start: start)
             firstSeenUids.removeValue(forKey: booking.uid) // no longer needed
             // Most bookings take this path (Exchange syncs within the grace
             // period), so the notes page must be created here as well as on
@@ -172,6 +191,16 @@ final class CalComSyncService: ObservableObject {
                 Task { await bridge.createPageIfNeeded(for: booking) }
             }
             return .tagged
+        }
+
+        // The Exchange copy was here and has gone: the meeting was cancelled or
+        // deleted in Outlook, which doesn't reach Cal.com. Recreating it would
+        // put a cancelled meeting back on the calendar and in the menu bar.
+        if exchangeClaims.wasClaimed(booking.uid) {
+            if reportedDeletedUids.insert(booking.uid).inserted {
+                NSLog("[CalComSync] \(booking.uid): Exchange copy deleted but booking still accepted in Cal.com — not recreating. Cancel it in Cal.com to notify the booker.")
+            }
+            return .skipped
         }
 
         // Grace period: give Exchange time to sync the Cal.com-created event down
@@ -238,6 +267,7 @@ final class CalComSyncService: ObservableObject {
             for booking in cancelled {
                 guard let start = booking.startDate else { continue }
                 let marker = "[calcom-booking-id:\(booking.uid)]"
+                exchangeClaims.forget(booking.uid)
                 guard let event = findTaggedEvent(marker: marker, near: start) else { continue }
 
                 // If the app itself created this event (marked [calcom-created]),
@@ -384,5 +414,35 @@ final class CalComSyncService: ObservableObject {
         notes += marker
         event.notes = notes
         try? eventStore.save(event, span: .thisEvent, commit: true)
+    }
+}
+
+/// Cal.com bookings whose Exchange copy has been seen, keyed by booking uid with
+/// the booking's start. `CalComSyncService` persists `storage` in UserDefaults.
+struct CalComExchangeClaims: Equatable {
+    /// Claims for bookings that started more than this long ago are dropped.
+    static let retention: TimeInterval = 24 * 3600
+
+    private(set) var storage: [String: Date]
+
+    init(storage: [String: Date] = [:]) {
+        self.storage = storage
+    }
+
+    func wasClaimed(_ uid: String) -> Bool {
+        storage[uid] != nil
+    }
+
+    mutating func record(_ uid: String, start: Date) {
+        storage[uid] = start
+    }
+
+    mutating func forget(_ uid: String) {
+        storage.removeValue(forKey: uid)
+    }
+
+    mutating func prune(now: Date) {
+        let cutoff = now.addingTimeInterval(-Self.retention)
+        storage = storage.filter { $0.value >= cutoff }
     }
 }
