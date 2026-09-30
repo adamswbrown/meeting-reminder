@@ -311,6 +311,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `notionMigrationsDataSourceID` | String | "" | Per-user Cal Sync Migrations data source ID. Empty ⇒ built-in default |
 | `notionMeetingNotesDataSourceID` | String | "" | Per-user Meeting Notes data source ID (sync auto-link). Empty ⇒ built-in default |
 | `notionPreCallBriefingsDataSourceID` | String | "" | Per-user Pre-Call Briefings data source ID (sync auto-link). Empty ⇒ built-in default |
+| `calComExchangeClaimedBookings` | Dict (uid → Date) | {} | Cal.com bookings already matched to an Exchange copy. If that copy vanishes (cancelled in Outlook) `CalComSyncService` does not recreate it. Pruned 24h after the booking start |
 | `msGraphConnectedEmail` | String | nil | Display-only email of the connected Exchange account for booking email (set after a successful `GraphMailService` device-code sign-in) |
 
 ### Keychain keys
