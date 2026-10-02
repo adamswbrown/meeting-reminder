@@ -67,6 +67,12 @@ Optional integrations may send data to the service you connect. The core calenda
 * Follow the setup assistant to grant required access.
 * Requires **macOS 13 Ventura or later**.
 
+The menu popover and **Settings → General → Updates** show your installed version
+and check the upstream GitHub project's latest stable release. When an update is
+available, **Download Latest Version** opens its release page so you can download
+and install it. Successful checks are reused for one hour; **Check for Updates**
+refreshes immediately. No updates are installed automatically.
+
 ## Build from source
 
 Building requires a recent Xcode (Xcode 26 is used for development; CI builds with the latest stable Xcode). The code uses Swift 6.x region-based concurrency, so older Xcode versions such as 15.4 will not compile it.

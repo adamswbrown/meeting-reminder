@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @ObservedObject var meetingMonitor: MeetingMonitor
     var overlayCoordinator: OverlayCoordinator
     @ObservedObject var calendarNotionSync: CalendarNotionSyncService
+    @ObservedObject var updateChecker: UpdateChecker
     @Environment(\.dismiss) private var dismiss
 
     private var upcomingEvents: [MeetingEvent] {
@@ -102,6 +103,9 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
+
+            UpdateStatusView(checker: updateChecker)
+                .padding(.vertical, 6)
 
             Button {
                 NSApplication.shared.terminate(nil)

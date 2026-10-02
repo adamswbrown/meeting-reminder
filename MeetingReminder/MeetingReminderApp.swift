@@ -47,6 +47,7 @@ struct MeetingReminderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     @StateObject private var calendarService = CalendarService()
+    @StateObject private var updateChecker = UpdateChecker()
     @StateObject private var meetingMonitor: MeetingMonitor
     @StateObject private var overlayCoordinator: OverlayCoordinator
     @StateObject private var notionService = NotionService()
@@ -130,7 +131,8 @@ struct MeetingReminderApp: App {
                 calendarService: calendarService,
                 meetingMonitor: meetingMonitor,
                 overlayCoordinator: overlayCoordinator,
-                calendarNotionSync: calendarNotionSync
+                calendarNotionSync: calendarNotionSync,
+                updateChecker: updateChecker
             )
         } label: {
             menuBarLabel
@@ -151,7 +153,8 @@ struct MeetingReminderApp: App {
                 busyLightService: busyLightService,
                 calComService: calComService,
                 calComSyncService: calComSyncService,
-                preCallBriefTrigger: preCallBriefTrigger
+                preCallBriefTrigger: preCallBriefTrigger,
+                updateChecker: updateChecker
             )
         }
     }

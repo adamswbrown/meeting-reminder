@@ -26,6 +26,7 @@ struct SettingsView: View {
     @ObservedObject var calComService: CalComService
     @ObservedObject var calComSyncService: CalComSyncService
     @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
+    @ObservedObject var updateChecker: UpdateChecker
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
     @AppStorage("intradayUseOnDeviceModel") private var intradayUseOnDeviceModel: Bool = false
 
@@ -135,6 +136,9 @@ struct SettingsView: View {
                     controller.show(calendarService: calendarService)
                 }
                 .controlSize(.small)
+            }
+            Section("Updates") {
+                UpdateStatusView(checker: updateChecker)
             }
         }
         .formStyle(.grouped)
