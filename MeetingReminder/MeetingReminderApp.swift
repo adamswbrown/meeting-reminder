@@ -59,6 +59,7 @@ struct MeetingReminderApp: App {
     @StateObject private var calComService: CalComService
     @StateObject private var calComSyncService: CalComSyncService
     @StateObject private var preCallBriefTrigger: PreCallBriefTriggerService
+    @StateObject private var briefGapFiller: OnDeviceBriefGapFiller
 
     @AppStorage("colorBlindMode") private var colorBlindMode = false
     @AppStorage(MenuBarDisplayMode.preferenceKey) private var menuBarDisplayModeRaw = MenuBarDisplayMode.full.rawValue
@@ -79,6 +80,7 @@ struct MeetingReminderApp: App {
         let calComNotionBridge = CalComNotionBridge(notion: notion)
         let calComSync = CalComSyncService(calCom: calCom, notionBridge: calComNotionBridge)
         let preCallTrigger = PreCallBriefTriggerService(calendarService: calendar)
+        let gapFiller = OnDeviceBriefGapFiller(calendarService: calendar, enrichment: CalendarEnrichmentService())
         let onboarding = OnboardingWindowController()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
@@ -98,6 +100,7 @@ struct MeetingReminderApp: App {
         _calComService = StateObject(wrappedValue: calCom)
         _calComSyncService = StateObject(wrappedValue: calComSync)
         _preCallBriefTrigger = StateObject(wrappedValue: preCallTrigger)
+        _briefGapFiller = StateObject(wrappedValue: gapFiller)
         onboardingController = onboarding
 
         appDelegate.startServices = {
@@ -111,6 +114,7 @@ struct MeetingReminderApp: App {
                 bookingPoll.start()
                 calComSync.startIfEnabled()
                 preCallTrigger.start()
+                gapFiller.start()
                 coordinator.startBusyLightObserver(busyLight)
 
                 if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
@@ -151,7 +155,8 @@ struct MeetingReminderApp: App {
                 busyLightService: busyLightService,
                 calComService: calComService,
                 calComSyncService: calComSyncService,
-                preCallBriefTrigger: preCallBriefTrigger
+                preCallBriefTrigger: preCallBriefTrigger,
+                briefGapFiller: briefGapFiller
             )
         }
     }

@@ -26,6 +26,7 @@ struct SettingsView: View {
     @ObservedObject var calComService: CalComService
     @ObservedObject var calComSyncService: CalComSyncService
     @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
+    @ObservedObject var briefGapFiller: OnDeviceBriefGapFiller
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
     @AppStorage("intradayUseOnDeviceModel") private var intradayUseOnDeviceModel: Bool = false
 
@@ -1105,6 +1106,17 @@ struct SettingsView: View {
                            isOn: $intradayUseOnDeviceModel)
                         .disabled(!preCallBriefTrigger.isEnabled)
                 }
+                if OnDeviceBriefGapFiller.isSupported {
+                    Toggle("Fill missing briefings on-device",
+                           isOn: Binding(get: { briefGapFiller.isEnabled },
+                                         set: { briefGapFiller.isEnabled = $0 }))
+                    if !briefGapFiller.lastResult.isEmpty {
+                        Text(briefGapFiller.lastResult)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
                 if !preCallBriefTrigger.lastResult.isEmpty {
                     LabeledContent("Last run") {
                         VStack(alignment: .trailing, spacing: 2) {
@@ -1135,6 +1147,7 @@ struct SettingsView: View {
                     Text("When a new meeting lands in your calendar during the working day, this runs the pre-call briefing agent for it within ~2 minutes — the local counterpart to the 03:00 cloud task. It follows the same rules and delivers via the local iMessage + Reminders CLIs.")
                     Text("Requires the `claude` CLI plus the `imessage-tools` + `remctl` CLIs. Click **Grant permissions** to trigger the Reminders + Automation (Messages) prompts — those two panes have no “+” so they can only be added this way. Full Disk Access must be added manually: System Settings → Privacy & Security → Full Disk Access → add MeetingReminder. Off by default.")
                     Text("Generate on-device (macOS 26+): uses Apple Intelligence's on-device model instead of the `claude` CLI — free, offline, ~5s, and posts a short brief to Slack. It reads the most recent matching Notion Meeting Notes for context but skips the full agent (no Todoist/Jira/skip-list). Falls back to Claude when off.")
+                    Text("Fill missing briefings on-device (macOS 26+): independent of the toggles above. For every meeting with attendees from now to the end of tomorrow that has no Pre-Call Briefing in Notion, Apple Intelligence writes a rough one from the invite, the last Meeting Notes and the Teams chat context on the Calendar Events row. Marked as an on-device draft. Log: ~/Library/Logs/MeetingReminder/ondevice-brief-gapfill.log.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
