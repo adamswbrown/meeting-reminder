@@ -24,6 +24,7 @@ enum IntradayContextCaps {
     static let maxAttendees = 6
     static let attendeeChars = 70
     static let titleChars = 160
+    static let teamsChars = 1200          // ≈ 345 tok — Teams Chat Context from the Calendar Events row
 }
 
 // MARK: - Assembled context (pure, testable)
@@ -40,20 +41,24 @@ struct IntradayBriefContext {
     let video: String?
     let attendees: [String]
     let priorNotesSnippet: String?
+    /// Recent Teams chat with the attendees, written onto the Calendar Events row by
+    /// the local teams-chat-mcp feeder. Same priority as the prior notes in the ladder.
+    var teamsContext: String? = nil
 
     /// Full prompt, then drop lowest-priority sections until it fits.
     func render() -> String {
-        for notesCap in [IntradayContextCaps.priorNotesChars, IntradayContextCaps.priorNotesChars / 2, 0] {
-            let s = build(notesCap: notesCap)
+        let n = IntradayContextCaps.priorNotesChars, t = IntradayContextCaps.teamsChars
+        for (notesCap, teamsCap) in [(n, t), (n / 2, t / 2), (0, 0)] {
+            let s = build(notesCap: notesCap, teamsCap: teamsCap)
             if TokenBudget.fits(s) { return s }
         }
         return renderMinimal()
     }
 
     /// Title / time / attendees only — the last-resort fallback (never drops identity).
-    func renderMinimal() -> String { build(notesCap: 0, includeVideo: false) }
+    func renderMinimal() -> String { build(notesCap: 0, teamsCap: 0, includeVideo: false) }
 
-    private func build(notesCap: Int, includeVideo: Bool = true) -> String {
+    private func build(notesCap: Int, teamsCap: Int, includeVideo: Bool = true) -> String {
         var lines: [String] = ["MEETING"]
         lines.append("- Title: \(String(title.prefix(IntradayContextCaps.titleChars)))")
         lines.append("- When (Europe/London): \(startLondon)–\(endLondon)")
@@ -71,6 +76,12 @@ struct IntradayBriefContext {
             lines.append("PRIOR CONTEXT (from the invite / most recent notes)")
             lines.append(trimmed)
         }
+
+        if teamsCap > 0, let teams = teamsContext,
+           case let trimmed = Self.truncateWords(teams, teamsCap), !trimmed.isEmpty {
+            lines.append("TEAMS CONTEXT (recent chat with the attendees)")
+            lines.append(trimmed)
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -86,7 +97,8 @@ struct IntradayBriefContext {
 extension IntradayBriefContext {
     /// Build from a calendar event. `priorNotes` (the most recent Notion Meeting Notes
     /// for a repeated meeting) takes precedence over the invite body when present.
-    static func from(_ e: MeetingEvent, priorNotes: String? = nil) -> IntradayBriefContext {
+    static func from(_ e: MeetingEvent, priorNotes: String? = nil,
+                     teamsContext: String? = nil) -> IntradayBriefContext {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd HH:mm"
         fmt.timeZone = TimeZone(identifier: "Europe/London")
@@ -99,7 +111,8 @@ extension IntradayBriefContext {
             endLondon: fmt.string(from: e.endDate),
             video: e.videoLink?.host,
             attendees: e.attendees ?? [],
-            priorNotesSnippet: (notes?.isEmpty == false) ? notes : nil)
+            priorNotesSnippet: (notes?.isEmpty == false) ? notes : nil,
+            teamsContext: (teamsContext?.isEmpty == false) ? teamsContext : nil)
     }
 }
 
@@ -116,6 +129,18 @@ struct GeneratedBrief {
     var actionItems: [String]
 }
 
+/// The Notion-page brief the gap-filler writes when no Claude brief exists.
+@available(macOS 26.0, *)
+@Generable
+struct GapFillBrief {
+    @Guide(description: "2-3 sentence summary: who the meeting is with and what it is about. Say plainly if the context is thin")
+    var summary: String
+    @Guide(description: "Up to 3 talking points drawn from the prior notes or Teams context")
+    var talkingPoints: [String]
+    @Guide(description: "Up to 3 concrete prep actions, imperative voice")
+    var prepActions: [String]
+}
+
 enum FoundationModelsBriefError: Error { case modelUnavailable(String) }
 
 @available(macOS 26.0, *)
@@ -128,20 +153,28 @@ enum FoundationModelsBriefService {
     """
 
     static func generate(_ ctx: IntradayBriefContext) async throws -> GeneratedBrief {
+        try await generate(ctx, as: GeneratedBrief.self)
+    }
+
+    static func generateGapFill(_ ctx: IntradayBriefContext) async throws -> GapFillBrief {
+        try await generate(ctx, as: GapFillBrief.self)
+    }
+
+    private static func generate<T: Generable>(_ ctx: IntradayBriefContext, as type: T.Type) async throws -> T {
         let model = SystemLanguageModel.default
         guard case .available = model.availability else {
             throw FoundationModelsBriefError.modelUnavailable("\(model.availability)")
         }
         let session = LanguageModelSession(instructions: instructions)
         do {
-            return try await session.respond(to: ctx.render(), generating: GeneratedBrief.self).content
+            return try await session.respond(to: ctx.render(), generating: T.self).content
         } catch let error as LanguageModelSession.GenerationError {
             // Runtime backstop: if the calibrated estimate was wrong, degrade + retry once.
             // Use a FRESH session — the failed one's transcript still holds the oversized
             // prompt, so retrying on it would overflow the window again.
             if case .exceededContextWindowSize = error {
                 let retry = LanguageModelSession(instructions: instructions)
-                return try await retry.respond(to: ctx.renderMinimal(), generating: GeneratedBrief.self).content
+                return try await retry.respond(to: ctx.renderMinimal(), generating: T.self).content
             }
             throw error
         }

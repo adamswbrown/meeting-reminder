@@ -110,13 +110,26 @@ final class CalendarService: ObservableObject {
             calendars: nil
         )
 
-        let ekEvents = eventStore.events(matching: predicate)
+        events = meetingEvents(matching: predicate)
 
+        availableCalendars = eventStore.calendars(for: .event)
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    /// Meetings from now until `end`, with the same filters as the menu bar list.
+    /// Separate from `events` (today only) so look-ahead work doesn't change the UI.
+    func upcomingEvents(until end: Date) -> [MeetingEvent] {
+        let now = Date()
+        guard end > now else { return [] }
+        return meetingEvents(matching: eventStore.predicateForEvents(withStart: now, end: end, calendars: nil))
+    }
+
+    private func meetingEvents(matching predicate: NSPredicate) -> [MeetingEvent] {
         let enabledCalendarIDs = Set(
             UserDefaults.standard.stringArray(forKey: "enabledCalendarIDs") ?? []
         )
 
-        events = ekEvents
+        return eventStore.events(matching: predicate)
             .filter { event in
                 let me = event.attendees?.first(where: { $0.isCurrentUser })
                 // Excludes all-day, declined, and organiser-cancelled events, and
@@ -134,9 +147,6 @@ final class CalendarService: ObservableObject {
                 return MeetingEvent(from: ekEvent, videoLink: videoLink)
             }
             .sorted { $0.startDate < $1.startDate }
-
-        availableCalendars = eventStore.calendars(for: .event)
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
     // MARK: - Meeting Statistics
