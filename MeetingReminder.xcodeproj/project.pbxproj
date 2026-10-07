@@ -35,6 +35,7 @@
 		A1000031 /* NotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000031 /* NotionService.swift */; };
 		A1000032 /* PreCallBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000032 /* PreCallBrief.swift */; };
 		A1000033 /* PreCallBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000033 /* PreCallBriefService.swift */; };
+		AD000001 /* CalendarEnrichmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000001 /* CalendarEnrichmentService.swift */; };
 		A1000034 /* BriefPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000034 /* BriefPanelView.swift */; };
 		A1000035 /* AvailabilityPushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000035 /* AvailabilityPushService.swift */; };
 		A1000070 /* BookingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000070 /* BookingSupport.swift */; };
@@ -132,6 +133,7 @@
 		B1000031 /* NotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionService.swift; sourceTree = "<group>"; };
 		B1000032 /* PreCallBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBrief.swift; sourceTree = "<group>"; };
 		B1000033 /* PreCallBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefService.swift; sourceTree = "<group>"; };
+		BD000001 /* CalendarEnrichmentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEnrichmentService.swift; sourceTree = "<group>"; };
 		B1000034 /* BriefPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefPanelView.swift; sourceTree = "<group>"; };
 		B1000035 /* AvailabilityPushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityPushService.swift; sourceTree = "<group>"; };
 		B1000070 /* BookingSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupport.swift; sourceTree = "<group>"; };
@@ -255,6 +257,7 @@
 				B1000021 /* KeychainHelper.swift */,
 				B1000031 /* NotionService.swift */,
 				B1000033 /* PreCallBriefService.swift */,
+				BD000001 /* CalendarEnrichmentService.swift */,
 				B1000035 /* AvailabilityPushService.swift */,
 				B1000070 /* BookingSupport.swift */,
 				B1000071 /* BookingPollService.swift */,
@@ -463,6 +466,7 @@
 				A1000031 /* NotionService.swift in Sources */,
 				A1000032 /* PreCallBrief.swift in Sources */,
 				A1000033 /* PreCallBriefService.swift in Sources */,
+				AD000001 /* CalendarEnrichmentService.swift in Sources */,
 				A1000034 /* BriefPanelView.swift in Sources */,
 				A1000035 /* AvailabilityPushService.swift in Sources */,
 				A1000070 /* BookingSupport.swift in Sources */,
