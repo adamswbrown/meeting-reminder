@@ -546,7 +546,7 @@ final class PreCallBriefService: ObservableObject {
 
     /// Normalised Levenshtein similarity in [0, 1].
     /// 1.0 = identical strings, 0.0 = completely different.
-    static func similarity(_ a: String, _ b: String) -> Double {
+    nonisolated static func similarity(_ a: String, _ b: String) -> Double {
         if a.isEmpty && b.isEmpty { return 1 }
         if a.isEmpty || b.isEmpty { return 0 }
         let d = levenshtein(a, b)
@@ -554,7 +554,7 @@ final class PreCallBriefService: ObservableObject {
         return 1.0 - (Double(d) / maxLen)
     }
 
-    private static func levenshtein(_ s1: String, _ s2: String) -> Int {
+    nonisolated private static func levenshtein(_ s1: String, _ s2: String) -> Int {
         let a = Array(s1)
         let b = Array(s2)
         let m = a.count, n = b.count

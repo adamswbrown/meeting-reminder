@@ -2,12 +2,15 @@ import Foundation
 
 /// Teams/Graph enrichment written onto a meeting's Calendar Events row by the
 /// local `teams-chat-mcp` feeder — `Teams Meeting`, `RSVP Summary`, `My Status`.
-/// `Teams Chat Context` exists on the same row but isn't surfaced here; it's
-/// prose meant for the cloud briefing, not a quick glance.
+/// `Teams Chat Context` is prose meant for briefings, not a quick glance: the
+/// panel ignores it, the on-device gap-filler feeds it to the model.
 struct CalendarRowEnrichment {
     let isTeamsMeeting: Bool
     let rsvpSummary: String?
     let myStatus: String?
+    var teamsChatContext: String? = nil
+    /// The Calendar Events row itself, so a new brief can link back to it.
+    var rowPageID: String? = nil
 
     var isEmpty: Bool {
         !isTeamsMeeting && rsvpSummary == nil && myStatus == nil
@@ -89,7 +92,9 @@ final class CalendarEnrichmentService {
             return CalendarRowEnrichment(
                 isTeamsMeeting: Self.checkboxValue(props["Teams Meeting"]),
                 rsvpSummary: Self.richTextValue(props["RSVP Summary"]),
-                myStatus: Self.richTextValue(props["My Status"])
+                myStatus: Self.richTextValue(props["My Status"]),
+                teamsChatContext: Self.richTextValue(props["Teams Chat Context"]),
+                rowPageID: row["id"] as? String
             )
         } catch {
             return nil

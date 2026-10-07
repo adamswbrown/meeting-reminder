@@ -36,6 +36,7 @@
 		A1000032 /* PreCallBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000032 /* PreCallBrief.swift */; };
 		A1000033 /* PreCallBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000033 /* PreCallBriefService.swift */; };
 		AD000001 /* CalendarEnrichmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000001 /* CalendarEnrichmentService.swift */; };
+		AD000002 /* OnDeviceBriefGapFiller.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000002 /* OnDeviceBriefGapFiller.swift */; };
 		A1000034 /* BriefPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000034 /* BriefPanelView.swift */; };
 		A1000035 /* AvailabilityPushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000035 /* AvailabilityPushService.swift */; };
 		A1000070 /* BookingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000070 /* BookingSupport.swift */; };
@@ -79,6 +80,7 @@
 		T2000008 /* IntradayBriefGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000008 /* IntradayBriefGateTests.swift */; };
 		T2000047 /* ClaudeCLILocatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000047 /* ClaudeCLILocatorTests.swift */; };
 		T2000045 /* TokenBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000045 /* TokenBudgetTests.swift */; };
+		T2000099 /* OnDeviceBriefGapFillerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000099 /* OnDeviceBriefGapFillerTests.swift */; };
 		BC000002 /* PreCallBriefMatchPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000001 /* PreCallBriefMatchPolicyTests.swift */; };
 		T2000046 /* NotionPriorNotesReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000046 /* NotionPriorNotesReaderTests.swift */; };
 		T2000009 /* CalendarEventInclusionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000009 /* CalendarEventInclusionTests.swift */; };
@@ -134,6 +136,7 @@
 		B1000032 /* PreCallBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBrief.swift; sourceTree = "<group>"; };
 		B1000033 /* PreCallBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefService.swift; sourceTree = "<group>"; };
 		BD000001 /* CalendarEnrichmentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEnrichmentService.swift; sourceTree = "<group>"; };
+		BD000002 /* OnDeviceBriefGapFiller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceBriefGapFiller.swift; sourceTree = "<group>"; };
 		B1000034 /* BriefPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefPanelView.swift; sourceTree = "<group>"; };
 		B1000035 /* AvailabilityPushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityPushService.swift; sourceTree = "<group>"; };
 		B1000070 /* BookingSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookingSupport.swift; sourceTree = "<group>"; };
@@ -177,6 +180,7 @@
 		T1000008 /* IntradayBriefGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntradayBriefGateTests.swift; sourceTree = "<group>"; };
 		T1000047 /* ClaudeCLILocatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLILocatorTests.swift; sourceTree = "<group>"; };
 		T1000045 /* TokenBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenBudgetTests.swift; sourceTree = "<group>"; };
+		T1000099 /* OnDeviceBriefGapFillerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceBriefGapFillerTests.swift; sourceTree = "<group>"; };
 		BC000001 /* PreCallBriefMatchPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefMatchPolicyTests.swift; sourceTree = "<group>"; };
 		T1000046 /* NotionPriorNotesReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReaderTests.swift; sourceTree = "<group>"; };
 		T1000009 /* CalendarEventInclusionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventInclusionTests.swift; sourceTree = "<group>"; };
@@ -258,6 +262,7 @@
 				B1000031 /* NotionService.swift */,
 				B1000033 /* PreCallBriefService.swift */,
 				BD000001 /* CalendarEnrichmentService.swift */,
+				BD000002 /* OnDeviceBriefGapFiller.swift */,
 				B1000035 /* AvailabilityPushService.swift */,
 				B1000070 /* BookingSupport.swift */,
 				B1000071 /* BookingPollService.swift */,
@@ -345,6 +350,7 @@
 				T1000008 /* IntradayBriefGateTests.swift */,
 				T1000047 /* ClaudeCLILocatorTests.swift */,
 				T1000045 /* TokenBudgetTests.swift */,
+				T1000099 /* OnDeviceBriefGapFillerTests.swift */,
 				BC000001 /* PreCallBriefMatchPolicyTests.swift */,
 				T1000046 /* NotionPriorNotesReaderTests.swift */,
 				T1000009 /* CalendarEventInclusionTests.swift */,
@@ -467,6 +473,7 @@
 				A1000032 /* PreCallBrief.swift in Sources */,
 				A1000033 /* PreCallBriefService.swift in Sources */,
 				AD000001 /* CalendarEnrichmentService.swift in Sources */,
+				AD000002 /* OnDeviceBriefGapFiller.swift in Sources */,
 				A1000034 /* BriefPanelView.swift in Sources */,
 				A1000035 /* AvailabilityPushService.swift in Sources */,
 				A1000070 /* BookingSupport.swift in Sources */,
@@ -520,6 +527,7 @@
 				T2000008 /* IntradayBriefGateTests.swift in Sources */,
 				T2000047 /* ClaudeCLILocatorTests.swift in Sources */,
 				T2000045 /* TokenBudgetTests.swift in Sources */,
+				T2000099 /* OnDeviceBriefGapFillerTests.swift in Sources */,
 				BC000002 /* PreCallBriefMatchPolicyTests.swift in Sources */,
 				T2000046 /* NotionPriorNotesReaderTests.swift in Sources */,
 				T2000009 /* CalendarEventInclusionTests.swift in Sources */,
