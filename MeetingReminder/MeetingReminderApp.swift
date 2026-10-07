@@ -211,6 +211,7 @@ final class OverlayCoordinator: ObservableObject {
     private let monitor: MeetingMonitor
     private let notionService: NotionService
     private let preCallBriefService: PreCallBriefService
+    private let calendarEnrichmentService = CalendarEnrichmentService()
     private let windowController = OverlayWindowController()
     private let breakWindowController = BreakOverlayWindowController()
     private let checklistController = ChecklistWindowController()
@@ -429,6 +430,7 @@ final class OverlayCoordinator: ObservableObject {
             event: event,
             service: preCallBriefService,
             notion: notionService,
+            enrichmentService: calendarEnrichmentService,
             onClose: { [weak self] in
                 self?.briefPanelController.close()
             }

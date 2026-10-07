@@ -8,6 +8,7 @@ struct BriefPanelView: View {
     let event: MeetingEvent
     @ObservedObject var service: PreCallBriefService
     @ObservedObject var notion: NotionService
+    let enrichmentService: CalendarEnrichmentService
     let onClose: () -> Void
 
     @State private var brief: PreCallBrief?
@@ -22,9 +23,18 @@ struct BriefPanelView: View {
     @State private var isCreatingNote = false
     @State private var windowBox = WindowBox()
 
+    /// Teams/Graph enrichment for this meeting's Calendar Events row, if any.
+    /// Absent is the common case (most meetings predate the feeder, or the
+    /// feeder hasn't reached this one yet) — not an error state.
+    @State private var enrichment: CalendarRowEnrichment?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+
+            if let enrichment, !enrichment.isEmpty {
+                enrichmentBar(enrichment)
+            }
 
             Divider()
 
@@ -58,6 +68,7 @@ struct BriefPanelView: View {
                 loadBrief()
             }
             resolveMeetingNote()
+            loadEnrichment()
         }
         .sheet(isPresented: $showPicker) {
             BriefPickerView(service: service, eventID: event.id) { summary in
@@ -161,6 +172,28 @@ struct BriefPanelView: View {
             .buttonStyle(.plain)
         }
         .padding(.trailing, 16)
+    }
+
+    @ViewBuilder
+    private func enrichmentBar(_ enrichment: CalendarRowEnrichment) -> some View {
+        HStack(spacing: 10) {
+            if enrichment.isTeamsMeeting {
+                Label("Teams meeting", systemImage: "video.fill")
+            }
+            if let rsvp = enrichment.rsvpSummary {
+                Label(rsvp, systemImage: "person.2")
+            }
+            if let status = enrichment.myStatus {
+                Label(status, systemImage: "circle.fill")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.04))
     }
 
     @ViewBuilder
@@ -382,6 +415,16 @@ struct BriefPanelView: View {
                         isUnattached = true
                     }
                 }
+            }
+        }
+    }
+
+    private func loadEnrichment() {
+        guard enrichmentService.isConfigured else { return }
+        Task {
+            let fetched = await enrichmentService.fetchEnrichment(for: event)
+            await MainActor.run {
+                enrichment = fetched
             }
         }
     }
@@ -887,6 +930,7 @@ final class BriefPanelWindowController {
         event: MeetingEvent,
         service: PreCallBriefService,
         notion: NotionService,
+        enrichmentService: CalendarEnrichmentService,
         onClose: @escaping () -> Void
     ) {
         close()
@@ -917,6 +961,7 @@ final class BriefPanelWindowController {
             event: event,
             service: service,
             notion: notion,
+            enrichmentService: enrichmentService,
             onClose: { [weak self] in
                 self?.close()
                 onClose()
