@@ -86,4 +86,29 @@ final class NotionPriorNotesReaderTests: XCTestCase {
     func testEmptyBlocksReturnEmpty() {
         XCTAssertEqual(NotionPriorNotesReader.extractPlainText(fromBlocks: [], maxChars: 100), "")
     }
+
+    // MARK: snippet
+
+    private func block(_ type: String, _ text: String) -> [String: Any] {
+        ["type": type, type: ["rich_text": [["plain_text": text]]]]
+    }
+
+    func testSnippetSkipsPastedInviteAndLeadsWithOutcome() {
+        let row: [String: Any] = ["id": "p", "properties": [
+            "Start": ["date": ["start": "2026-10-01T10:30:00Z"]],
+            "Outcome": ["rich_text": [["plain_text": "URL whitelisting still blocking deployment."]]],
+            "Action Items": ["rich_text": [["plain_text": "- Customer to retest"]]],
+        ]]
+        let blocks = [block("heading_3", "Calendar notes"),
+                      block("paragraph", "-----Original Appointment----- From: someone"),
+                      block("paragraph", "Dial in by phone +44 20 …"),
+                      block("heading_2", "Action Items (extracted)"),
+                      block("paragraph", "No commitments owed by Adam.")]
+        let out = NotionPriorNotesReader.snippet(row: row, blocks: blocks, maxChars: 1500)
+        XCTAssertTrue(out.hasPrefix("Last meeting: 1 Oct 2026\nOutcome: URL whitelisting"), out)
+        XCTAssertTrue(out.contains("Customer to retest"))
+        XCTAssertTrue(out.contains("Action Items (extracted)"))
+        XCTAssertFalse(out.contains("Original Appointment"))
+        XCTAssertFalse(out.contains("Dial in"))
+    }
 }
