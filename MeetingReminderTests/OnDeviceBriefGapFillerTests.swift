@@ -24,12 +24,27 @@ final class OnDeviceBriefGapFillerTests: XCTestCase {
                        ["soon", "tomorrow"])
     }
 
-    func testHorizonIsEndOfTomorrow() {
+    private func utc(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int = 0) -> Date {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "Europe/London")!
-        let eveningToday = cal.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 17))!
-        let expected = cal.date(from: DateComponents(year: 2026, month: 10, day: 9))!
-        XCTAssertEqual(GapFillPlanner.horizon(from: eveningToday, calendar: cal), expected)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+    }
+
+    func testThursdayEveningWaitsForFridayRun() {
+        // Thu 8 Oct 2026 16:00 UTC → Fri's 02:04 run settles at 02:49.
+        XCTAssertEqual(GapFillPlanner.nextClaudeSettle(after: utc(2026, 10, 8, 16)), utc(2026, 10, 9, 2, 49))
+    }
+
+    func testBeforeTodaysRunSettlesTodaysMeetingsWait() {
+        // Thu 01:00 UTC: today's run hasn't happened, so only meetings before 02:49 qualify.
+        XCTAssertEqual(GapFillPlanner.nextClaudeSettle(after: utc(2026, 10, 8, 1)), utc(2026, 10, 8, 2, 49))
+        // Mid-run (02:20): still wait for it.
+        XCTAssertEqual(GapFillPlanner.nextClaudeSettle(after: utc(2026, 10, 8, 2, 20)), utc(2026, 10, 8, 2, 49))
+    }
+
+    func testFridayEveningCoversTheWeekendButNotMonday() {
+        // Fri 9 Oct 18:00 UTC → no run Sat/Sun, next settle is Mon 12 Oct 02:49.
+        XCTAssertEqual(GapFillPlanner.nextClaudeSettle(after: utc(2026, 10, 9, 18)), utc(2026, 10, 12, 2, 49))
     }
 
     func testSkipsAllDayAttendeeLessAndAdHoc() {
@@ -66,11 +81,13 @@ final class OnDeviceBriefGapFillerTests: XCTestCase {
 
     func testPageBlocksLeadWithProvenanceCalloutAndCapLists() {
         let blocks = GapFillPlanner.pageBlocks(summary: "S", talkingPoints: ["1", " ", "2", "3", "4"],
-                                               prepActions: [], usedTeams: true, usedPriorNotes: false)
+                                               prepActions: [], meetingStart: utc(2026, 10, 9, 8),
+                                               usedTeams: true, usedPriorNotes: false)
         XCTAssertEqual(blocks.first?["type"] as? String, "callout")
         let calloutText = ((blocks.first?["callout"] as? [String: Any])?["rich_text"] as? [[String: Any]])?
             .compactMap { ($0["text"] as? [String: Any])?["content"] as? String }.joined() ?? ""
         XCTAssertTrue(calloutText.contains("Teams chat"))
+        XCTAssertTrue(calloutText.contains("Fri 9 Oct, 09:00"), calloutText)   // BST
         XCTAssertFalse(calloutText.contains("prior meeting notes"))
         XCTAssertEqual(blocks.filter { $0["type"] as? String == "bulleted_list_item" }.count, 3)
         // No actions → no "Prep" heading and no to-dos.

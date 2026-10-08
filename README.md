@@ -55,7 +55,7 @@ The reminder app works without any external services. If you want to extend it, 
 |---|---|---|
 | Notion | Create a meeting page when you join and sync selected calendar events | [Notion setup](docs/NOTION-SETUP.md) |
 | Pre-call briefings | Generate briefings for newly added meetings using local command-line tools | [Briefing setup](docs/INTRADAY-BRIEFINGS.md) |
-| On-device briefing drafts *(in testing)* | On macOS 26+, Apple Intelligence writes a rough Pre-Call Briefing in Notion for any meeting (now to end of tomorrow) that has none, marked `Briefing Status = On-device`. A Claude briefing run replaces the draft when it has credit. Expect low-quality output; behaviour may change | Settings → Notion → Calendar Sync → "Fill missing briefings on-device" |
+| On-device briefing drafts *(in testing)* | On macOS 26+, Apple Intelligence writes a rough Pre-Call Briefing in Notion for any meeting the next Claude briefing run can't cover, marked `Briefing Status = On-device`. A Claude briefing run replaces the draft when it has credit. Expect low-quality output; behaviour may change | Settings → Notion → Calendar Sync → "Fill missing briefings on-device" |
 | Availability page | Publish a sanitised free/busy view without exposing event titles or attendees. Events marked Free are not shown as busy | [Availability setup](docs/AVAILABILITY-PAGE.md) |
 | Busy light | Drive a HomeKit accessory—or another automation—with Apple Shortcuts | [Busy light setup](docs/BUSY-LIGHT.md) |
 | Cal.com | Sync bookings and meeting links into the local calendar workflow | [Booking setup](docs/BOOKING.md) |
