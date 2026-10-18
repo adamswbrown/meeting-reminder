@@ -695,7 +695,7 @@ final class PreCallBriefTriggerService: ObservableObject {
             return
         }
 
-        let output = await Self.runClaude(cliPath: cliPath, promptStdin: filled)
+        let output = await runBriefing(filled, title: target.title)
         // Mark fired regardless of outcome — a failed run should not loop; Co Work's
         // schedule is the backstop.
         markFired(target.id)
@@ -749,7 +749,7 @@ final class PreCallBriefTriggerService: ObservableObject {
             return
         }
 
-        let output = await Self.runClaude(cliPath: cliPath, promptStdin: filled)
+        let output = await runBriefing(filled, title: target.title)
         markFiredRemoval(target.id)   // never loop, regardless of outcome
         let summary = Self.parseResult(output) ?? firstNonEmptyLine(output) ?? "(no output)"
         recordResult(summary)
@@ -847,6 +847,30 @@ final class PreCallBriefTriggerService: ObservableObject {
         } catch {
             return "created=0 imessage=none on-device-error: \(error)"
         }
+    }
+
+    /// Runs the filled skill on the Managed Agent when it is switched on and configured, else on
+    /// the local `claude` CLI. If the managed session could not even be started nothing has run,
+    /// so falling back to the CLI is safe; once a session has started it may already have posted
+    /// to Slack/Notion, so a mid-run failure is reported as-is and never re-run locally.
+    private func runBriefing(_ filled: String, title: String) async -> String {
+        if UserDefaults.standard.bool(forKey: ManagedAgentsSettings.precallEnabledKey),
+           ManagedAgentsSettings.isConfigured(for: .precall) {
+            do {
+                log("running on Managed Agent")
+                return try await ManagedAgentsClient.run(
+                    role: .precall,
+                    prompt: ManagedAgentsPrompts.precallPreamble + filled,
+                    title: "Intraday brief: \(title)",
+                    maxCostCents: 150,
+                    timeout: 600)
+            } catch ManagedAgentsError.startFailed(let why) {
+                log("Managed Agent unavailable (\(why)) — falling back to local claude")
+            } catch {
+                return "FAILED \(error.localizedDescription)"
+            }
+        }
+        return await Self.runClaude(cliPath: cliPath, promptStdin: filled)
     }
 
     // MARK: Process (runs off the main actor)

@@ -21,6 +21,9 @@ final class MeetingMonitor: ObservableObject {
 
     /// Whether a meeting is currently considered "in progress" (for end detection)
     @Published var currentMeetingInProgress: MeetingEvent?
+    /// Fired once whenever a meeting is marked ended, from any signal (audio silence, calendar
+    /// end time, or the manual button). Lets other services react without the monitor knowing them.
+    var onMeetingEnded: (@MainActor (MeetingEvent) -> Void)?
 
     /// Whether the microphone is currently active. Polled by the same audio
     /// check timer that handles meeting-end detection. Observers (e.g. the
@@ -681,6 +684,8 @@ final class MeetingMonitor: ObservableObject {
             breakNextEvent = nextEvent
             shouldShowBreakOverlay = true
         }
+
+        onMeetingEnded?(event)
     }
 
     // MARK: - Audio Monitoring (Primary meeting-end signal)

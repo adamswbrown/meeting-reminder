@@ -27,6 +27,7 @@ struct SettingsView: View {
     @ObservedObject var calComSyncService: CalComSyncService
     @ObservedObject var preCallBriefTrigger: PreCallBriefTriggerService
     @ObservedObject var briefGapFiller: OnDeviceBriefGapFiller
+    @ObservedObject var postMeetingFollowUp: PostMeetingFollowUpService
     @AppStorage("preCallBriefsDatabaseID") private var preCallBriefsDatabaseID: String = ""
     @AppStorage("intradayUseOnDeviceModel") private var intradayUseOnDeviceModel: Bool = false
 
@@ -1152,6 +1153,8 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+
+            ManagedAgentsSettingsSection(followUp: postMeetingFollowUp)
 
             Section {
                 TextField("Notion view URL or UUID",

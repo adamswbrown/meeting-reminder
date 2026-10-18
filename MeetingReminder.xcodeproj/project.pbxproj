@@ -44,6 +44,9 @@
 		A1000072 /* GraphMailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000072 /* GraphMailService.swift */; };
 		A1000050 /* BusyLightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000050 /* BusyLightService.swift */; };
 		A1000091 /* PreCallBriefTriggerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000091 /* PreCallBriefTriggerService.swift */; };
+		A1000100 /* ManagedAgentsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000100 /* ManagedAgentsClient.swift */; };
+		A1000101 /* PostMeetingFollowUpService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000101 /* PostMeetingFollowUpService.swift */; };
+		A1000102 /* ManagedAgentsSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000102 /* ManagedAgentsSettingsSection.swift */; };
 		A10000F1 /* FoundationModelsBriefService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F1 /* FoundationModelsBriefService.swift */; };
 		A10000F2 /* NotionPriorNotesReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000F2 /* NotionPriorNotesReader.swift */; };
 		AABB0001 /* AudioProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABB0002 /* AudioProcessMonitor.swift */; };
@@ -81,6 +84,8 @@
 		T2000047 /* ClaudeCLILocatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000047 /* ClaudeCLILocatorTests.swift */; };
 		T2000045 /* TokenBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000045 /* TokenBudgetTests.swift */; };
 		T2000099 /* OnDeviceBriefGapFillerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000099 /* OnDeviceBriefGapFillerTests.swift */; };
+		T2000100 /* ManagedAgentsEventParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000100 /* ManagedAgentsEventParserTests.swift */; };
+		T2000101 /* PostMeetingFollowUpLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000101 /* PostMeetingFollowUpLogicTests.swift */; };
 		BC000002 /* PreCallBriefMatchPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000001 /* PreCallBriefMatchPolicyTests.swift */; };
 		T2000046 /* NotionPriorNotesReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000046 /* NotionPriorNotesReaderTests.swift */; };
 		T2000009 /* CalendarEventInclusionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T1000009 /* CalendarEventInclusionTests.swift */; };
@@ -144,6 +149,9 @@
 		B1000072 /* GraphMailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphMailService.swift; sourceTree = "<group>"; };
 		B1000050 /* BusyLightService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyLightService.swift; sourceTree = "<group>"; };
 		B1000091 /* PreCallBriefTriggerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefTriggerService.swift; sourceTree = "<group>"; };
+		B1000100 /* ManagedAgentsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAgentsClient.swift; sourceTree = "<group>"; };
+		B1000101 /* PostMeetingFollowUpService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostMeetingFollowUpService.swift; sourceTree = "<group>"; };
+		B1000102 /* ManagedAgentsSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAgentsSettingsSection.swift; sourceTree = "<group>"; };
 		B10000F1 /* FoundationModelsBriefService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationModelsBriefService.swift; sourceTree = "<group>"; };
 		B10000F2 /* NotionPriorNotesReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReader.swift; sourceTree = "<group>"; };
 		AABB0002 /* AudioProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProcessMonitor.swift; sourceTree = "<group>"; };
@@ -181,6 +189,8 @@
 		T1000047 /* ClaudeCLILocatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLILocatorTests.swift; sourceTree = "<group>"; };
 		T1000045 /* TokenBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenBudgetTests.swift; sourceTree = "<group>"; };
 		T1000099 /* OnDeviceBriefGapFillerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceBriefGapFillerTests.swift; sourceTree = "<group>"; };
+		T1000100 /* ManagedAgentsEventParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAgentsEventParserTests.swift; sourceTree = "<group>"; };
+		T1000101 /* PostMeetingFollowUpLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostMeetingFollowUpLogicTests.swift; sourceTree = "<group>"; };
 		BC000001 /* PreCallBriefMatchPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreCallBriefMatchPolicyTests.swift; sourceTree = "<group>"; };
 		T1000046 /* NotionPriorNotesReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotionPriorNotesReaderTests.swift; sourceTree = "<group>"; };
 		T1000009 /* CalendarEventInclusionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventInclusionTests.swift; sourceTree = "<group>"; };
@@ -269,6 +279,8 @@
 				B1000072 /* GraphMailService.swift */,
 				B1000050 /* BusyLightService.swift */,
 				B1000091 /* PreCallBriefTriggerService.swift */,
+				B1000100 /* ManagedAgentsClient.swift */,
+				B1000101 /* PostMeetingFollowUpService.swift */,
 				B10000F1 /* FoundationModelsBriefService.swift */,
 				B10000F2 /* NotionPriorNotesReader.swift */,
 				AABB0002 /* AudioProcessMonitor.swift */,
@@ -307,6 +319,7 @@
 				B1000034 /* BriefPanelView.swift */,
 				B1000051 /* BusyLightSettingsView.swift */,
 				B1000083 /* CalComSettingsView.swift */,
+				B1000102 /* ManagedAgentsSettingsSection.swift */,
 				B1000086 /* NotionSetupWizardView.swift */,
 			);
 			path = Views;
@@ -351,6 +364,8 @@
 				T1000047 /* ClaudeCLILocatorTests.swift */,
 				T1000045 /* TokenBudgetTests.swift */,
 				T1000099 /* OnDeviceBriefGapFillerTests.swift */,
+				T1000100 /* ManagedAgentsEventParserTests.swift */,
+				T1000101 /* PostMeetingFollowUpLogicTests.swift */,
 				BC000001 /* PreCallBriefMatchPolicyTests.swift */,
 				T1000046 /* NotionPriorNotesReaderTests.swift */,
 				T1000009 /* CalendarEventInclusionTests.swift */,
@@ -481,6 +496,8 @@
 				A1000072 /* GraphMailService.swift in Sources */,
 				A1000050 /* BusyLightService.swift in Sources */,
 				A1000091 /* PreCallBriefTriggerService.swift in Sources */,
+				A1000100 /* ManagedAgentsClient.swift in Sources */,
+				A1000101 /* PostMeetingFollowUpService.swift in Sources */,
 				A10000F1 /* FoundationModelsBriefService.swift in Sources */,
 				A10000F2 /* NotionPriorNotesReader.swift in Sources */,
 				AABB0001 /* AudioProcessMonitor.swift in Sources */,
@@ -500,6 +517,7 @@
 				A1000081 /* CalComService.swift in Sources */,
 				A1000082 /* CalComSyncService.swift in Sources */,
 				A1000083 /* CalComSettingsView.swift in Sources */,
+				A1000102 /* ManagedAgentsSettingsSection.swift in Sources */,
 				A1000084 /* CalComNotionBridge.swift in Sources */,
 				A1000085 /* NotionProvisioningService.swift in Sources */,
 				A1000086 /* NotionSetupWizardView.swift in Sources */,
@@ -528,6 +546,8 @@
 				T2000047 /* ClaudeCLILocatorTests.swift in Sources */,
 				T2000045 /* TokenBudgetTests.swift in Sources */,
 				T2000099 /* OnDeviceBriefGapFillerTests.swift in Sources */,
+				T2000100 /* ManagedAgentsEventParserTests.swift in Sources */,
+				T2000101 /* PostMeetingFollowUpLogicTests.swift in Sources */,
 				BC000002 /* PreCallBriefMatchPolicyTests.swift in Sources */,
 				T2000046 /* NotionPriorNotesReaderTests.swift in Sources */,
 				T2000009 /* CalendarEventInclusionTests.swift in Sources */,
