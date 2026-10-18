@@ -118,6 +118,8 @@ MeetingReminder/
 │   ├── CalComService.swift               # Cal.com v2 REST wrapper: event types, schedules, bookings, cancel, reschedule. API key in Keychain as `calComAPIKey`
 │   ├── CalComSyncService.swift           # Polls Cal.com every 5 min + on wake; creates/tags EKEvents (`[calcom-booking-id:<uid>]`); cancellation sweep
 │   ├── CalComNotionBridge.swift          # On CalComSyncService .created, fires NotionService.createMeetingPage() so a meeting-notes page exists before the 06:00 CalendarNotionSyncService run
+│   ├── ManagedAgentsClient.swift         # Raw-HTTP Managed Agents client (no SDK): start session → send message → poll events → text. Per-session budget cap, denies unattended tool confirmations. `startFailed` vs `runFailed` decides whether a caller may fall back. Pure `ManagedAgentsEventParser` is unit-tested. See docs/MANAGED-AGENTS.md
+│   ├── PostMeetingFollowUpService.swift  # On `MeetingMonitor.onMeetingEnded`, if a Notion notes page exists, runs the follow-up Managed Agent (summary + actions + draft email appended to that page; never sends)
 │   ├── NotionService.swift               # Notion: create meeting page + shared token
 │   ├── NotionProvisioningService.swift   # OOTB guided setup: creates the 5 Notion DBs (Meeting Notes, Pre-Call Briefings, Calendar Events + relations, Skip List, Migrations) under a user-chosen page via the 2025-09-03 API; writes their data source IDs to UserDefaults overrides
 │   ├── PreCallBriefService.swift         # Composes/fetches the Notion-fed pre-call brief
@@ -312,6 +314,8 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 | `notionMeetingNotesDataSourceID` | String | "" | Per-user Meeting Notes data source ID (sync auto-link). Empty ⇒ built-in default |
 | `notionPreCallBriefingsDataSourceID` | String | "" | Per-user Pre-Call Briefings data source ID (sync auto-link). Empty ⇒ built-in default |
 | `calComExchangeClaimedBookings` | Dict (uid → Date) | {} | Cal.com bookings already matched to an Exchange copy. If that copy vanishes (cancelled in Outlook) `CalComSyncService` does not recreate it. Pruned 24h after the booking start |
+| `managedAgentsPrecallEnabled` | Bool | false | Run intraday briefings on a Managed Agent (falls back to local `claude` only if the session can't be started). Also: `managedAgentsEnvironmentID`, `managedAgentsVaultID`, `managedAgentsPrecallAgentID`, `managedAgentsFollowUpAgentID` (set from `managed-agents/setup.sh` output) |
+| `postMeetingFollowUpEnabled` | Bool | false | Draft a follow-up into the Notion notes page when a meeting with notes ends (`postMeetingFollowUpDelaySeconds` default 90) |
 | `msGraphConnectedEmail` | String | nil | Display-only email of the connected Exchange account for booking email (set after a successful `GraphMailService` device-code sign-in) |
 
 ### Keychain keys
@@ -320,6 +324,7 @@ A scheduled feature that pushes Apple Calendar events (Exchange-backed) into a p
 |-----|---------|
 | `notionAPIToken` | Single Notion integration token used by both `NotionService` (create-meeting-page) and `CalendarNotionSyncService` (Cal Sync). The integration must have access to all the relevant databases — including the Operations parent page where Calendar Events + Skip List live. |
 | `supabaseServiceRoleKey` | Supabase service-role key. Shared by `AvailabilityPushService` (writes free/busy rows) **and** `BookingPollService` (reads/PATCHes `booking_requests`). Write key — bypasses RLS; never reaches the browser. See [docs/AVAILABILITY-PAGE.md](docs/AVAILABILITY-PAGE.md) and [docs/BOOKING.md](docs/BOOKING.md). |
+| `anthropicAPIKey` | Anthropic API key for starting Managed Agent sessions (`ManagedAgentsClient`). Set in Settings → Notion → Calendar Sync → Managed Agents. |
 | `msGraphRefreshToken` | OAuth refresh token for sending booking email from Exchange via Microsoft Graph (`GraphMailService`). Obtained via the device-code flow (delegated `Mail.Send`, public Graph CLI client, no admin). Exchanged for a short-lived access token per send; rotated on each refresh. Connect/disconnect in Settings → Availability → "Exchange sending". |
 
 ---

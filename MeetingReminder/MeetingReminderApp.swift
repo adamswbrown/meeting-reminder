@@ -60,6 +60,7 @@ struct MeetingReminderApp: App {
     @StateObject private var calComSyncService: CalComSyncService
     @StateObject private var preCallBriefTrigger: PreCallBriefTriggerService
     @StateObject private var briefGapFiller: OnDeviceBriefGapFiller
+    @StateObject private var postMeetingFollowUp: PostMeetingFollowUpService
 
     @AppStorage("colorBlindMode") private var colorBlindMode = false
     @AppStorage(MenuBarDisplayMode.preferenceKey) private var menuBarDisplayModeRaw = MenuBarDisplayMode.full.rawValue
@@ -81,6 +82,7 @@ struct MeetingReminderApp: App {
         let calComSync = CalComSyncService(calCom: calCom, notionBridge: calComNotionBridge)
         let preCallTrigger = PreCallBriefTriggerService(calendarService: calendar)
         let gapFiller = OnDeviceBriefGapFiller(calendarService: calendar, enrichment: CalendarEnrichmentService())
+        let followUp = PostMeetingFollowUpService(notion: notion)
         let onboarding = OnboardingWindowController()
         let coordinator = OverlayCoordinator(
             monitor: monitor,
@@ -101,6 +103,7 @@ struct MeetingReminderApp: App {
         _calComSyncService = StateObject(wrappedValue: calComSync)
         _preCallBriefTrigger = StateObject(wrappedValue: preCallTrigger)
         _briefGapFiller = StateObject(wrappedValue: gapFiller)
+        _postMeetingFollowUp = StateObject(wrappedValue: followUp)
         onboardingController = onboarding
 
         appDelegate.startServices = {
@@ -115,6 +118,7 @@ struct MeetingReminderApp: App {
                 calComSync.startIfEnabled()
                 preCallTrigger.start()
                 gapFiller.start()
+                monitor.onMeetingEnded = { [weak followUp] event in followUp?.meetingEnded(event) }
                 coordinator.startBusyLightObserver(busyLight)
 
                 if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
@@ -156,7 +160,8 @@ struct MeetingReminderApp: App {
                 calComService: calComService,
                 calComSyncService: calComSyncService,
                 preCallBriefTrigger: preCallBriefTrigger,
-                briefGapFiller: briefGapFiller
+                briefGapFiller: briefGapFiller,
+                postMeetingFollowUp: postMeetingFollowUp
             )
         }
     }

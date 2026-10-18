@@ -4,6 +4,14 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Managed Agents (cloud runs, opt-in).** Intraday pre-call briefings can run on an
+  Anthropic-hosted Managed Agent instead of the local `claude` CLI (falls back to the CLI if a
+  session can't be started), and a new **post-meeting follow-up** drafts a summary, action items
+  and an email into the meeting's Notion notes page when a meeting ends. Hard per-session spend
+  caps; nothing is ever sent. Setup: `managed-agents/setup.sh`; details in
+  [docs/MANAGED-AGENTS.md](docs/MANAGED-AGENTS.md).
+
 ## [3.6.1] - 2026-09-30
 
 ### Fixed

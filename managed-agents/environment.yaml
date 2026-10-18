@@ -1,0 +1,13 @@
+name: meeting-reminder
+config:
+  type: cloud
+  networking:
+    type: limited
+    allow_package_managers: false
+    allow_mcp_servers: false
+    # Every host the agents may call. The first two are fixed. The third must be the host of
+    # your published Outlook ICS feed (it is in your local briefing skill) — change it if yours differs.
+    allowed_hosts:
+      - slack.com
+      - api.notion.com
+      - outlook.office365.com
