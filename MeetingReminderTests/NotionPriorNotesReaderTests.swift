@@ -112,3 +112,35 @@ final class NotionPriorNotesReaderTests: XCTestCase {
         XCTAssertFalse(out.contains("Dial in"))
     }
 }
+
+/// `NotionService.notesChunks` — the meeting-note body splitter.
+final class NotionNotesChunksTests: XCTestCase {
+
+    func testShortNotesAreOneChunk() {
+        XCTAssertEqual(NotionService.notesChunks("hello"), ["hello"])
+    }
+
+    func testChunksStayWithinUTF16Limit() {
+        let text = String(repeating: "é👍a", count: 3000)
+        let chunks = NotionService.notesChunks(text, maxChunks: 1000)
+        XCTAssertTrue(chunks.allSatisfy { $0.utf16.count <= 2000 })
+        XCTAssertEqual(chunks.joined(), text)
+    }
+
+    /// EventKit's notes ceiling (524,288 UTF-16 units) used to produce ~263
+    /// blocks and a Notion 400 "body failed validation" (max 100 children).
+    func testHugeNotesAreCappedWithTruncationMarker() {
+        let text = String(repeating: "x", count: 524_288)
+        let chunks = NotionService.notesChunks(text)
+        XCTAssertEqual(chunks.count, 20)
+        XCTAssertTrue(chunks.last!.hasPrefix("… calendar notes truncated"))
+        XCTAssertTrue(chunks.last!.contains("486288"))
+    }
+
+    func testExactlyAtCapIsNotTruncated() {
+        let text = String(repeating: "x", count: 2000 * 20)
+        let chunks = NotionService.notesChunks(text)
+        XCTAssertEqual(chunks.count, 20)
+        XCTAssertFalse(chunks.last!.hasPrefix("…"))
+    }
+}
