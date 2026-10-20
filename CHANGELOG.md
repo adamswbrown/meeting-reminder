@@ -4,6 +4,21 @@ All notable changes to Meeting Reminder will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **"Brief now with Claude" in the Pre-Call Brief panel.** Shown on Apple Intelligence
+  drafts (`Briefing Status = On-device`) and on meetings with no brief. Runs the intraday
+  Claude skill for that one meeting in a new `UPGRADE` mode — the draft is rewritten in
+  place (`Briefing Status = Auto`), or a brief is created if none exists — then reloads the
+  panel. Bypasses the intraday toggle and working-hours gate; needs the local skill file to
+  handle `UPGRADE`.
+
+### Fixed
+- **Meeting note creation failed with Notion HTTP 400 "body failed validation"** on
+  invites carrying a pasted email thread. The notes were split into 2,000-character blocks
+  with no cap (one invite hit EventKit's 524,288-unit notes ceiling → ~263 blocks; Notion
+  allows 100 per request). Notes are now capped at 20 blocks, the last one saying how much
+  was cut.
+
 ## [3.6.1] - 2026-09-30
 
 ### Fixed

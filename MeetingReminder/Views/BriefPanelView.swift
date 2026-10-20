@@ -9,6 +9,8 @@ struct BriefPanelView: View {
     @ObservedObject var service: PreCallBriefService
     @ObservedObject var notion: NotionService
     let enrichmentService: CalendarEnrichmentService
+    /// Runs the Claude intraday skill on demand ("Brief now with Claude").
+    let briefTrigger: PreCallBriefTriggerService
     let onClose: () -> Void
 
     @State private var brief: PreCallBrief?
@@ -28,6 +30,11 @@ struct BriefPanelView: View {
     /// feeder hasn't reached this one yet) — not an error state.
     @State private var enrichment: CalendarRowEnrichment?
 
+    /// Manual Claude re-brief of an On-device draft: in flight, and the last
+    /// result line when it didn't upgrade the page.
+    @State private var isBriefingNow = false
+    @State private var briefNowMessage: String?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -37,6 +44,10 @@ struct BriefPanelView: View {
             }
 
             Divider()
+
+            if brief?.isOnDeviceDraft == true || isBriefingNow {
+                onDeviceDraftBar
+            }
 
             if isLoading && brief == nil {
                 loadingState
@@ -196,6 +207,45 @@ struct BriefPanelView: View {
         .background(Color.primary.opacity(0.04))
     }
 
+    /// Shown on Apple Intelligence drafts (and while any manual run is in flight):
+    /// one button hands the meeting to the Claude intraday skill in UPGRADE mode,
+    /// which rewrites the draft in place or creates the brief if there is none.
+    @ViewBuilder
+    private var onDeviceDraftBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.intelligence")
+                    .foregroundColor(.purple)
+                Text(isBriefingNow ? "Claude is briefing this meeting… (2–5 min)" : "On-device draft")
+                    .font(.caption.weight(.semibold))
+                Spacer(minLength: 0)
+                if isBriefingNow {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button {
+                        briefNow()
+                    } label: {
+                        Label("Brief now with Claude", systemImage: "sparkles")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("Run the full Claude briefing for this meeting and replace the draft")
+                }
+            }
+            if let briefNowMessage {
+                Text(briefNowMessage)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.purple.opacity(0.08))
+    }
+
     @ViewBuilder
     private var loadingState: some View {
         VStack(alignment: .center, spacing: 8) {
@@ -291,6 +341,23 @@ struct BriefPanelView: View {
                 showPicker = true
             } label: {
                 Label("Search Notion…", systemImage: "magnifyingglass")
+            }
+
+            Button {
+                briefNow()
+            } label: {
+                Label("Brief now with Claude", systemImage: "sparkles")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isBriefingNow)
+            .help("Run the full Claude briefing for this meeting and save it to Notion")
+
+            if let briefNowMessage, !isBriefingNow {
+                Text(briefNowMessage)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
             }
 
             Button {
@@ -415,6 +482,21 @@ struct BriefPanelView: View {
                         isUnattached = true
                     }
                 }
+            }
+        }
+    }
+
+    private func briefNow() {
+        isBriefingNow = true
+        briefNowMessage = nil
+        Task {
+            let summary = await briefTrigger.briefNow(event)
+            await MainActor.run {
+                isBriefingNow = false
+                // Same page is rewritten in place, so a plain reload picks it up.
+                loadBrief()
+                let upgraded = summary.contains("created=") && !summary.contains("created=0")
+                briefNowMessage = upgraded ? nil : summary
             }
         }
     }
@@ -931,6 +1013,7 @@ final class BriefPanelWindowController {
         service: PreCallBriefService,
         notion: NotionService,
         enrichmentService: CalendarEnrichmentService,
+        briefTrigger: PreCallBriefTriggerService,
         onClose: @escaping () -> Void
     ) {
         close()
@@ -962,6 +1045,7 @@ final class BriefPanelWindowController {
             service: service,
             notion: notion,
             enrichmentService: enrichmentService,
+            briefTrigger: briefTrigger,
             onClose: { [weak self] in
                 self?.close()
                 onClose()

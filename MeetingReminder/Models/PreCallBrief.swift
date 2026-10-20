@@ -11,6 +11,9 @@ struct PreCallBrief: Equatable {
     let briefingStatus: String?
     /// Rendered markdown body of the page.
     let markdown: String
+
+    /// Written by the Apple Intelligence gap-filler, not yet upgraded by Claude.
+    var isOnDeviceDraft: Bool { briefingStatus == GapFillPlanner.onDeviceStatus }
 }
 
 /// Persistent record of which Notion page is attached to a calendar event.

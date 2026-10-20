@@ -85,7 +85,8 @@ struct MeetingReminderApp: App {
         let coordinator = OverlayCoordinator(
             monitor: monitor,
             notionService: notion,
-            preCallBriefService: preCallBriefs
+            preCallBriefService: preCallBriefs,
+            preCallBriefTrigger: preCallTrigger
         )
         _calendarService = StateObject(wrappedValue: calendar)
         _meetingMonitor = StateObject(wrappedValue: monitor)
@@ -216,6 +217,7 @@ final class OverlayCoordinator: ObservableObject {
     private let monitor: MeetingMonitor
     private let notionService: NotionService
     private let preCallBriefService: PreCallBriefService
+    private let preCallBriefTrigger: PreCallBriefTriggerService
     private let calendarEnrichmentService = CalendarEnrichmentService()
     private let windowController = OverlayWindowController()
     private let breakWindowController = BreakOverlayWindowController()
@@ -228,11 +230,13 @@ final class OverlayCoordinator: ObservableObject {
     init(
         monitor: MeetingMonitor,
         notionService: NotionService,
-        preCallBriefService: PreCallBriefService
+        preCallBriefService: PreCallBriefService,
+        preCallBriefTrigger: PreCallBriefTriggerService
     ) {
         self.monitor = monitor
         self.notionService = notionService
         self.preCallBriefService = preCallBriefService
+        self.preCallBriefTrigger = preCallBriefTrigger
 
         // Ensure all panels are closed when the app terminates.
         // `willTerminateNotification` is delivered on the main thread (queue: .main
@@ -436,6 +440,7 @@ final class OverlayCoordinator: ObservableObject {
             service: preCallBriefService,
             notion: notionService,
             enrichmentService: calendarEnrichmentService,
+            briefTrigger: preCallBriefTrigger,
             onClose: { [weak self] in
                 self?.briefPanelController.close()
             }
