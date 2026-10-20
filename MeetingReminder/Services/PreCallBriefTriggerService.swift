@@ -765,8 +765,35 @@ final class PreCallBriefTriggerService: ObservableObject {
         log("removal result: \(summary)")
     }
 
-    /// Read the skill, substitute the target meeting block. `mode` is `NEW` (brief) or
-    /// `REMOVED` (cancellation/reschedule).
+    /// Manual "Brief now with Claude" from the brief panel: re-brief one meeting whose
+    /// brief is an On-device draft, so Claude overwrites it in place. Always the Claude
+    /// path (the on-device flag would just redo the draft) and bypasses the intraday
+    /// toggle, working-hours gate and fired set — the user asked for it. Returns the
+    /// result line; the caller reloads the brief afterwards.
+    func briefNow(_ target: MeetingEvent) async -> String {
+        guard !isRunning else { return "busy — another briefing run is in progress, try again in a minute" }
+        isRunning = true
+        lastRunTime = Date()
+        defer { isRunning = false }
+
+        log("manual brief-now (UPGRADE) for: \(target.title) @ \(target.startDate)")
+        guard let filled = buildPrompt(for: target, mode: "UPGRADE") else {
+            let msg = "skill file unreadable at \(skillPath)"
+            recordResult(msg)
+            return msg
+        }
+
+        let output = await Self.runClaude(cliPath: cliPath, promptStdin: filled)
+        // Stop the intraday catcher re-firing this meeting later in the day.
+        markFired(target.id)
+        let summary = Self.parseResult(output) ?? firstNonEmptyLine(output) ?? "(no output)"
+        recordResult(summary)
+        log("brief-now result: \(summary)")
+        return summary
+    }
+
+    /// Read the skill, substitute the target meeting block. `mode` is `NEW` (brief),
+    /// `REMOVED` (cancellation/reschedule) or `UPGRADE` (manual re-brief of a draft).
     private func buildPrompt(for target: MeetingEvent, mode: String) -> String? {
         guard let template = try? String(contentsOfFile: skillPath, encoding: .utf8) else { return nil }
         let london = TimeZone(identifier: "Europe/London")

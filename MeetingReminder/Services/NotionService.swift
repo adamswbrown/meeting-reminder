@@ -138,6 +138,46 @@ final class NotionService: ObservableObject {
     ///   - Start (date)
     ///   - End (date)
     ///   - Attendees Name (rich_text)  — optional
+    /// Split calendar notes into paragraph-sized chunks for the page body.
+    ///
+    /// Notion's 2000-char limit counts UTF-16 code units, not Swift
+    /// Characters. Slicing by Character.count overshoots when the text
+    /// contains multi-code-unit graphemes (emoji, CRLF pairs, accented
+    /// forms) — observed: 2000 chars → 2036 code units → HTTP 400. So walk
+    /// grapheme clusters and flush whenever the next one would exceed the
+    /// UTF-16 budget.
+    ///
+    /// Capped at `maxChunks`: a create request may carry at most 100 child
+    /// blocks, and an invite with a pasted email thread can hit EventKit's
+    /// 524,288-unit notes ceiling (~263 chunks) → "body failed validation".
+    /// The last chunk then says how much was cut.
+    nonisolated static func notesChunks(_ text: String, limit: Int = 2000, maxChunks: Int = 20) -> [String] {
+        var chunks: [String] = []
+        var buffer = ""
+        var bufferUTF16 = 0
+        var index = text.startIndex
+        while index < text.endIndex {
+            let ch = text[index]
+            let chUTF16 = ch.utf16.count
+            if bufferUTF16 + chUTF16 > limit {
+                chunks.append(buffer)
+                buffer = ""
+                bufferUTF16 = 0
+                // One slot left: keep the tail only if it fits, else say what was cut.
+                if chunks.count == maxChunks - 1,
+                   case let remaining = text[index...].utf16.count, remaining > limit {
+                    chunks.append("… calendar notes truncated (\(remaining) more characters — see the invite).")
+                    return chunks
+                }
+            }
+            buffer.append(ch)
+            bufferUTF16 += chUTF16
+            index = text.index(after: index)
+        }
+        if !buffer.isEmpty { chunks.append(buffer) }
+        return chunks
+    }
+
     func createMeetingPage(for event: MeetingEvent) async -> URL? {
         let key = Self.noteKey(for: event)
         guard !createdEventIDs.contains(key),
@@ -209,37 +249,12 @@ final class NotionService: ObservableObject {
                     "rich_text": [["text": ["content": "Calendar notes"]]]
                 ],
             ])
-            // Notion's 2000-char limit counts UTF-16 code units, not Swift
-            // Characters. Slicing by Character.count overshoots when the text
-            // contains multi-code-unit graphemes (emoji, CRLF pairs, accented
-            // forms) — observed: 2000 chars → 2036 code units → HTTP 400.
-            // Walk grapheme clusters and flush whenever the next one would
-            // exceed the UTF-16 budget.
-            let limit = 2000
-            var buffer = ""
-            var bufferUTF16 = 0
-            for ch in cleanedNotes {
-                let chUTF16 = ch.utf16.count
-                if bufferUTF16 + chUTF16 > limit {
-                    children.append([
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": [
-                            "rich_text": [["text": ["content": buffer]]]
-                        ],
-                    ])
-                    buffer = ""
-                    bufferUTF16 = 0
-                }
-                buffer.append(ch)
-                bufferUTF16 += chUTF16
-            }
-            if !buffer.isEmpty {
+            for chunk in Self.notesChunks(cleanedNotes) {
                 children.append([
                     "object": "block",
                     "type": "paragraph",
                     "paragraph": [
-                        "rich_text": [["text": ["content": buffer]]]
+                        "rich_text": [["text": ["content": chunk]]]
                     ],
                 ])
             }
