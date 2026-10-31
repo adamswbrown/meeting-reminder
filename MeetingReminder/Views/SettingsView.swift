@@ -892,7 +892,7 @@ struct SettingsView: View {
 
         // Push once immediately, then (re)start the timer so subsequent
         // pushes happen on schedule. start() no-ops if disabled.
-        Task { await availabilityPushService.pushNow() }
+        Task { await availabilityPushService.pushNow(force: true) }
         if availabilityPushService.isEnabled {
             availabilityPushService.start()
         }

@@ -424,6 +424,40 @@ final class BookingSweepTests: XCTestCase {
         XCTAssertEqual(AvailabilityPushService.inFilterChunks(["a\"b", "c"]), ["in.(\"a\"\"b\",\"c\")"])
     }
 
+    func testFingerprintIgnoresRowOrderButSeesChanges() {
+        let a: [String: Any] = ["event_id": "a", "start_utc": "2026-11-01T09:00:00Z"]
+        let b: [String: Any] = ["event_id": "b", "is_ooo": false]
+        let moved: [String: Any] = ["event_id": "a", "start_utc": "2026-11-01T10:00:00Z"]
+        let fingerprint = AvailabilityPushService.fingerprint
+        XCTAssertEqual(fingerprint([a, b]), fingerprint([b, a]))
+        XCTAssertNotEqual(fingerprint([a, b]), fingerprint([moved, b]))
+        XCTAssertNotEqual(fingerprint([a, b]), fingerprint([a]))
+    }
+
+    func testUnchangedSnapshotWritesNothingUntilHeartbeatDue() {
+        let now = Date()
+        let recent = now.addingTimeInterval(-60)
+        let quiet = AvailabilityPushService.writes(fingerprint: "x", lastFingerprint: "x", lastHeartbeat: recent, now: now)
+        XCTAssertFalse(quiet.events)
+        XCTAssertFalse(quiet.heartbeat)
+
+        let due = now.addingTimeInterval(-AvailabilityPushService.heartbeatInterval)
+        let heartbeat = AvailabilityPushService.writes(fingerprint: "x", lastFingerprint: "x", lastHeartbeat: due, now: now)
+        XCTAssertFalse(heartbeat.events)
+        XCTAssertTrue(heartbeat.heartbeat)
+    }
+
+    func testChangedOrFirstSnapshotWritesBoth() {
+        let now = Date()
+        let changed = AvailabilityPushService.writes(fingerprint: "y", lastFingerprint: "x", lastHeartbeat: now, now: now)
+        XCTAssertTrue(changed.events)
+        XCTAssertTrue(changed.heartbeat)
+
+        let first = AvailabilityPushService.writes(fingerprint: "x", lastFingerprint: nil, lastHeartbeat: nil, now: now)
+        XCTAssertTrue(first.events)
+        XCTAssertTrue(first.heartbeat)
+    }
+
     private func exchangeCopy(title: String?, invited: [String], hostOrganises: Bool = true,
                               organizer: String? = "adam@askadam.cloud", offset: TimeInterval = 0,
                               calTitle: String = "Advisory between Adam and Sam",
