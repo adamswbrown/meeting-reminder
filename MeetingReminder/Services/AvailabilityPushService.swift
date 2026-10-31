@@ -60,6 +60,11 @@ final class AvailabilityPushService: ObservableObject {
     /// and Outlook recurring expansions get noisy past a fortnight.
     static let defaultWindowDays: Int = 14
 
+    /// How often `sync_state` is refreshed when the calendar hasn't changed.
+    /// Well inside the page's 120-minute staleness warning, and far fewer
+    /// writes against the Supabase free tier's disk IO budget.
+    static let heartbeatInterval: TimeInterval = 30 * 60
+
     // MARK: - Configuration
 
     var projectURL: String {
@@ -106,6 +111,8 @@ final class AvailabilityPushService: ObservableObject {
 
     private let eventStore: EKEventStore
     private var timer: Timer?
+    private var lastPushedFingerprint: String?
+    private var lastHeartbeatDate: Date?
 
     init(eventStore: EKEventStore = EKEventStore()) {
         self.eventStore = eventStore
@@ -152,7 +159,9 @@ final class AvailabilityPushService: ObservableObject {
     /// Snapshot the next N days of events from EventKit and upsert them to
     /// Supabase. Anything currently in Supabase in the same window that's no
     /// longer in EventKit is deleted (handles cancellations and reschedules).
-    func pushNow() async {
+    /// An unchanged snapshot writes nothing, apart from the periodic heartbeat;
+    /// `force` skips that check for a user-requested sync.
+    func pushNow(force: Bool = false) async {
         guard isConfigured else {
             lastError = "Not configured — set project URL + service-role key in Settings."
             return
@@ -163,23 +172,60 @@ final class AvailabilityPushService: ObservableObject {
 
         let snapshot = collectSnapshot(daysForward: windowDays)
 
+        let fingerprint = Self.fingerprint(of: snapshot.events.map { $0.toJSONDictionary() })
+        let writes = Self.writes(
+            fingerprint: fingerprint,
+            lastFingerprint: force ? nil : lastPushedFingerprint,
+            lastHeartbeat: lastHeartbeatDate,
+            now: Date()
+        )
+
         do {
-            try await upsertEvents(snapshot.events)
-            try await deleteMissing(
-                eventIDs: snapshot.eventIDs,
-                windowStart: snapshot.windowStart,
-                windowEnd: snapshot.windowEnd
-            )
-            try await updateSyncState(
-                count: snapshot.events.count,
-                windowEnd: snapshot.windowEnd
-            )
+            if writes.events {
+                try await upsertEvents(snapshot.events)
+                try await deleteMissing(
+                    eventIDs: snapshot.eventIDs,
+                    windowStart: snapshot.windowStart,
+                    windowEnd: snapshot.windowEnd
+                )
+                lastPushedFingerprint = fingerprint
+            }
+            if writes.heartbeat {
+                try await updateSyncState(
+                    count: snapshot.events.count,
+                    windowEnd: snapshot.windowEnd
+                )
+                lastHeartbeatDate = Date()
+            }
             lastSyncDate = Date()
             lastSyncCount = snapshot.events.count
             lastError = nil
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// Order-independent digest of a snapshot's row payloads.
+    nonisolated static func fingerprint(of payload: [[String: Any]]) -> String {
+        payload
+            .compactMap { row in
+                (try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys))
+                    .flatMap { String(data: $0, encoding: .utf8) }
+            }
+            .sorted()
+            .joined(separator: "\n")
+    }
+
+    /// Which tables this push needs to write.
+    nonisolated static func writes(
+        fingerprint: String,
+        lastFingerprint: String?,
+        lastHeartbeat: Date?,
+        now: Date
+    ) -> (events: Bool, heartbeat: Bool) {
+        let changed = fingerprint != lastFingerprint
+        let heartbeatDue = lastHeartbeat.map { now.timeIntervalSince($0) >= heartbeatInterval } ?? true
+        return (changed, changed || heartbeatDue)
     }
 
     // MARK: - EventKit snapshot

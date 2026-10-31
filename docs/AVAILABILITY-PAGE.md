@@ -109,6 +109,10 @@ stays in macOS Keychain and never reaches the browser.
   EventKit snapshot, so cancellations/reschedules disappear from the page. The
   stale IDs are found by listing the window and deleted in batches, so a busy
   fortnight can't overflow the request URL.
+- A push whose snapshot matches the last one writes nothing to `calendar_events`.
+  `sync_state` still refreshes every 30 minutes, inside the page's 120-minute
+  warning, to stay within the Supabase free tier's disk IO budget. **Save & Sync**
+  always does a full push.
 - Push only runs **while the Mac is awake**; the `sync_state` heartbeat lets the
   frontend show a staleness pill.
 
